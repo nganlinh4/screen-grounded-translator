@@ -13,10 +13,10 @@ base64 = "0.21"
 image = "0.24"
 dirs = "5.0"
 lazy_static = "1.4"
-textwrap = "0.16" # For smart text balancing
+textwrap = "0.16"
 
 [dependencies.windows]
-version = "0.48" # or 0.52, code below uses 0.48 syntax mostly compatible
+version = "0.48"
 features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
@@ -24,5 +24,6 @@ features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_LibraryLoader",
     "Win32_System_SystemServices",
-    "Win32_Graphics_Dwm", # For blur effects
+    "Win32_Graphics_Dwm",
+    "Win32_UI_HiDpi",
 ]

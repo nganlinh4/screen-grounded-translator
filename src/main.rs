@@ -11,6 +11,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::Graphics::Dwm::*;
+use windows::Win32::UI::HiDpi::*; // Added for DPI awareness
 
 use serde::{Deserialize, Serialize};
 use base64::{Engine as _, engine::general_purpose};
@@ -124,6 +125,7 @@ fn prompt_user_config() {
 
 fn capture_full_screen() -> Result<(ImageBuffer<Rgba<u8>, Vec<u8>>, i32, i32)> {
     unsafe {
+        // Capture Virtual Screen (All Monitors)
         let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
         let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
         let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -260,7 +262,6 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
         }
         WM_LBUTTONDOWN => {
             IS_DRAGGING = true;
-            // Fix: Use addr_of_mut! to avoid mutable reference warnings
             GetCursorPos(std::ptr::addr_of_mut!(START_POS));
             CURR_POS = START_POS;
             SetCapture(hwnd);
@@ -269,7 +270,6 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
         }
         WM_MOUSEMOVE => {
             if IS_DRAGGING {
-                // Fix: Use addr_of_mut! to avoid mutable reference warnings
                 GetCursorPos(std::ptr::addr_of_mut!(CURR_POS));
                 InvalidateRect(hwnd, None, false);
             }
@@ -310,7 +310,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             let mem_bitmap = CreateCompatibleBitmap(hdc, width, height);
             SelectObject(mem_dc, mem_bitmap);
 
-            // Use GDI to darken the background to simulate dimming
+            // Simulate Dimming
             let brush = CreateSolidBrush(COLORREF(0x00000000)); // Black
             let full_rect = RECT { left: 0, top: 0, right: width, bottom: height };
             FillRect(mem_dc, &full_rect, brush);
@@ -347,7 +347,6 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
 unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_CREATE => {
-            // Enable Acrylic/Mica Blur
             let policy = DWM_SYSTEMBACKDROP_TYPE(2); // Mica
             let _ = DwmSetWindowAttribute(
                 hwnd, 
@@ -357,7 +356,6 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             );
             LRESULT(0)
         }
-        // Close on Right Click, Left Click, or Escape
         WM_RBUTTONUP | WM_LBUTTONUP => {
             DestroyWindow(hwnd);
             LRESULT(0)
@@ -375,15 +373,13 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             let mut rect = RECT::default();
             GetClientRect(hwnd, &mut rect);
 
-            // Dark background fill
             let brush = CreateSolidBrush(COLORREF(0x00101010)); 
             FillRect(hdc, &rect, brush);
             DeleteObject(brush);
 
             SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, COLORREF(0x00FFFFFF)); // White text
+            SetTextColor(hdc, COLORREF(0x00FFFFFF));
             
-            // Use CreateFontW for Unicode support
             let hfont = CreateFontW(
                 20, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, 
                 DEFAULT_CHARSET.0 as u32, 
@@ -395,7 +391,6 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             );
             SelectObject(hdc, hfont);
 
-            // Retrieve text stored in window title
             let len = GetWindowTextLengthW(hwnd) + 1;
             let mut buf = vec![0u16; len as usize];
             GetWindowTextW(hwnd, &mut buf);
@@ -406,7 +401,6 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             draw_rect.right -= 10;
             draw_rect.bottom -= 10;
             
-            // DrawTextW for Unicode rendering
             DrawTextW(hdc, &mut buf, &mut draw_rect, DT_LEFT | DT_WORDBREAK);
 
             DeleteObject(hfont);
@@ -430,7 +424,6 @@ fn process_selection(app: Arc<Mutex<AppState>>, rect: RECT) {
         )
     };
 
-    // Calculate crop coordinates relative to image buffer
     let x_virt = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
     let y_virt = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
 
@@ -454,13 +447,17 @@ fn process_selection(app: Arc<Mutex<AppState>>, rect: RECT) {
     
     let cropped = img.view(crop_x, crop_y, crop_w, crop_h).to_image();
 
+    // --- DEBUG: SAVE IMAGE ---
+    println!("Debug: Saving captured region to 'debug_crop.png'");
+    let _ = cropped.save("debug_crop.png");
+    // -------------------------
+
     let rt = Runtime::new().unwrap();
     let translation_res = rt.block_on(translate_region(config.api_key, config.language, cropped));
 
     match translation_res {
         Ok(text) => {
             if text.trim().is_empty() { return; }
-            // Spawn result window on the UI thread logic
             std::thread::spawn(move || {
                 show_result_window(rect, text);
             });
@@ -531,14 +528,12 @@ fn show_result_window(target_rect: RECT, text: String) {
         };
         RegisterClassW(&wc);
 
-        // Calculate required height for text using GDI
+        // Calculate required height
         let width = (target_rect.right - target_rect.left).abs();
-        // Enforce min width for readability
         let width = width.max(200); 
         
         let mut calc_rect = RECT { left: 0, top: 0, right: width, bottom: 0 };
         
-        // Temporary DC to calculate text size
         let hdc = CreateCompatibleDC(None);
         let hfont = CreateFontW(
             20, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, 
@@ -555,12 +550,12 @@ fn show_result_window(target_rect: RECT, text: String) {
         DeleteObject(hfont);
         DeleteDC(hdc);
 
-        let height = (calc_rect.bottom - calc_rect.top) + 30; // Padding
+        let height = (calc_rect.bottom - calc_rect.top) + 30;
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_LAYERED,
             class_name,
-            PCWSTR(text_wide.as_ptr()), // Store text in title for retrieval
+            PCWSTR(text_wide.as_ptr()),
             WS_POPUP | WS_VISIBLE,
             target_rect.left, 
             target_rect.top, 
@@ -584,6 +579,11 @@ fn show_result_window(target_rect: RECT, text: String) {
 // --- MAIN ---
 
 fn main() {
+    // IMPORTANT: Force DPI Awareness so mouse coords match screen pixels
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+
     prompt_user_config();
     let config = load_config();
     println!("=== Screen Translator Running ===");
@@ -610,7 +610,6 @@ fn main() {
             None, None, instance, None
         );
         
-        // Fix: Checked returns BOOL, use as_bool() or compare to FALSE
         if !RegisterHotKey(hwnd, 1, HOT_KEY_MODIFIERS(0), config.hotkey).as_bool() {
             println!("Error: Failed to register hotkey. Check if another app is using it.");
         }
