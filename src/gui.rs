@@ -227,7 +227,11 @@ impl eframe::App for SettingsApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // --- HEADER ---
             ui.horizontal(|ui| {
-                ui.heading("Made by nganlinh4");
+                ui.heading("Made by ");
+                ui.add(egui::Hyperlink::from_label_and_url(
+                    egui::RichText::new("nganlinh4").heading(),
+                    "https://github.com/nganlinh4/screen-grounded-translator"
+                ));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let theme_icon = if self.config.dark_mode { "🌙" } else { "☀" };
                     if ui.button(theme_icon).on_hover_text("Toggle Theme").clicked() {
