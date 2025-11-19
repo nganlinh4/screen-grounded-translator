@@ -1,0 +1,25 @@
+id ICON "assets/app.ico"
+
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904E4"
+    BEGIN
+      VALUE "CompanyName", "nganlinh4"
+      VALUE "FileDescription", "Screen Grounded Translator"
+      VALUE "FileVersion", "1.0.0.0"
+      VALUE "InternalName", "screen-grounded-translator"
+      VALUE "LegalCopyright", "Copyright (c) 2024"
+      VALUE "OriginalFilename", "screen-grounded-translator.exe"
+      VALUE "ProductName", "Screen Grounded Translator"
+      VALUE "ProductVersion", "1.0.0.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1252
+  END
+END
