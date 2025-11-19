@@ -1,8 +1,15 @@
+
 use eframe::egui;
 use crate::config::{Config, save_config, ISO_LANGUAGES, UiLanguage};
 use std::sync::{Arc, Mutex};
-use tray_icon::{TrayIcon, TrayIconEvent, MouseButton, MouseButtonState, menu::{Menu, MenuEvent}};
+use tray_icon::{TrayIcon, TrayIconEvent, MouseButton, menu::{Menu, MenuEvent}};
 use auto_launch::AutoLaunch;
+use std::sync::mpsc::{Receiver, channel};
+
+enum UserEvent {
+    Tray(TrayIconEvent),
+    Menu(MenuEvent),
+}
 
 // --- Font Configuration ---
 pub fn configure_fonts(ctx: &egui::Context) {
@@ -96,8 +103,9 @@ pub struct SettingsApp {
     config: Config,
     app_state_ref: Arc<Mutex<crate::AppState>>,
     search_query: String,
-    _tray_icon: TrayIcon,
+    tray_icon: TrayIcon,
     _tray_menu: Menu,
+    event_rx: Receiver<UserEvent>,
     // Logic fields
     is_quitting: bool,
     run_at_startup: bool,
@@ -105,9 +113,8 @@ pub struct SettingsApp {
 }
 
 impl SettingsApp {
-    pub fn new(config: Config, app_state: Arc<Mutex<crate::AppState>>, tray_icon: TrayIcon, tray_menu: Menu) -> Self {
+    pub fn new(config: Config, app_state: Arc<Mutex<crate::AppState>>, tray_icon: TrayIcon, tray_menu: Menu, ctx: egui::Context) -> Self {
         // Initialize AutoLaunch
-        // FIX: Pass empty args slice `&[]` instead of `false`
         let app_name = "ScreenTranslator";
         let app_path = std::env::current_exe().unwrap();
         let args: &[&str] = &[]; // No command line args
@@ -118,18 +125,41 @@ impl SettingsApp {
             args,
         );
 
-        // FIX: auto is not an Option here, so we access it directly
         let run_at_startup = auto.is_enabled().unwrap_or(false);
+
+        let (tx, rx) = channel();
+
+        let tx_tray = tx.clone();
+        let ctx_tray = ctx.clone();
+        std::thread::spawn(move || {
+            while let Ok(event) = TrayIconEvent::receiver().recv() {
+                let _ = tx_tray.send(UserEvent::Tray(event));
+                ctx_tray.request_repaint();
+            }
+        });
+
+        let tx_menu = tx.clone();
+        let ctx_menu = ctx.clone();
+        std::thread::spawn(move || {
+            while let Ok(event) = MenuEvent::receiver().recv() {
+                if event.id.0 == "1001" {
+                    // Force exit immediately from this thread
+                    std::process::exit(0);
+                }
+                let _ = tx_menu.send(UserEvent::Menu(event));
+                ctx_menu.request_repaint();
+            }
+        });
 
         Self {
             config,
             app_state_ref: app_state,
             search_query: String::new(),
-            _tray_icon: tray_icon,
+            tray_icon,
             _tray_menu: tray_menu,
+            event_rx: rx,
             is_quitting: false,
             run_at_startup,
-            // FIX: Wrap in Some() because struct expects Option<AutoLaunch>
             auto_launcher: Some(auto),
         }
     }
@@ -146,20 +176,23 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // --- Handle Tray Events ---
-        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            }
-        }
-        
-        // --- Handle Menu Events (Quit) ---
-        if let Ok(event) = MenuEvent::receiver().try_recv() {
-            if event.id.0 == "1001" {
-                // User explicitly clicked Quit in Tray
-                self.is_quitting = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        // --- Handle Pending Events ---
+        while let Ok(event) = self.event_rx.try_recv() {
+            match event {
+                UserEvent::Tray(tray_event) => {
+                    if let TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } = tray_event {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        ctx.request_repaint();
+                    }
+                }
+                UserEvent::Menu(menu_event) => {
+                    // Fallback if thread didn't catch it (unlikely)
+                    if menu_event.id.0 == "1001" {
+                        let _ = self.tray_icon.set_visible(false);
+                        std::process::exit(0);
+                    }
+                }
             }
         }
 
@@ -170,7 +203,6 @@ impl eframe::App for SettingsApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             }
-            // If self.is_quitting is true, we let it close normally, which terminates the app loop
         }
 
         // --- Apply Theme ---
@@ -306,6 +338,7 @@ impl eframe::App for SettingsApp {
 
     // Clean exit handler
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        std::process::exit(0);
+        // Explicitly hide/remove the tray icon on exit
+        let _ = self.tray_icon.set_visible(false);
     }
 }

@@ -13,6 +13,7 @@ use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::HiDpi::*;
+use windows::Win32::System::Threading::*;
 use windows::core::*;
 use lazy_static::lazy_static;
 use image::ImageBuffer;
@@ -36,6 +37,20 @@ lazy_static! {
 }
 
 fn main() -> eframe::Result<()> {
+    // Keep the handle alive for the duration of the program
+    let _single_instance_mutex = unsafe {
+        let instance = CreateMutexW(None, true, w!("ScreenTranslatorSingleInstanceMutex"));
+        if let Ok(handle) = instance {
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                // Another instance is running
+                return Ok(());
+            }
+            Some(handle)
+        } else {
+            None
+        }
+    };
+
     unsafe { let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); }
 
     std::thread::spawn(|| {
@@ -68,7 +83,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             gui::configure_fonts(&cc.egui_ctx);
-            Box::new(gui::SettingsApp::new(initial_config, APP.clone(), tray_icon, tray_menu))
+            Box::new(gui::SettingsApp::new(initial_config, APP.clone(), tray_icon, tray_menu, cc.egui_ctx.clone()))
         }),
     )
 }
