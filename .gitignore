@@ -4,3 +4,8 @@ Cargo.lock
 .DS_Store
 *.swp
 *.swo
+
+# Cursor build artifacts
+build_cursor.exe
+cursor_data.txt
+broom.cur

@@ -249,8 +249,13 @@ fn process_and_close(app: Arc<Mutex<AppState>>, rect: RECT, overlay_hwnd: HWND) 
 
 // --- 2. RESULT WINDOW (Fixed Padding & Taskbar) ---
 
+static mut IS_DISMISSING: bool = false;
+static mut DISMISS_ALPHA: u8 = 220;
+
 pub fn show_result_window(target_rect: RECT, text: String) {
     unsafe {
+        IS_DISMISSING = false;
+        DISMISS_ALPHA = 220;
         let instance = GetModuleHandleW(None).unwrap();
         let class_name = w!("TranslationResult");
         
@@ -258,7 +263,31 @@ pub fn show_result_window(target_rect: RECT, text: String) {
         if !GetClassInfoW(instance, class_name, &mut wc).as_bool() {
             wc.lpfnWndProc = Some(result_wnd_proc);
             wc.hInstance = instance;
-            wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
+            // Load custom broom cursor from embedded data
+            static BROOM_CURSOR_DATA: &[u8] = include_bytes!("../broom.cur");
+            
+            // Write cursor to temp file
+            let temp_path = std::env::temp_dir().join("broom_cursor.cur");
+            if let Ok(()) = std::fs::write(&temp_path, BROOM_CURSOR_DATA) {
+                let path_wide: Vec<u16> = temp_path.to_string_lossy()
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let cursor_handle = LoadImageW(
+                    None,
+                    PCWSTR(path_wide.as_ptr()),
+                    IMAGE_CURSOR,
+                    0, 0,
+                    LR_LOADFROMFILE | LR_DEFAULTSIZE
+                );
+                wc.hCursor = if let Ok(handle) = cursor_handle {
+                    HCURSOR(handle.0)
+                } else {
+                    LoadCursorW(None, IDC_HAND).unwrap()
+                };
+            } else {
+                wc.hCursor = LoadCursorW(None, IDC_HAND).unwrap();
+            }
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
             RegisterClassW(&wc);
@@ -278,7 +307,7 @@ pub fn show_result_window(target_rect: RECT, text: String) {
 
         let policy = DWM_SYSTEMBACKDROP_TYPE(2);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &policy as *const _ as *const _, size_of::<DWM_SYSTEMBACKDROP_TYPE>() as u32);
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 220, LWA_ALPHA);
+        SetLayeredWindowAttributes(hwnd, COLORREF(0), DISMISS_ALPHA, LWA_ALPHA);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
@@ -291,7 +320,24 @@ pub fn show_result_window(target_rect: RECT, text: String) {
 
 unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
-        WM_LBUTTONUP | WM_RBUTTONUP => { DestroyWindow(hwnd); LRESULT(0) }
+        WM_LBUTTONUP | WM_RBUTTONUP => {
+            // Start fade-out animation
+            IS_DISMISSING = true;
+            SetTimer(hwnd, 2, 16, None); // ~60 FPS
+            LRESULT(0)
+        }
+        WM_TIMER => {
+            if wparam.0 == 2 && IS_DISMISSING {
+                if DISMISS_ALPHA > 15 {
+                    DISMISS_ALPHA = DISMISS_ALPHA.saturating_sub(15);
+                    SetLayeredWindowAttributes(hwnd, COLORREF(0), DISMISS_ALPHA, LWA_ALPHA);
+                } else {
+                    KillTimer(hwnd, 2);
+                    DestroyWindow(hwnd);
+                }
+            }
+            LRESULT(0)
+        }
         WM_KEYDOWN => { if wparam.0 == VK_ESCAPE.0 as usize { DestroyWindow(hwnd); } LRESULT(0) }
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
