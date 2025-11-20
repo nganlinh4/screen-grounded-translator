@@ -3,11 +3,12 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::Graphics::Dwm::*;
 use windows::Win32::System::LibraryLoader::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::*; 
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::System::DataExchange::*;
+use windows::Win32::System::Memory::*;
 use windows::core::*;
 use std::sync::{Arc, Mutex};
 use std::mem::size_of;
-use tokio::runtime::Runtime;
 use image::GenericImageView; 
 
 use crate::{AppState, APP, api::translate_image};
@@ -33,6 +34,33 @@ pub fn is_selection_overlay_active_and_dismiss() -> bool {
             true
         } else {
             false
+        }
+    }
+}
+
+
+// --- CLIPBOARD SUPPORT ---
+fn copy_to_clipboard(text: &str, hwnd: HWND) {
+    unsafe {
+        if OpenClipboard(hwnd).as_bool() {
+            EmptyClipboard();
+            
+            // Convert text to UTF-16
+            let wide_text: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let mem_size = wide_text.len() * 2;
+            
+            // Allocate global memory
+            if let Ok(h_mem) = GlobalAlloc(GMEM_MOVEABLE, mem_size) {
+                let ptr = GlobalLock(h_mem) as *mut u16;
+                std::ptr::copy_nonoverlapping(wide_text.as_ptr(), ptr, wide_text.len());
+                GlobalUnlock(h_mem);
+                
+                // Set clipboard data (CF_UNICODETEXT = 13)
+                let h_mem_handle = HANDLE(h_mem.0);
+                let _ = SetClipboardData(13u32, h_mem_handle);
+            }
+            
+            CloseClipboard();
         }
     }
 }
@@ -239,9 +267,14 @@ fn process_and_close(app: Arc<Mutex<AppState>>, rect: RECT, overlay_hwnd: HWND) 
 
     if crop_w > 0 && crop_h > 0 {
         let cropped = img.view(crop_x, crop_y, crop_w, crop_h).to_image();
-        let rt = Runtime::new().unwrap();
         
-        let res = rt.block_on(translate_image(config.api_key, config.target_language, model_name, cropped));
+        // Store settings before config is moved
+        let auto_copy = config.auto_copy;
+        let target_lang = config.target_language.clone();
+        let api_key = config.api_key.clone();
+        
+        // Blocking call - no async/await needed
+        let res = translate_image(api_key, config.target_language, model_name, cropped);
         
         unsafe {
             KillTimer(overlay_hwnd, 1);
@@ -251,10 +284,27 @@ fn process_and_close(app: Arc<Mutex<AppState>>, rect: RECT, overlay_hwnd: HWND) 
         match res {
             Ok(text) => {
                 if !text.trim().is_empty() {
-                    std::thread::spawn(move || show_result_window(rect, text));
+                    let text_for_result = text.clone();
+                    
+                    std::thread::spawn(move || {
+                        show_result_window(rect, text_for_result);
+                    });
+                    
+                    // Apply auto-copy if enabled
+                    if auto_copy {
+                        let text_for_copy = text.clone();
+                        std::thread::spawn(move || {
+                            // Small delay to ensure window is created
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            copy_to_clipboard(&text_for_copy, unsafe { GetActiveWindow() });
+                        });
+                    }
                 }
             }
-            Err(e) => println!("Error: {}", e),
+            Err(e) => {
+                let err_msg = format!("Error: {}", e);
+                std::thread::spawn(move || show_result_window(rect, err_msg));
+            }
         }
     } else {
         unsafe { PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
@@ -339,10 +389,25 @@ pub fn show_result_window(target_rect: RECT, text: String) {
 
 unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
-        WM_LBUTTONUP | WM_RBUTTONUP => {
-            // Start fade-out animation
+        WM_LBUTTONUP => {
+            // Start fade-out animation on left click
             IS_DISMISSING = true;
             SetTimer(hwnd, 2, 8, None); // ~120 FPS (half duration)
+            LRESULT(0)
+        }
+        WM_RBUTTONUP => {
+            // Right-click: copy to clipboard
+            let text_len = GetWindowTextLengthW(hwnd) + 1;
+            let mut buf = vec![0u16; text_len as usize];
+            GetWindowTextW(hwnd, &mut buf);
+            
+            // Convert back to String (remove null terminator)
+            let text = String::from_utf16_lossy(&buf[..text_len as usize - 1]).to_string();
+            copy_to_clipboard(&text, hwnd);
+            
+            // Dismiss window
+            IS_DISMISSING = true;
+            SetTimer(hwnd, 2, 8, None);
             LRESULT(0)
         }
         WM_TIMER => {
@@ -357,7 +422,19 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             }
             LRESULT(0)
         }
-        WM_KEYDOWN => { if wparam.0 == VK_ESCAPE.0 as usize { DestroyWindow(hwnd); } LRESULT(0) }
+        WM_KEYDOWN => { 
+            if wparam.0 == VK_ESCAPE.0 as usize { 
+                DestroyWindow(hwnd); 
+            } else if wparam.0 == 'C' as usize {
+                // Ctrl+C to copy
+                let text_len = GetWindowTextLengthW(hwnd) + 1;
+                let mut buf = vec![0u16; text_len as usize];
+                GetWindowTextW(hwnd, &mut buf);
+                let text = String::from_utf16_lossy(&buf[..text_len as usize - 1]).to_string();
+                copy_to_clipboard(&text, hwnd);
+            }
+            LRESULT(0) 
+        }
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut ps);

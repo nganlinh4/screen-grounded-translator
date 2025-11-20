@@ -16,6 +16,7 @@ pub struct Config {
     pub hotkey_name: String,
     pub dark_mode: bool,
     pub ui_language: UiLanguage,
+    pub auto_copy: bool,
 }
 
 impl Default for Config {
@@ -45,6 +46,7 @@ impl Default for Config {
             hotkey_name: "` / ~".to_string(),
             dark_mode,
             ui_language,
+            auto_copy: false,
         }
     }
 }
