@@ -79,7 +79,7 @@ impl LocaleText {
                 api_section: "Cấu Hình API",
                 api_key_label: "Mã API Groq:",
                 get_key_link: "Lấy mã tại console.groq.com",
-                lang_section: "Ngôn Ngữ Dịch",
+                lang_section: "Ngôn Ngữ Mục Tiêu",
                 search_placeholder: "Tìm kiếm ngôn ngữ...",
                 current_language_label: "Hiện tại:",
                 hotkey_section: "Điều Khiển",
