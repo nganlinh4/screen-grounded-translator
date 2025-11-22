@@ -55,7 +55,7 @@ impl Default for Config {
             ui_language,
             auto_copy: false,
             preferred_model: "scout".to_string(),
-            streaming_enabled: true,
+            streaming_enabled: false,
         }
     }
 }

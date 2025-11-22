@@ -51,7 +51,7 @@ impl LocaleText {
                 model_label: "Chọn Mô Hình:",
                 streaming_label: "Cách xuất chữ:",
                 streaming_option_stream: "Nhận gì hiện nấy",
-                streaming_option_wait: "Đợi hết mới hiện",
+                streaming_option_wait: "Nhận hết mới hiện",
             },
             "ko" => Self {
                 api_section: "API 구성",
