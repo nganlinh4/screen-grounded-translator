@@ -86,7 +86,7 @@ impl SettingsApp {
                                 let class_name = w!("eframe");
                                 let mut hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), None);
                                 if hwnd.0 == 0 {
-                                    let title = w!("Screen Grounded Translator");
+                                    let title = w!("Screen Grounded Translator (SGT by nganlinh4)");
                                     hwnd = FindWindowW(None, PCWSTR(title.as_ptr()));
                                 }
                                 if hwnd.0 != 0 {
@@ -120,7 +120,7 @@ impl SettingsApp {
                             let class_name = w!("eframe");
                             let hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), None);
                             let hwnd = if hwnd.0 == 0 {
-                                let title = w!("Screen Grounded Translator");
+                                let title = w!("Screen Grounded Translator (SGT by nganlinh4)");
                                 FindWindowW(None, PCWSTR(title.as_ptr()))
                             } else {
                                 hwnd
@@ -184,11 +184,13 @@ impl SettingsApp {
     }
     
     fn restore_window(&self, ctx: &egui::Context) {
-         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
          ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
          ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
          ctx.request_repaint();
-    }
+     }
 
     fn check_hotkey_conflict(&self, vk: u32, mods: u32, current_preset_idx: usize) -> Option<String> {
         for (idx, preset) in self.config.presets.iter().enumerate() {
