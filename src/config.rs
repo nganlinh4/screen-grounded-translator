@@ -23,6 +23,14 @@ pub struct Preset {
     pub retranslate_model: String,
     pub retranslate_streaming_enabled: bool,
     pub hide_overlay: bool,
+    #[serde(default = "default_preset_type")]
+    pub preset_type: String,
+    #[serde(default)]
+    pub is_upcoming: bool,
+}
+
+fn default_preset_type() -> String {
+    "image".to_string()
 }
 
 impl Default for Preset {
@@ -41,6 +49,8 @@ impl Default for Preset {
             retranslate_model: "fast_text".to_string(),
             retranslate_streaming_enabled: true,
             hide_overlay: false,
+            preset_type: "image".to_string(),
+            is_upcoming: false,
         }
     }
 }
@@ -74,6 +84,8 @@ impl Default for Config {
             retranslate_model: "fast_text".to_string(),
             retranslate_streaming_enabled: true,
             hide_overlay: false,
+            preset_type: "image".to_string(),
+            is_upcoming: false,
         };
 
         // 2. OCR Preset
@@ -91,6 +103,8 @@ impl Default for Config {
             retranslate_model: "fast_text".to_string(),
             retranslate_streaming_enabled: true,
             hide_overlay: false,
+            preset_type: "image".to_string(),
+            is_upcoming: false,
         };
 
         // 3. Summarize Preset
@@ -108,6 +122,8 @@ impl Default for Config {
             retranslate_model: "fast_text".to_string(),
             retranslate_streaming_enabled: true,
             hide_overlay: false,
+            preset_type: "image".to_string(),
+            is_upcoming: false,
         };
 
         // 4. Description Preset
@@ -125,12 +141,33 @@ impl Default for Config {
             retranslate_model: "fast_text".to_string(),
             retranslate_streaming_enabled: true,
             hide_overlay: false,
+            preset_type: "image".to_string(),
+            is_upcoming: false,
+        };
+
+        // 5. Transcribe (Upcoming)
+        let upcoming_preset = Preset {
+            id: "preset_transcribe".to_string(),
+            name: "Transcribe (upcoming)".to_string(),
+            prompt: "".to_string(),
+            selected_language: default_lang.clone(),
+            model: "scout".to_string(),
+            streaming_enabled: false,
+            auto_copy: false,
+            hotkeys: vec![],
+            retranslate: false,
+            retranslate_to: default_lang.clone(),
+            retranslate_model: "fast_text".to_string(),
+            retranslate_streaming_enabled: true,
+            hide_overlay: false,
+            preset_type: "audio".to_string(),
+            is_upcoming: true,
         };
 
         Self {
             api_key: "".to_string(),
             gemini_api_key: "".to_string(),
-            presets: vec![trans_preset, ocr_preset, sum_preset, desc_preset],
+            presets: vec![trans_preset, ocr_preset, sum_preset, desc_preset, upcoming_preset],
             active_preset_idx: 0,
             dark_mode: true,
             ui_language: "vi".to_string(),

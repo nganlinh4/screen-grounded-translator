@@ -356,13 +356,20 @@ impl eframe::App for SettingsApp {
                     for (idx, preset) in self.config.presets.iter().enumerate() {
                         ui.horizontal(|ui| {
                             let is_selected = matches!(self.view_mode, ViewMode::Preset(i) if i == idx);
-                            if ui.selectable_label(is_selected, &preset.name).clicked() {
-                                self.view_mode = ViewMode::Preset(idx);
-                            }
-                            // Delete button (small x)
-                            if self.config.presets.len() > 1 {
-                                if ui.small_button("x").clicked() {
-                                    preset_idx_to_delete = Some(idx);
+                            
+                            if preset.is_upcoming {
+                                ui.add_enabled_ui(false, |ui| {
+                                    let _ = ui.selectable_label(is_selected, &preset.name);
+                                });
+                            } else {
+                                if ui.selectable_label(is_selected, &preset.name).clicked() {
+                                    self.view_mode = ViewMode::Preset(idx);
+                                }
+                                // Delete button (small x)
+                                if self.config.presets.len() > 1 {
+                                    if ui.small_button("x").clicked() {
+                                        preset_idx_to_delete = Some(idx);
+                                    }
                                 }
                             }
                         });
@@ -447,6 +454,7 @@ impl eframe::App for SettingsApp {
 
                             let mut preset = self.config.presets[idx].clone();
                             let mut preset_changed = false;
+                            let is_vietnamese = self.config.ui_language == "vi";
 
                             // Removed Heading
                             ui.add_space(5.0);
@@ -458,109 +466,48 @@ impl eframe::App for SettingsApp {
                                     preset_changed = true;
                                 }
                             });
-
-                            // 2. Prompt & Language Tag
-                            ui.group(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(text.prompt_label).strong());
-                                    if ui.button(text.insert_lang_btn).clicked() {
-                                        preset.prompt.push_str(" {language} ");
-                                        preset_changed = true;
-                                    }
-                                });
+                            
+                            // Type Dropdown
+                            ui.horizontal(|ui| {
+                                ui.label(text.preset_type_label);
+                                let image_label = if is_vietnamese { "Hiểu hình ảnh" } else { "Image Understanding" };
+                                let audio_label = if is_vietnamese { "Hiểu âm thanh (sắp có)" } else { "Audio Understanding (Coming soon)" };
                                 
-                                if ui.add(egui::TextEdit::multiline(&mut preset.prompt).desired_rows(3).desired_width(f32::INFINITY)).changed() {
-                                    preset_changed = true;
-                                }
+                                let selected_text = if preset.preset_type == "audio" { audio_label } else { image_label };
                                 
-                                // Language Dropdown (Searchable - using menu_button to fix focus issues)
-                                ui.horizontal(|ui| {
-                                    ui.label(text.lang_for_tag_label);
-                                    
-                                    let lang_label = preset.selected_language.clone();
-                                    ui.menu_button(lang_label, |ui| {
-                                        ui.style_mut().wrap = Some(false);
-                                        ui.set_min_width(150.0);
-                                        ui.add(egui::TextEdit::singleline(&mut self.search_query).hint_text(text.search_placeholder));
-                                        
-                                        let q = self.search_query.to_lowercase();
-                                        egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                                            for lang in get_all_languages().iter() {
-                                                if q.is_empty() || lang.to_lowercase().contains(&q) {
-                                                    if ui.button(lang).clicked() {
-                                                        preset.selected_language = lang.clone();
-                                                        preset_changed = true;
-                                                        ui.close_menu();
-                                                    }
-                                                }
-                                            }
-                                        });
-                                    });
-                                });
-                            });
-
-                            // 3. Model & Settings
-                            let is_vietnamese = self.config.ui_language == "vi";
-                            ui.group(|ui| {
-                                ui.label(egui::RichText::new(text.model_section).strong());
-                                
-                                // Vision Model Selector
-                                let full_label = get_model_by_id(&preset.model)
-                                    .map(|m| m.get_label(is_vietnamese))
-                                    .unwrap_or_else(|| preset.model.clone());
-                                
-                                // Short label for outer display
-                                let short_label = full_label.split('(').next().unwrap_or(&full_label).trim().to_string();
-
-                                egui::ComboBox::from_id_source("vision_model_selector")
-                                    .selected_text(short_label)
-                                    .width(250.0)
+                                egui::ComboBox::from_id_source("preset_type_combo")
+                                    .selected_text(selected_text)
                                     .show_ui(ui, |ui| {
-                                        for model in get_all_models() {
-                                            if model.enabled && model.model_type == ModelType::Vision {
-                                                if ui.selectable_value(&mut preset.model, model.id.clone(), model.get_label(is_vietnamese)).clicked() {
-                                                    preset_changed = true;
-                                                }
-                                            }
-                                        }
-                                    });
-
-                                ui.horizontal(|ui| {
-                                    ui.label(text.streaming_label);
-                                    egui::ComboBox::from_id_source("stream_combo")
-                                        .selected_text(if preset.streaming_enabled { text.streaming_option_stream } else { text.streaming_option_wait })
-                                        .show_ui(ui, |ui| {
-                                            if ui.selectable_value(&mut preset.streaming_enabled, false, text.streaming_option_wait).clicked() { preset_changed = true; }
-                                            if ui.selectable_value(&mut preset.streaming_enabled, true, text.streaming_option_stream).clicked() { preset_changed = true; }
-                                        });
-                                });
-
-                                ui.horizontal(|ui| {
-                                    if ui.checkbox(&mut preset.auto_copy, text.auto_copy_label).clicked() {
-                                        preset_changed = true;
-                                    }
-                                    if preset.auto_copy {
-                                        if ui.checkbox(&mut preset.hide_overlay, text.hide_overlay_label).clicked() {
+                                        if ui.selectable_value(&mut preset.preset_type, "image".to_string(), image_label).clicked() {
                                             preset_changed = true;
                                         }
-                                    }
-                                });
+                                        ui.add_enabled_ui(false, |ui| {
+                                            ui.selectable_value(&mut preset.preset_type, "audio".to_string(), audio_label);
+                                        });
+                                    });
                             });
 
-                            // 4. Retranslate
-                            ui.group(|ui| {
-                                ui.label(egui::RichText::new(text.retranslate_section).strong());
-                                if ui.checkbox(&mut preset.retranslate, text.retranslate_checkbox).clicked() {
-                                    preset_changed = true;
-                                }
-
-                                if preset.retranslate {
-                                    // Target Language (Searchable - using menu_button)
+                            // 2. Prompt & Language Tag
+                            if !preset.is_upcoming {
+                                ui.group(|ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label(text.retranslate_to_label);
+                                        ui.label(egui::RichText::new(text.prompt_label).strong());
+                                        if ui.button(text.insert_lang_btn).clicked() {
+                                            preset.prompt.push_str(" {language} ");
+                                            preset_changed = true;
+                                        }
+                                    });
+                                    
+                                    if ui.add(egui::TextEdit::multiline(&mut preset.prompt).desired_rows(3).desired_width(f32::INFINITY)).changed() {
+                                        preset_changed = true;
+                                    }
+                                    
+                                    // Language Dropdown (Searchable - using menu_button to fix focus issues)
+                                    ui.horizontal(|ui| {
+                                        ui.label(text.lang_for_tag_label);
                                         
-                                        let retrans_label = preset.retranslate_to.clone();
-                                        ui.menu_button(retrans_label, |ui| {
+                                        let lang_label = preset.selected_language.clone();
+                                        ui.menu_button(lang_label, |ui| {
                                             ui.style_mut().wrap = Some(false);
                                             ui.set_min_width(150.0);
                                             ui.add(egui::TextEdit::singleline(&mut self.search_query).hint_text(text.search_placeholder));
@@ -570,7 +517,7 @@ impl eframe::App for SettingsApp {
                                                 for lang in get_all_languages().iter() {
                                                     if q.is_empty() || lang.to_lowercase().contains(&q) {
                                                         if ui.button(lang).clicked() {
-                                                            preset.retranslate_to = lang.clone();
+                                                            preset.selected_language = lang.clone();
                                                             preset_changed = true;
                                                             ui.close_menu();
                                                         }
@@ -579,78 +526,162 @@ impl eframe::App for SettingsApp {
                                             });
                                         });
                                     });
+                                });
 
-                                    // Text Model Selector
-                                    ui.horizontal(|ui| {
-                                        ui.label(text.retranslate_model_label);
-                                        let full_text_model = get_model_by_id(&preset.retranslate_model)
-                                            .map(|m| m.get_label(is_vietnamese))
-                                            .unwrap_or_else(|| preset.retranslate_model.clone());
-                                        
-                                        let short_text_model = full_text_model.split('(').next().unwrap_or(&full_text_model).trim().to_string();
-                                        
-                                        egui::ComboBox::from_id_source("text_model_selector")
-                                            .selected_text(short_text_model)
-                                            .width(180.0)
-                                            .show_ui(ui, |ui| {
-                                                for model in get_all_models() {
-                                                    if model.enabled && model.model_type == ModelType::Text {
-                                                        if ui.selectable_value(&mut preset.retranslate_model, model.id.clone(), model.get_label(is_vietnamese)).clicked() {
-                                                            preset_changed = true;
-                                                        }
+                                // 3. Model & Settings
+                                ui.group(|ui| {
+                                    ui.label(egui::RichText::new(text.model_section).strong());
+                                    
+                                    // Vision Model Selector
+                                    let full_label = get_model_by_id(&preset.model)
+                                        .map(|m| m.get_label(is_vietnamese))
+                                        .unwrap_or_else(|| preset.model.clone());
+                                    
+                                    // Short label for outer display
+                                    let short_label = full_label.split('(').next().unwrap_or(&full_label).trim().to_string();
+
+                                    egui::ComboBox::from_id_source("vision_model_selector")
+                                        .selected_text(short_label)
+                                        .width(250.0)
+                                        .show_ui(ui, |ui| {
+                                            for model in get_all_models() {
+                                                if model.enabled && model.model_type == ModelType::Vision {
+                                                    if ui.selectable_value(&mut preset.model, model.id.clone(), model.get_label(is_vietnamese)).clicked() {
+                                                        preset_changed = true;
                                                     }
                                                 }
-                                            });
-                                    });
+                                            }
+                                        });
 
-                                    // Retranslate Streaming Toggle
                                     ui.horizontal(|ui| {
                                         ui.label(text.streaming_label);
-                                        egui::ComboBox::from_id_source("retranslate_stream_combo")
-                                            .selected_text(if preset.retranslate_streaming_enabled { text.streaming_option_stream } else { text.streaming_option_wait })
+                                        egui::ComboBox::from_id_source("stream_combo")
+                                            .selected_text(if preset.streaming_enabled { text.streaming_option_stream } else { text.streaming_option_wait })
                                             .show_ui(ui, |ui| {
-                                                if ui.selectable_value(&mut preset.retranslate_streaming_enabled, false, text.streaming_option_wait).clicked() { preset_changed = true; }
-                                                if ui.selectable_value(&mut preset.retranslate_streaming_enabled, true, text.streaming_option_stream).clicked() { preset_changed = true; }
+                                                if ui.selectable_value(&mut preset.streaming_enabled, false, text.streaming_option_wait).clicked() { preset_changed = true; }
+                                                if ui.selectable_value(&mut preset.streaming_enabled, true, text.streaming_option_stream).clicked() { preset_changed = true; }
                                             });
                                     });
-                                }
-                            });
 
-                            // 5. Hotkeys
-                            ui.group(|ui| {
-                                ui.label(egui::RichText::new(text.hotkey_bag_label).strong());
-                                
-                                let mut indices_to_remove = Vec::new();
-                                for (h_idx, hotkey) in preset.hotkeys.iter().enumerate() {
                                     ui.horizontal(|ui| {
-                                        ui.strong(&hotkey.name);
-                                        if ui.small_button("✖").clicked() {
-                                            indices_to_remove.push(h_idx);
+                                        if ui.checkbox(&mut preset.auto_copy, text.auto_copy_label).clicked() {
+                                            preset_changed = true;
+                                        }
+                                        if preset.auto_copy {
+                                            if ui.checkbox(&mut preset.hide_overlay, text.hide_overlay_label).clicked() {
+                                                preset_changed = true;
+                                            }
+                                        }
+                                    });
+                                });
+
+                                // 4. Retranslate
+                                if !preset.hide_overlay {
+                                    ui.group(|ui| {
+                                        ui.label(egui::RichText::new(text.retranslate_section).strong());
+                                        if ui.checkbox(&mut preset.retranslate, text.retranslate_checkbox).clicked() {
+                                            preset_changed = true;
+                                        }
+
+                                        if preset.retranslate {
+                                            // Target Language (Searchable - using menu_button)
+                                            ui.horizontal(|ui| {
+                                                ui.label(text.retranslate_to_label);
+                                                
+                                                let retrans_label = preset.retranslate_to.clone();
+                                                ui.menu_button(retrans_label, |ui| {
+                                                    ui.style_mut().wrap = Some(false);
+                                                    ui.set_min_width(150.0);
+                                                    ui.add(egui::TextEdit::singleline(&mut self.search_query).hint_text(text.search_placeholder));
+                                                    
+                                                    let q = self.search_query.to_lowercase();
+                                                    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                                                        for lang in get_all_languages().iter() {
+                                                            if q.is_empty() || lang.to_lowercase().contains(&q) {
+                                                                if ui.button(lang).clicked() {
+                                                                    preset.retranslate_to = lang.clone();
+                                                                    preset_changed = true;
+                                                                    ui.close_menu();
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                                });
+                                            });
+
+                                            // Text Model Selector
+                                            ui.horizontal(|ui| {
+                                                ui.label(text.retranslate_model_label);
+                                                let full_text_model = get_model_by_id(&preset.retranslate_model)
+                                                    .map(|m| m.get_label(is_vietnamese))
+                                                    .unwrap_or_else(|| preset.retranslate_model.clone());
+                                                
+                                                let short_text_model = full_text_model.split('(').next().unwrap_or(&full_text_model).trim().to_string();
+                                                
+                                                egui::ComboBox::from_id_source("text_model_selector")
+                                                    .selected_text(short_text_model)
+                                                    .width(180.0)
+                                                    .show_ui(ui, |ui| {
+                                                        for model in get_all_models() {
+                                                            if model.enabled && model.model_type == ModelType::Text {
+                                                                if ui.selectable_value(&mut preset.retranslate_model, model.id.clone(), model.get_label(is_vietnamese)).clicked() {
+                                                                    preset_changed = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                            });
+
+                                            // Retranslate Streaming Toggle
+                                            ui.horizontal(|ui| {
+                                                ui.label(text.streaming_label);
+                                                egui::ComboBox::from_id_source("retranslate_stream_combo")
+                                                    .selected_text(if preset.retranslate_streaming_enabled { text.streaming_option_stream } else { text.streaming_option_wait })
+                                                    .show_ui(ui, |ui| {
+                                                        if ui.selectable_value(&mut preset.retranslate_streaming_enabled, false, text.streaming_option_wait).clicked() { preset_changed = true; }
+                                                        if ui.selectable_value(&mut preset.retranslate_streaming_enabled, true, text.streaming_option_stream).clicked() { preset_changed = true; }
+                                                    });
+                                            });
                                         }
                                     });
                                 }
-                                for i in indices_to_remove.iter().rev() {
-                                    preset.hotkeys.remove(*i);
-                                    preset_changed = true;
-                                }
 
-                                if self.recording_hotkey_for_preset == Some(idx) {
-                                    ui.horizontal(|ui| {
-                                        ui.colored_label(egui::Color32::YELLOW, text.press_keys);
-                                        if ui.button(text.cancel_label).clicked() {
-                                            self.recording_hotkey_for_preset = None;
-                                            self.hotkey_conflict_msg = None;
+                                // 5. Hotkeys
+                                ui.group(|ui| {
+                                    ui.label(egui::RichText::new(text.hotkey_bag_label).strong());
+                                    
+                                    let mut indices_to_remove = Vec::new();
+                                    for (h_idx, hotkey) in preset.hotkeys.iter().enumerate() {
+                                        ui.horizontal(|ui| {
+                                            ui.strong(&hotkey.name);
+                                            if ui.small_button("✖").clicked() {
+                                                indices_to_remove.push(h_idx);
+                                            }
+                                        });
+                                    }
+                                    for i in indices_to_remove.iter().rev() {
+                                        preset.hotkeys.remove(*i);
+                                        preset_changed = true;
+                                    }
+
+                                    if self.recording_hotkey_for_preset == Some(idx) {
+                                        ui.horizontal(|ui| {
+                                            ui.colored_label(egui::Color32::YELLOW, text.press_keys);
+                                            if ui.button(text.cancel_label).clicked() {
+                                                self.recording_hotkey_for_preset = None;
+                                                self.hotkey_conflict_msg = None;
+                                            }
+                                        });
+                                        if let Some(msg) = &self.hotkey_conflict_msg {
+                                            ui.colored_label(egui::Color32::RED, msg);
                                         }
-                                    });
-                                    if let Some(msg) = &self.hotkey_conflict_msg {
-                                        ui.colored_label(egui::Color32::RED, msg);
+                                    } else {
+                                        if ui.button(text.add_hotkey_button).clicked() {
+                                            self.recording_hotkey_for_preset = Some(idx);
+                                        }
                                     }
-                                } else {
-                                    if ui.button(text.add_hotkey_button).clicked() {
-                                        self.recording_hotkey_for_preset = Some(idx);
-                                    }
-                                }
-                            });
+                                });
+                            }
 
                             // Update the preset in the config
                             if idx < self.config.presets.len() {

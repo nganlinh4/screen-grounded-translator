@@ -34,6 +34,7 @@ pub struct LocaleText {
     pub cancel_label: &'static str,
     pub reset_defaults_btn: &'static str,
     pub hide_overlay_label: &'static str,
+    pub preset_type_label: &'static str,
 }
 
 impl LocaleText {
@@ -74,6 +75,7 @@ impl LocaleText {
                 cancel_label: "Hủy",
                 reset_defaults_btn: "Khôi phục mặc định",
                 hide_overlay_label: "Ẩn overlay",
+                preset_type_label: "Loại hình:",
             },
             _ => Self {
                 api_section: "Global Settings",
@@ -110,6 +112,7 @@ impl LocaleText {
                 cancel_label: "Cancel",
                 reset_defaults_btn: "Reset to Defaults",
                 hide_overlay_label: "Hide overlay",
+                preset_type_label: "Type:",
             },
         }
     }
