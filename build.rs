@@ -131,8 +131,8 @@ fn create_multi_size_ico(png_path: &Path, ico_path: &Path) {
             data.extend_from_slice(&[0, 0, 0, 0]); // ColorsImportant
             
             // Pixel Data (BGRA, bottom-up)
-            for row in (0..size).rev() {
-                for col in 0..size {
+            for row in (0..rgba.height()).rev() {
+                for col in 0..rgba.width() {
                     let pixel = rgba.get_pixel(col, row);
                     data.push(pixel[2]); // B
                     data.push(pixel[1]); // G
