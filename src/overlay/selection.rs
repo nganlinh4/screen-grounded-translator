@@ -288,9 +288,23 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
 
 // Unified Software Renderer using SDF for AA and Glow
 unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glowing: bool, time_offset: f32) {
-    // Pad buffer to allow for AA feathering and Glow reach
-    let glow_reach = if is_glowing { 60.0 } else { 2.0 };
-    let pad = glow_reach as i32 + 2; 
+    // Determine dynamic reach based on box size
+    let min_dim = w.min(h) as f32;
+    let perimeter = 2.0 * (w + h) as f32;
+    
+    // Scale reach: min 30px, max 180px based on 20% of smallest side
+    // Increased max range to 180 for "Epic" feel on large screens
+    let dynamic_base_scale = if is_glowing {
+        (min_dim * 0.2).clamp(30.0, 180.0)
+    } else {
+        2.0
+    };
+
+    // Calculate buffer padding to accommodate the glow
+    // Increased multiplier to 1.7 to prevent clipping the more dramatic waves
+    let max_possible_reach = if is_glowing { dynamic_base_scale * 1.7 } else { 2.0 };
+    let pad = max_possible_reach.ceil() as i32 + 4; 
+    
     let buf_w = w + (pad * 2);
     let buf_h = h + (pad * 2);
     
@@ -319,6 +333,19 @@ unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glowing
         let center_y = (pad as f32) + by;
 
         let time_rad = time_offset.to_radians();
+        
+        // --- UPDATED FREQUENCY SCALING (Drama Tuned) ---
+        // Moderate scaling: 1800.0 divisor.
+        // Ensures large boxes have structure, but not "spikes".
+        let complexity_scale = 1.0 + (perimeter / 1800.0);
+        
+        // Frequencies: 2.0 and 5.0 base.
+        // Creates a nice organic interference pattern.
+        let freq1 = (2.0 * complexity_scale).round();
+        let freq2 = (5.0 * complexity_scale).round();
+        
+        // Scale speed slower for large objects to maintain "majestic" feel
+        let time_mult = 1.0 / complexity_scale.sqrt();
 
         for y in 0..buf_h {
             for x in 0..buf_w {
@@ -333,27 +360,26 @@ unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glowing
 
                 if is_glowing {
                     // --- ANIMATED GLOW MODE ---
-                    // 1. Hard Border (AA)
                     if d > 0.0 {
                         // Anti-aliased outer edge (fades out in 1.5px)
                         let aa = (1.5 - d).clamp(0.0, 1.0);
                         if aa > 0.0 {
                             final_alpha = aa;
-                            // Outer edge color is bright
                             final_col = 0x00FFFFFF; 
                         }
                     } else {
                         // Inside: d <= 0
-                        // 2. Dynamic Noise for "Random Reach"
                         let angle = py.atan2(px);
                         
-                        // Noise function: combining sine waves for organic look
-                        // Frequencies: 3, 7. Time influences phase.
-                        let noise = (angle * 3.0 + time_rad * 2.0).sin() * 0.5 
-                                  + (angle * 7.0 - time_rad * 3.0).sin() * 0.3;
-                        
-                        // Base variance + Noise variance
-                        let local_glow_width = 30.0 + (noise * 15.0); 
+                        // Noise logic with DRAMA
+                         // Increased secondary wave amplitude (0.2 -> 0.4) for stronger interference
+                         let noise = (angle * freq1 + time_rad * 2.0 * time_mult).sin() * 0.5 
+                                   + (angle * freq2 - time_rad * 3.0 * time_mult).sin() * 0.4;
+                         
+                         // Scale local glow width dynamically
+                         // Increased Variance Multiplier: 0.4 -> 0.65
+                         // This makes the waves go much deeper/shallower = Dramatic pulsing
+                         let local_glow_width = dynamic_base_scale + (noise * (dynamic_base_scale * 0.65));
 
                         // Distance factor (0.0 at edge, 1.0 at deep center)
                         let dist_in = d.abs();
