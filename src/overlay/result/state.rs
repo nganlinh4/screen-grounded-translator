@@ -67,12 +67,15 @@ pub struct WindowState {
     pub linked_window: Option<HWND>,
     pub physics: CursorPhysics,
     
-    // --- CACHING ---
+    // --- CACHING & THROTTLING ---
     pub font_cache_dirty: bool,
     pub cached_font_size: i32,
-    pub content_bitmap: HBITMAP, // Cached static text/bg
+    pub content_bitmap: HBITMAP, 
     pub last_w: i32,
     pub last_h: i32,
+    
+    // New: Handle pending updates to avoid flooding Paint
+    pub pending_text: Option<String>,
 }
 
 lazy_static::lazy_static! {

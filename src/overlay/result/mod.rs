@@ -48,6 +48,8 @@ pub fn create_result_window(target_rect: RECT, win_type: WindowType) -> HWND {
                 let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
                 let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
                 let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+                
+                // Logic to position secondary window smartly
                 let screen_right = screen_x + screen_w;
                 let screen_bottom = screen_y + screen_h;
 
@@ -81,7 +83,6 @@ pub fn create_result_window(target_rect: RECT, win_type: WindowType) -> HWND {
             None, None, instance, None
         );
 
-        // Initialize physics (no pre-generation needed)
         let mut physics = CursorPhysics::default();
         physics.initialized = true;
 
@@ -95,28 +96,26 @@ pub fn create_result_window(target_rect: RECT, win_type: WindowType) -> HWND {
                 bg_color: color,
                 linked_window: None,
                 physics,
-                // Init Cache
                 font_cache_dirty: true,
-                cached_font_size: 10,
+                cached_font_size: 72, // Initialize with MAX size, so it shrinks to fit
                 content_bitmap: HBITMAP(0),
                 last_w: 0,
                 last_h: 0,
+                pending_text: None,
             });
         }
 
         SetLayeredWindowAttributes(hwnd, COLORREF(0), 220, LWA_ALPHA);
         
-        // Enable rounded corners (Windows 11)
-        let corner_preference = 2u32; // DWMWCP_ROUND
+        let corner_preference = 2u32; 
         let _ = DwmSetWindowAttribute(
             hwnd,
-            DWMWINDOWATTRIBUTE(33), // DWMWA_WINDOW_CORNER_PREFERENCE
+            DWMWINDOWATTRIBUTE(33),
             &corner_preference as *const _ as *const _,
             size_of::<u32>() as u32
         );
         
-        // 60 FPS Animation Timer (approx 16ms)
-        SetTimer(hwnd, 3, 16, None);
+        SetTimer(hwnd, 3, 16, None); // 60 FPS Timer
         
         InvalidateRect(hwnd, None, false);
         UpdateWindow(hwnd);
@@ -125,21 +124,16 @@ pub fn create_result_window(target_rect: RECT, win_type: WindowType) -> HWND {
     }
 }
 
+// Updated: Does NOT invalidate rect immediately. 
+// Just queues the data. Timer loop handles the rest.
 pub fn update_window_text(hwnd: HWND, text: &str) {
-    unsafe {
-        if !IsWindow(hwnd).as_bool() { return; }
-        let wide_text = to_wstring(text);
-        SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
-        
-        // Mark cache dirty to trigger redraw on next paint
-        {
-            let mut states = WINDOW_STATES.lock().unwrap();
-            if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-                state.font_cache_dirty = true;
-            }
-        }
-
-        InvalidateRect(hwnd, None, false);
+    if !unsafe { IsWindow(hwnd).as_bool() } { return; }
+    
+    let mut states = WINDOW_STATES.lock().unwrap();
+    if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+        state.pending_text = Some(text.to_string());
+        // We DO NOT call InvalidateRect here anymore.
+        // This allows the text stream to run at 1000hz without killing the UI.
     }
 }
 
@@ -152,13 +146,9 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             {
                 let states = WINDOW_STATES.lock().unwrap();
                 if let Some(state) = states.get(&(hwnd.0 as isize)) {
-                    // Show hand cursor if over copy button
-                    if state.on_copy_btn {
-                        show_system_cursor = true;
-                    }
+                    if state.on_copy_btn { show_system_cursor = true; }
                 }
             }
-            
             if show_system_cursor {
                 let h_cursor = LoadCursorW(None, IDC_HAND).unwrap_or(HCURSOR(0));
                 SetCursor(h_cursor);
@@ -175,19 +165,10 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
                 let dx = x - state.physics.x;
-                
-                // --- PHYSICS INPUT ---
-                // If moving horizontally, add velocity to the tilt (Spring Force)
-                // Limit the impulse to prevent spinning out of control
                 let impulse = (dx * 1.5).clamp(-20.0, 20.0);
-                
-                // We subtract because dragging right tilts handle left
                 state.physics.tilt_velocity -= impulse * 0.2; 
-                
-                // Clamp max tilt
                 state.physics.current_tilt = state.physics.current_tilt.clamp(-22.5, 22.5);
 
-                // Copy Button Hit Test
                 let mut rect = RECT::default();
                 GetClientRect(hwnd, &mut rect);
                 let width = rect.right - rect.left;
@@ -234,18 +215,11 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             let width = rect.right - rect.left;
             let height = rect.bottom - rect.top;
             
-            // Check Copy Button
             let btn_size = 24;
-            let btn_rect = RECT { 
-                left: width - btn_size, 
-                top: height - btn_size, 
-                right: width, 
-                bottom: height 
-            };
+            let btn_rect = RECT { left: width - btn_size, top: height - btn_size, right: width, bottom: height };
             let is_copy_click = x >= btn_rect.left && x <= btn_rect.right && y >= btn_rect.top && y <= btn_rect.bottom;
 
             if is_copy_click || msg == WM_RBUTTONUP {
-                // Copy Logic
                  let text_len = GetWindowTextLengthW(hwnd) + 1;
                 let mut buf = vec![0u16; text_len as usize];
                 GetWindowTextW(hwnd, &mut buf);
@@ -262,7 +236,6 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 if is_copy_click && msg == WM_LBUTTONUP { return LRESULT(0); }
             }
 
-            // --- TRIGGER SMASH ANIMATION ---
             if !is_copy_click {
                  {
                     let mut states = WINDOW_STATES.lock().unwrap();
@@ -273,19 +246,10 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 }
             }
             
-            // Dismiss linked window as well (synchronized fade)
             let (linked_hwnd, main_alpha) = {
                 let states = WINDOW_STATES.lock().unwrap();
-                let linked = if let Some(state) = states.get(&(hwnd.0 as isize)) {
-                    state.linked_window
-                } else {
-                    None
-                };
-                let alpha = if let Some(state) = states.get(&(hwnd.0 as isize)) {
-                    state.alpha
-                } else {
-                    220
-                };
+                let linked = if let Some(state) = states.get(&(hwnd.0 as isize)) { state.linked_window } else { None };
+                let alpha = if let Some(state) = states.get(&(hwnd.0 as isize)) { state.alpha } else { 220 };
                 (linked, alpha)
             };
             if let Some(linked) = linked_hwnd {
@@ -302,13 +266,41 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
         }
 
         WM_TIMER => {
+            // CHECK FOR PENDING TEXT UPDATES HERE
+            // This caps the text updates to the timer speed (60fps)
+            let mut need_repaint = false;
+            let mut pending_update: Option<String> = None;
+            
+            {
+                let mut states = WINDOW_STATES.lock().unwrap();
+                if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                     if let Some(txt) = state.pending_text.take() {
+                         pending_update = Some(txt);
+                     }
+                }
+            }
+
+            if let Some(txt) = pending_update {
+                let wide_text = to_wstring(&txt);
+                SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
+                
+                // Now we mark dirty
+                let mut states = WINDOW_STATES.lock().unwrap();
+                if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                    state.font_cache_dirty = true;
+                }
+                need_repaint = true;
+            }
+
             logic::handle_timer(hwnd, wparam);
+            if need_repaint {
+                InvalidateRect(hwnd, None, false);
+            }
             LRESULT(0)
         }
 
         WM_DESTROY => {
             let mut states = WINDOW_STATES.lock().unwrap();
-            // Cleanup bitmap resource
             if let Some(state) = states.remove(&(hwnd.0 as isize)) {
                 if state.content_bitmap.0 != 0 {
                     DeleteObject(state.content_bitmap);
