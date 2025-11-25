@@ -111,15 +111,14 @@ pub fn paint_window(hwnd: HWND) {
             let available_w = (width - (padding * 2)).max(1);
             let available_h = (height - (padding * 2)).max(1);
 
-            // === OPTIMIZATION: BIDIRECTIONAL LINEAR SEARCH ===
-            // 1. Try current size.
-            // 2. If it overflows -> Shrink until fit.
-            // 3. If it has extra space -> Grow until limit.
+            // === OPTIMIZATION: HEURISTIC JUMP + FINE TUNING ===
+            // 1. Jump to estimated size based on text ratio (single calculation)
+            // 2. Fine-tune shrinking if needed (non-linear scaling correction)
+            // 3. Fine-tune growing to fill available space (up to 10% threshold)
             
-            let mut test_size = font_size;
-            if test_size < 10 { test_size = 72; } // Reset to max if invalid
+            let mut test_size = if font_size < 8 { 72 } else { font_size };
             
-            // Helper function to measure text height at a given font size
+            // Helper to measure (same as before)
             let mut measure_text = |fs: i32| -> i32 {
                  let hfont = CreateFontW(fs, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
                  let old_font = SelectObject(cache_dc, hfont);
@@ -130,22 +129,31 @@ pub fn paint_window(hwnd: HWND) {
                  h
             };
 
-            let current_h = measure_text(test_size);
+            let mut current_h = measure_text(test_size);
 
+            // 1. JUMP: If text is huge, jump directly to estimated size
             if current_h > available_h {
-                // Too big? Shrink down.
-                while test_size > 12 {
-                    test_size -= 2; // Step by 2 for speed
-                    if measure_text(test_size) <= available_h { break; }
-                }
-            } else {
-                // Too small? Grow up.
-                // We only grow if it's SIGNIFICANTLY smaller to avoid jitter
-                while test_size < 72 {
-                    let next_size = test_size + 2;
-                    if measure_text(next_size) > available_h { break; }
-                    test_size = next_size;
-                }
+                let ratio = available_h as f32 / current_h as f32;
+                // Target slightly smaller (0.95) to ensure fit, max 8px floor
+                let target_size = (test_size as f32 * ratio * 0.95) as i32;
+                test_size = target_size.max(8); 
+                current_h = measure_text(test_size);
+            }
+
+            // 2. FINE TUNE (Shrink): If still overflowing (e.g. non-linear scaling)
+            while current_h > available_h && test_size > 8 {
+                test_size -= 1;
+                current_h = measure_text(test_size);
+            }
+
+            // 3. FINE TUNE (Grow): If we have extra space, fill it
+            // Only grow if we have >10% vertical space to avoid jitter
+            while current_h < (available_h as f32 * 0.9) as i32 && test_size < 72 {
+                let next_size = test_size + 1;
+                let next_h = measure_text(next_size);
+                if next_h > available_h { break; } // Stop if next size would overflow
+                test_size = next_size;
+                current_h = next_h;
             }
             
             font_size = test_size;

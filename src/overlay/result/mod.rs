@@ -6,6 +6,7 @@ use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::core::*;
 use std::mem::size_of;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::overlay::utils::to_wstring;
 
@@ -106,6 +107,7 @@ pub fn create_result_window(target_rect: RECT, win_type: WindowType) -> HWND {
                 last_w: 0,
                 last_h: 0,
                 pending_text: None,
+                last_text_update_time: 0,
             });
         }
 
@@ -268,12 +270,22 @@ unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
         WM_TIMER => {
             let mut need_repaint = false;
             let mut pending_update: Option<String> = None;
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u32)
+                .unwrap_or(0);
             
             {
                 let mut states = WINDOW_STATES.lock().unwrap();
                 if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-                     if let Some(txt) = state.pending_text.take() {
-                         pending_update = Some(txt);
+                     // THROTTLING LOGIC:
+                     // Update if we have text AND (it's been >66ms OR it's the very first update)
+                     // 66ms ~= 15 FPS update rate for text. Physics stays at 60 FPS.
+                     if state.pending_text.is_some() && 
+                        (state.last_text_update_time == 0 || now.wrapping_sub(state.last_text_update_time) > 66) {
+                         
+                         pending_update = state.pending_text.take();
+                         state.last_text_update_time = now;
                      }
                 }
             }

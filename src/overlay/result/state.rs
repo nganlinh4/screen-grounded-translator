@@ -76,6 +76,9 @@ pub struct WindowState {
     
     // New: Handle pending updates to avoid flooding Paint
     pub pending_text: Option<String>,
+    
+    // NEW: Timestamp for throttling text updates (in milliseconds)
+    pub last_text_update_time: u32,
 }
 
 lazy_static::lazy_static! {
