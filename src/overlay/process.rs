@@ -249,10 +249,10 @@ pub fn process_and_close(app: Arc<Mutex<AppState>>, rect: RECT, overlay_hwnd: HW
     }
 }
 
-pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT) {
+pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT, retrans_rect: Option<RECT>) {
     let hide_overlay = preset.hide_overlay;
     let auto_copy = preset.auto_copy;
-    let retranslate = preset.retranslate;
+    let retranslate = preset.retranslate && retrans_rect.is_some();
     let retranslate_to = preset.retranslate_to.clone();
     let retranslate_model_id = preset.retranslate_model.clone();
     let retranslate_streaming_enabled = preset.retranslate_streaming_enabled;
@@ -269,18 +269,18 @@ pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT
             copy_to_clipboard(&text, HWND(0));
         }
 
-        // Retranslation logic (reused from process_and_close)
         if retranslate && !text.trim().is_empty() {
+            let rect_sec = retrans_rect.unwrap();
             let text_for_retrans = text.clone();
             let groq_key = {
                 let app = crate::APP.lock().unwrap();
                 app.config.api_key.clone()
             };
             
-            // Spawn Secondary UI Thread (same as image processing)
             std::thread::spawn(move || {
-                let secondary_hwnd = create_result_window(rect, WindowType::Secondary);
+                let secondary_hwnd = create_result_window(rect_sec, WindowType::Secondary);
                 link_windows(primary_hwnd, secondary_hwnd);
+                
                 if !hide_overlay {
                     unsafe { ShowWindow(secondary_hwnd, SW_SHOW); }
                     update_window_text(secondary_hwnd, "");
@@ -291,9 +291,8 @@ pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT
                     let acc_text = Arc::new(Mutex::new(String::new()));
                     let acc_text_clone = acc_text.clone();
                     
-                    // Resolve text model
                     let tm_config = crate::model_config::get_model_by_id(&retranslate_model_id);
-                    let tm_name = tm_config.map(|m| m.full_name).expect("Retranslate model not found");
+                    let tm_name = tm_config.map(|m| m.full_name).unwrap_or_else(|| "openai/gpt-oss-20b".to_string());
 
                     let text_res = translate_text_streaming(
                         &groq_key,
@@ -340,7 +339,6 @@ pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT
             });
         }
         
-        // Pump messages for primary window
         unsafe {
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).into() {

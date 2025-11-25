@@ -389,22 +389,21 @@ pub fn record_audio_and_transcribe(
 ) {
     let host = cpal::default_host();
     
-    // Device selection with WASAPI loopback support
+    // Improved Device Selection logic
     let device = if preset.audio_source == "device" {
-        // Try to get loopback device on Windows
         #[cfg(target_os = "windows")]
         {
-            use cpal::traits::HostTrait;
-            // For WASAPI loopback, we need to use the output device in loopback mode
-            // This requires using the host's default output device
+            // For device audio (loopback), we MUST use the default output device
+            // and treat it as an input source.
             match host.default_output_device() {
-                Some(output_dev) => {
-                    // Note: cpal doesn't directly support WASAPI loopback mode
-                    // We'll use the output device, but actual loopback requires platform-specific code
-                    // For now, fall back to default input
-                    host.default_input_device().expect("No input device available")
+                Some(d) => {
+                    println!("Debug: Selected Output Device for Loopback: {}", d.name().unwrap_or_default());
+                    d
                 },
-                None => host.default_input_device().expect("No input device available")
+                None => {
+                    eprintln!("Error: No default output device found for loopback.");
+                    host.default_input_device().expect("No input device available")
+                }
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -412,10 +411,20 @@ pub fn record_audio_and_transcribe(
             host.default_input_device().expect("No input device available")
         }
     } else {
+        println!("Debug: Selected Microphone Input");
         host.default_input_device().expect("No input device available")
     };
 
-    let config = device.default_input_config().expect("Failed to get config");
+    // Try to get a config. For loopback, we often need the default output config
+    // but we use it to build an input stream.
+    let config = if preset.audio_source == "device" {
+        device.default_output_config().or_else(|_| device.default_input_config())
+    } else {
+        device.default_input_config()
+    }.expect("Failed to get device config");
+
+    println!("Audio Config: Channels={}, Sample Rate={}", config.channels(), config.sample_rate().0);
+
     let sample_rate = config.sample_rate().0;
     let channels = config.channels();
     
@@ -432,16 +441,18 @@ pub fn record_audio_and_transcribe(
 
     // Stream Setup
     let err_fn = |err| eprintln!("Audio stream error: {}", err);
-    let stream = match config.sample_format() {
+    
+    // We strictly assume the device supports the config we got.
+    // For Loopback on Windows with CPAL, we must simply build an input stream on the output device.
+    // CPAL handles the WASAPI loopback flag internally if it detects it's an output device used for input.
+    let stream_res = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config.into(),
             move |data: &[f32], _: &_| {
                 if !pause_signal.load(Ordering::Relaxed) {
                     let mut buf = writer_buf.lock().unwrap();
                     for &sample in data {
-                        // Convert f32 to i16 for WAV
-                        let amplitude = i16::MAX as f32;
-                        let s = (sample * amplitude) as i16;
+                        let s = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                         buf.push(s); 
                     }
                 }
@@ -461,15 +472,28 @@ pub fn record_audio_and_transcribe(
             None
         ),
         _ => panic!("Unsupported audio format"),
-    }.expect("Failed to build audio stream");
+    };
+
+    if let Err(e) = stream_res {
+        eprintln!("Failed to build stream: {}", e);
+        unsafe { PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+        return;
+    }
+    let stream = stream_res.unwrap();
 
     stream.play().expect("Failed to start audio stream");
 
     // Wait loop
     while !stop_signal.load(Ordering::SeqCst) {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if !unsafe { IsWindow(overlay_hwnd).as_bool() } {
-            return; // Aborted
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Also check if UI died
+        if preset.hide_recording_ui {
+            // If hidden, we rely purely on stop signal. 
+            // BUT user might have closed app via tray.
+        } else {
+             if !unsafe { IsWindow(overlay_hwnd).as_bool() } {
+                return; // Aborted via window close
+            }
         }
     }
 
@@ -479,6 +503,7 @@ pub fn record_audio_and_transcribe(
     let samples = audio_buffer.lock().unwrap().clone();
     
     if samples.is_empty() {
+        println!("Warning: Recorded audio buffer is empty.");
         unsafe {
             PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
@@ -487,7 +512,7 @@ pub fn record_audio_and_transcribe(
 
     // Write to temporary WAV file
     let temp_dir = std::env::temp_dir();
-    let wav_path = temp_dir.join(format!("sgt_audio_{}.wav", std::time::SystemTime::now()
+    let wav_path = temp_dir.join(format!("sgt_debug_audio_{}.wav", std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis()));
@@ -498,15 +523,17 @@ pub fn record_audio_and_transcribe(
     }
     writer.finalize().expect("Failed to finalize WAV file");
 
+    // DEBUG: Log the path so user can listen
+    println!("DEBUG: Audio file saved to: {:?}", wav_path);
+    // DO NOT DELETE FILE FOR DEBUGGING
+    // let _ = std::fs::remove_file(&wav_path);
+
     // Read WAV file for upload
     let wav_data = std::fs::read(&wav_path).expect("Failed to read WAV file");
     
-    // Clean up temp file
-    let _ = std::fs::remove_file(&wav_path);
-
     // Determine API endpoint and model
     let model_config = crate::model_config::get_model_by_id(&preset.model);
-    let model_name = model_config.map(|m| m.full_name.clone()).unwrap_or_else(|| "whisper-1".to_string());
+    let model_name = model_config.map(|m| m.full_name.clone()).unwrap_or_else(|| "whisper-large-v3-turbo".to_string());
     
     // Get API key from config
     let api_key = {
@@ -515,35 +542,53 @@ pub fn record_audio_and_transcribe(
     };
 
     if api_key.trim().is_empty() {
+        eprintln!("Error: No API Key found.");
         unsafe {
             PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
         return;
     }
 
-    // Upload to Whisper API (Groq compatible endpoint)
+    // Upload to Whisper API
     let transcription_result = upload_audio_to_whisper(&api_key, &model_name, wav_data);
     
     // Handle Result showing
     unsafe {
-        PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+        // If hidden UI, we can't post message to it to close itself, but it might not exist.
+        if IsWindow(overlay_hwnd).as_bool() {
+             PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
     }
 
     match transcription_result {
         Ok(transcription_text) => {
-            // Spawn Result Windows (Center Screen)
             let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
             let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
-            let w = 600;
-            let h = 200;
-            let rect = RECT {
-                left: (screen_w - w) / 2,
-                top: (screen_h - h) / 2,
-                right: (screen_w + w) / 2,
-                bottom: (screen_h + h) / 2
+            
+            // Logic to position windows based on retranslate need
+            let (rect, retranslate_rect) = if preset.retranslate {
+                // Split screen
+                let w = 600;
+                let h = 300;
+                let gap = 20;
+                let total_w = w * 2 + gap;
+                let start_x = (screen_w - total_w) / 2;
+                let y = (screen_h - h) / 2;
+                
+                (
+                    RECT { left: start_x, top: y, right: start_x + w, bottom: y + h },
+                    Some(RECT { left: start_x + w + gap, top: y, right: start_x + w + gap + w, bottom: y + h })
+                )
+            } else {
+                // Center
+                let w = 700;
+                let h = 300;
+                let x = (screen_w - w) / 2;
+                let y = (screen_h - h) / 2;
+                (RECT { left: x, top: y, right: x + w, bottom: y + h }, None)
             };
 
-            crate::overlay::process::show_audio_result(preset, transcription_text, rect);
+            crate::overlay::process::show_audio_result(preset, transcription_text, rect, retranslate_rect);
         },
         Err(e) => {
             eprintln!("Transcription error: {}", e);
