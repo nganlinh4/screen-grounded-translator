@@ -228,7 +228,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                     let w = (r.right - r.left) as i32;
                     let h = (r.bottom - r.top) as i32;
                     if w > 0 && h > 0 {
-                        super::paint_utils::render_box_sdf(HDC(mem_dc.0), r, w, h, true, ANIMATION_OFFSET);
+                        super::paint_utils::render_box_sdf_old_style(HDC(mem_dc.0), r, w, h, ANIMATION_OFFSET);
                     }
                 } else {
                     let w = (r.right - r.left) as i32;
