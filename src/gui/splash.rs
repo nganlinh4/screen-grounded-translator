@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 // --- CONFIGURATION ---
 const ANIMATION_DURATION: f32 = 8.5;
 const START_TRANSITION: f32 = 3.0; 
-// We no longer use FADE_OUT_START for the whole screen, only for debris
+const EXIT_DURATION: f32 = 0.6; // Faster, punchier warp
 
 // --- PALETTE ---
 const C_VOID: Color32 = Color32::from_rgb(10, 12, 18);
@@ -69,17 +69,11 @@ struct Voxel {
     helix_radius: f32,
     helix_angle_offset: f32,
     helix_y: f32,
-    
     target_pos: Vec3,
-    
-    // Animation State
     pos: Vec3,
     rot: Vec3,
     scale: f32,
-    
-    // Physics State (Interactive)
     velocity: Vec3,
-    
     color: Color32,
     noise_factor: f32,
     is_debris: bool,
@@ -89,9 +83,10 @@ pub struct SplashScreen {
     start_time: f64,
     voxels: Vec<Voxel>,
     init_done: bool,
-    mouse_influence: Vec2, // For camera parallax
-    mouse_world_pos: Vec3, // For interaction
+    mouse_influence: Vec2,
+    mouse_world_pos: Vec3,
     loading_text: String,
+    exit_start_time: Option<f64>,
 }
 
 pub enum SplashStatus {
@@ -108,6 +103,7 @@ impl SplashScreen {
             mouse_influence: Vec2::ZERO,
             mouse_world_pos: Vec3::ZERO,
             loading_text: "TRANSLATING...".to_string(),
+            exit_start_time: None,
         }
     }
 
@@ -118,7 +114,6 @@ impl SplashScreen {
             (rng_state >> 32) as f32 / 4294967295.0
         };
 
-        // --- GENERATE S G T VOXELS ---
         let s_map = [ " ####", "##   ", " ### ", "   ##", "#### " ];
         let g_map = [ " ####", "##   ", "## ##", "##  #", " ####" ];
         let t_map = [ "#####", "  #  ", "  #  ", "  #  ", "  #  " ];
@@ -131,7 +126,6 @@ impl SplashScreen {
                 for (x, ch) in row.chars().enumerate() {
                     if ch == '#' {
                         total_voxels += 1;
-                        
                         let tx = offset_x + (x as f32 * spacing);
                         let ty = (2.0 - y as f32) * spacing;
                         let tz = 0.0;
@@ -164,7 +158,6 @@ impl SplashScreen {
         spawn_letter(&g_map, -25.0, C_MAGENTA);
         spawn_letter(&t_map, 60.0, C_CYAN);
 
-        // --- DECORATIVE DEBRIS ---
         for _ in 0..60 {
             let h_y = (rng() * 300.0) - 150.0;
             let h_radius = 80.0 + rng() * 60.0;
@@ -185,7 +178,6 @@ impl SplashScreen {
                 is_debris: true,
             });
         }
-
         self.init_done = true;
     }
 
@@ -193,48 +185,59 @@ impl SplashScreen {
         if !self.init_done { self.init_scene(); }
 
         let now = ctx.input(|i| i.time);
-        let t = (now - self.start_time) as f32;
         
-        // Wait Phase Logic
-        if t > ANIMATION_DURATION {
-            // Click anywhere to continue
-            if ctx.input(|i| i.pointer.any_click()) {
-                return SplashStatus::Finished;
+        if self.exit_start_time.is_none() {
+            let t = (now - self.start_time) as f32;
+            if t > ANIMATION_DURATION {
+                if ctx.input(|i| i.pointer.any_click()) {
+                    self.exit_start_time = Some(now);
+                }
             }
         }
+
+        let t_abs = (now - self.start_time) as f32;
+        let physics_t = t_abs.min(ANIMATION_DURATION);
+
+        // --- EXIT LOGIC ---
+        let mut warp_progress = 0.0;
+        if let Some(exit_start) = self.exit_start_time {
+            let dt = (now - exit_start) as f32;
+            if dt > EXIT_DURATION {
+                return SplashStatus::Finished;
+            }
+            // Quintic easing for massive acceleration "punch"
+            warp_progress = (dt / EXIT_DURATION).powi(5); 
+        }
+
         ctx.request_repaint();
 
-        // --- MOUSE INPUT & 3D PROJECTION INVERSION ---
         if let Some(pointer) = ctx.input(|i| i.pointer.hover_pos()) {
             let rect = ctx.input(|i| i.screen_rect());
             let center = rect.center();
-            
-            // Parallax (Screen Space)
             let tx = (pointer.x - center.x) / center.x;
             let ty = (pointer.y - center.y) / center.y;
             self.mouse_influence.x += (tx - self.mouse_influence.x) * 0.05;
             self.mouse_influence.y += (ty - self.mouse_influence.y) * 0.05;
 
-            // World Space Projection
-            // Clamp T for physics calc so we don't drift
-            let physics_t = t.min(ANIMATION_DURATION);
-            let cam_dist = 600.0 + smoothstep(0.0, 8.0, physics_t) * 100.0;
-            let fov = 800.0;
+            let cam_z_offset = warp_progress * 2000.0; 
+            let cam_dist = 600.0 + smoothstep(0.0, 8.0, physics_t) * 100.0 - cam_z_offset;
             
+            let fov = 800.0;
             let mouse_wx = (pointer.x - center.x) * cam_dist / fov;
             let mouse_wy = -(pointer.y - center.y) * cam_dist / fov;
             self.mouse_world_pos = Vec3::new(mouse_wx, mouse_wy, 0.0);
         }
 
-        // Update Text based on timeline
-        if t < 2.0 { self.loading_text = "TRANSLATING...".to_string(); }
-        else if t < 4.0 { self.loading_text = "OCR...".to_string(); }
-        else if t < 6.0 { self.loading_text = "TRANSCRIBING...".to_string(); }
-        else { self.loading_text = "nganlinh4".to_string(); }
+        if self.exit_start_time.is_none() {
+            if t_abs < 2.0 { self.loading_text = "TRANSLATING...".to_string(); }
+            else if t_abs < 4.0 { self.loading_text = "OCR...".to_string(); }
+            else if t_abs < 6.0 { self.loading_text = "TRANSCRIBING...".to_string(); }
+            else { self.loading_text = "nganlinh4".to_string(); }
+        } else {
+            self.loading_text = "HYPERLINK_ENGAGED".to_string();
+        }
 
         // --- PHYSICS UPDATE ---
-        // Freeze the "Assemble" animation state when done so it doesn't drift
-        let physics_t = t.min(ANIMATION_DURATION); 
         let helix_spin = physics_t * 2.0 + (physics_t * physics_t * 0.2); 
         
         for v in &mut self.voxels {
@@ -242,61 +245,51 @@ impl SplashScreen {
             let my_end = my_start + 2.0;
             let progress = smoothstep(my_start, my_end, physics_t);
 
-            // 1. Base Position (Helix or Target)
             if progress <= 0.0 {
-                // Helix Mode
                 let current_h_y = v.helix_y + (physics_t * 2.0 + v.noise_factor * 10.0).sin() * 5.0;
                 let current_angle = v.helix_angle_offset + helix_spin;
                 let current_radius = v.helix_radius * (1.0 + physics_t * 0.1);
-                
-                v.pos = Vec3::new(
-                    current_angle.cos() * current_radius,
-                    current_h_y,
-                    current_angle.sin() * current_radius
-                );
+                v.pos = Vec3::new(current_angle.cos() * current_radius, current_h_y, current_angle.sin() * current_radius);
                 v.rot.y += 0.05;
                 v.scale = 0.8;
                 v.velocity = Vec3::ZERO;
             } else {
-                // Transition / Target Mode
                 let current_h_y = v.helix_y + (physics_t * 2.0 + v.noise_factor * 10.0).sin() * 5.0;
                 let current_angle = v.helix_angle_offset + helix_spin;
                 let current_radius = v.helix_radius * (1.0 + physics_t * 0.1);
-                let helix_pos = Vec3::new(
-                    current_angle.cos() * current_radius,
-                    current_h_y,
-                    current_angle.sin() * current_radius
-                );
+                let helix_pos = Vec3::new(current_angle.cos() * current_radius, current_h_y, current_angle.sin() * current_radius);
 
-                let target_base = v.target_pos;
-                let mut pos = helix_pos.lerp(target_base, progress);
+                let mut target_base = v.target_pos;
+                
+                // WARP EFFECT: Explode voxels
+                if warp_progress > 0.0 {
+                    let radial = Vec3::new(v.pos.x, v.pos.y, 0.0).normalize();
+                    // Expand outwards massively
+                    target_base = target_base.add(radial.mul(warp_progress * 500.0));
+                    // Slight twist
+                    target_base = target_base.rotate_z(warp_progress * 0.5);
+                }
 
-                // --- INTERACTIVE PHYSICS (Repulsion) ---
-                if progress > 0.9 && !v.is_debris {
+                let pos = helix_pos.lerp(target_base, progress);
+
+                if progress > 0.9 && !v.is_debris && warp_progress == 0.0 {
                     let to_mouse = pos.sub(self.mouse_world_pos);
                     let dist_sq = to_mouse.x*to_mouse.x + to_mouse.y*to_mouse.y; 
-                    
                     if dist_sq < 6400.0 {
                         let dist = dist_sq.sqrt();
                         let force = (80.0 - dist) / 80.0; 
-                        let push_dir = to_mouse.normalize();
-                        
-                        v.velocity = v.velocity.add(push_dir.mul(force * 2.0));
-                        
-                        v.rot.x += push_dir.y * force * 0.2;
-                        v.rot.y -= push_dir.x * force * 0.2;
+                        v.velocity = v.velocity.add(to_mouse.normalize().mul(force * 2.0));
+                        v.rot.x += to_mouse.y * force * 0.01;
+                        v.rot.y -= to_mouse.x * force * 0.01;
                     }
                 }
 
-                // Apply Velocity & Damping (Spring back to target)
                 let displacement = pos.sub(target_base);
                 let spring_force = displacement.mul(-0.1); 
                 v.velocity = v.velocity.add(spring_force);
                 v.velocity = v.velocity.mul(0.90); 
                 
-                pos = pos.add(v.velocity);
-                v.pos = pos;
-
+                v.pos = pos.add(v.velocity);
                 v.rot = v.rot.lerp(Vec3::ZERO, 0.1); 
                 
                 if progress > 0.95 {
@@ -312,68 +305,73 @@ impl SplashScreen {
         egui::CentralPanel::default()
             .frame(egui::Frame::none())
             .show(ctx, |ui| {
-                self.render(ui, t);
+                self.render(ui, t_abs, warp_progress);
             });
 
         SplashStatus::Ongoing
     }
 
-    fn render(&self, ui: &mut egui::Ui, t: f32) {
+    fn render(&self, ui: &mut egui::Ui, t: f32, warp_prog: f32) {
         let rect = ui.max_rect();
         let painter = ui.painter().with_clip_rect(rect);
         let center = rect.center();
         
-        // Fade Logic (Fade In only, no auto Fade Out for UI)
         let alpha = if t < 1.0 { t } else { 1.0 };
         let master_alpha = alpha.clamp(0.0, 1.0);
 
-        // Background
+        // 1. Background - Keep it DARK during warp
         painter.rect_filled(rect, 32.0, C_VOID);
 
-        // Grid
+        // 2. Grid
         if master_alpha > 0.05 {
-            // Clamp t for camera movement so it doesn't fly away infinitely
             let render_t = t.min(ANIMATION_DURATION + 5.0);
-            let cam_y = 150.0 + (render_t * 30.0);
+            // Move grid super fast during warp
+            let cam_y = 150.0 + (render_t * 30.0) + (warp_prog * 10000.0);
             let horizon = center.y + 100.0;
             let corner_radius = 32.0;
             
-            for i in 0..12 {
-                let z_dist = 1.0 + (i as f32 * 0.5) - ((cam_y * 0.05) % 0.5);
-                let perspective = 200.0 / z_dist;
-                let y = horizon + perspective * 0.8;
-                
-                if y > rect.bottom() || y < horizon { continue; }
+            // Fade grid out during warp so we are left with only streaks
+            let grid_fade = 1.0 - warp_prog;
 
-                let w = rect.width() * (2.0 / z_dist);
-                
-                let mut x_min = rect.left();
-                let mut x_max = rect.right();
-                
-                if y > rect.bottom() - corner_radius {
-                    let dy = y - (rect.bottom() - corner_radius);
-                    let dx = (corner_radius.powi(2) - dy.powi(2)).max(0.0).sqrt();
-                    x_min = rect.left() + corner_radius - dx;
-                    x_max = rect.right() - corner_radius + dx;
-                }
+            if grid_fade > 0.0 {
+                for i in 0..12 {
+                    let z_dist = 1.0 + (i as f32 * 0.5) - ((cam_y * 0.05) % 0.5);
+                    let perspective = 200.0 / (z_dist - warp_prog * 0.8).max(0.1);
+                    let y = horizon + perspective * 0.8;
+                    
+                    if y > rect.bottom() || y < horizon { continue; }
 
-                let x1 = (center.x - w).clamp(x_min, x_max);
-                let x2 = (center.x + w).clamp(x_min, x_max);
+                    let w = rect.width() * (2.0 / z_dist);
+                    
+                    let mut x_min = rect.left();
+                    let mut x_max = rect.right();
+                    
+                    if y > rect.bottom() - corner_radius {
+                        let dy = y - (rect.bottom() - corner_radius);
+                        let dx = (corner_radius.powi(2) - dy.powi(2)).max(0.0).sqrt();
+                        x_min = rect.left() + corner_radius - dx;
+                        x_max = rect.right() - corner_radius + dx;
+                    }
 
-                let alpha_grid = (1.0 - (y - horizon) / (rect.bottom() - horizon)) * master_alpha * 0.4;
-                if alpha_grid > 0.0 && x1 < x2 {
-                    painter.line_segment(
-                        [Pos2::new(x1, y), Pos2::new(x2, y)], 
-                        Stroke::new(2.0, C_MAGENTA.linear_multiply(alpha_grid))
-                    );
+                    let x1 = (center.x - w).clamp(x_min, x_max);
+                    let x2 = (center.x + w).clamp(x_min, x_max);
+
+                    let alpha_grid = (1.0 - (y - horizon) / (rect.bottom() - horizon)) * master_alpha * 0.4 * grid_fade;
+                    if alpha_grid > 0.0 && x1 < x2 {
+                        painter.line_segment(
+                            [Pos2::new(x1, y), Pos2::new(x2, y)], 
+                            Stroke::new(2.0, C_MAGENTA.linear_multiply(alpha_grid))
+                        );
+                    }
                 }
             }
         }
 
-        // 3D RENDERER
+        // 3. 3D RENDERER
         let physics_t = t.min(ANIMATION_DURATION);
         let fov = 800.0;
-        let cam_dist = 600.0 + smoothstep(0.0, 8.0, physics_t) * 100.0; 
+        let cam_fly_dist = warp_prog * 2000.0; 
+        let cam_dist = (600.0 + smoothstep(0.0, 8.0, physics_t) * 100.0) - cam_fly_dist;
         
         let global_rot = Vec3::new(
              self.mouse_influence.y * 0.2, 
@@ -386,9 +384,11 @@ impl SplashScreen {
         let mut draw_list: Vec<(f32, Vec<Pos2>, Color32, bool)> = Vec::with_capacity(self.voxels.len() * 6);
 
         let cube_size = 6.0;
+        // STRETCH: Massive Z stretch during warp for "Light Speed" effect
+        let z_stretch = 1.0 + (warp_prog * 150.0); 
         let verts = [
-            Vec3::new(-1.0, -1.0, -1.0), Vec3::new( 1.0, -1.0, -1.0), Vec3::new( 1.0,  1.0, -1.0), Vec3::new(-1.0,  1.0, -1.0),
-            Vec3::new(-1.0, -1.0,  1.0), Vec3::new( 1.0, -1.0,  1.0), Vec3::new( 1.0,  1.0,  1.0), Vec3::new(-1.0,  1.0,  1.0),
+            Vec3::new(-1.0, -1.0, -1.0 * z_stretch), Vec3::new( 1.0, -1.0, -1.0 * z_stretch), Vec3::new( 1.0,  1.0, -1.0 * z_stretch), Vec3::new(-1.0,  1.0, -1.0 * z_stretch),
+            Vec3::new(-1.0, -1.0,  1.0 * z_stretch), Vec3::new( 1.0, -1.0,  1.0 * z_stretch), Vec3::new( 1.0,  1.0,  1.0 * z_stretch), Vec3::new(-1.0,  1.0,  1.0 * z_stretch),
         ];
         let faces = [
             ([0, 1, 2, 3], Vec3::new(0.0, 0.0, -1.0)),
@@ -399,7 +399,6 @@ impl SplashScreen {
             ([4, 5, 1, 0], Vec3::new(0.0, -1.0, 0.0)),
         ];
 
-        // Fade out debris completely by t=6.5
         let debris_fade = 1.0 - smoothstep(4.5, 6.5, physics_t);
 
         for v in &self.voxels {
@@ -408,24 +407,35 @@ impl SplashScreen {
             let mut v_center = v.pos;
             v_center = v_center.rotate_x(global_rot.x).rotate_y(global_rot.y).rotate_z(global_rot.z);
             
-            if v_center.z > cam_dist - 10.0 { continue; }
+            // Don't clip during warp, let them fly behind
+            if warp_prog == 0.0 && v_center.z > cam_dist - 10.0 { continue; }
 
             for (indices, normal) in &faces {
                 let rot_normal = normal
                     .rotate_x(v.rot.x).rotate_y(v.rot.y).rotate_z(v.rot.z)
                     .rotate_x(global_rot.x).rotate_y(global_rot.y).rotate_z(global_rot.z);
 
-                if rot_normal.z > 0.0 { continue; }
+                // Only cull backfaces if not warping (during warp, geometry is weird)
+                if warp_prog == 0.0 && rot_normal.z > 0.0 { continue; }
 
                 let diffuse = rot_normal.dot(light_dir).max(0.0);
                 let intensity = 0.3 + 0.7 * diffuse;
                 
                 let mut alpha_local = master_alpha;
                 if v.is_debris { alpha_local *= debris_fade; }
+                
+                // COLOR SHIFT: During warp, turn everything into Cyan/Magenta streaks
+                let mut base_col = v.color;
+                if warp_prog > 0.0 {
+                    // Fade alpha out at the very end of warp to reveal UI
+                    alpha_local *= 1.0 - warp_prog; 
+                    // Shift color to Cyan
+                    base_col = C_CYAN; 
+                }
 
-                let r = (v.color.r() as f32 * intensity) as u8;
-                let g = (v.color.g() as f32 * intensity) as u8;
-                let b = (v.color.b() as f32 * intensity) as u8;
+                let r = (base_col.r() as f32 * intensity) as u8;
+                let g = (base_col.g() as f32 * intensity) as u8;
+                let b = (base_col.b() as f32 * intensity) as u8;
                 let face_color = Color32::from_rgba_premultiplied(r, g, b, (255.0 * alpha_local) as u8);
 
                 let mut poly_verts = Vec::with_capacity(4);
@@ -440,7 +450,8 @@ impl SplashScreen {
                     let z_depth = cam_dist - final_v.z;
                     avg_z += z_depth;
                     
-                    if z_depth > 1.0 {
+                    // Warp projection safe-guard
+                    if z_depth > 0.1 {
                         let scale = fov / z_depth;
                         let x = center.x + final_v.x * scale;
                         let y = center.y - final_v.y * scale;
@@ -460,44 +471,48 @@ impl SplashScreen {
         for (_, verts, col, is_glowing) in draw_list {
             painter.add(Shape::convex_polygon(verts.clone(), col, Stroke::NONE));
             
-            if master_alpha > 0.8 {
+            if master_alpha > 0.8 && warp_prog < 0.5 {
                 let stroke_col = if is_glowing { C_CYAN.linear_multiply(0.3) } else { Color32::from_black_alpha(40) };
                 painter.add(Shape::closed_line(verts, Stroke::new(1.0, stroke_col)));
             }
         }
 
-        if master_alpha > 0.1 {
+        if master_alpha > 0.1 && warp_prog < 0.1 {
+            let ui_alpha = 1.0 - (warp_prog * 10.0).clamp(0.0, 1.0); // Fade UI instantly on warp
+            let ui_color = C_WHITE.linear_multiply(master_alpha * ui_alpha);
+            let cyan_color = C_CYAN.linear_multiply(master_alpha * ui_alpha);
+            let magenta_color = C_MAGENTA.linear_multiply(master_alpha * ui_alpha);
+
             painter.text(
                 center + Vec2::new(0.0, 180.0),
                 Align2::CENTER_TOP,
                 "SCREEN GROUNDED TRANSLATOR",
                 FontId::proportional(24.0),
-                C_WHITE.linear_multiply(master_alpha)
+                ui_color
             );
             painter.text(
                 center + Vec2::new(0.0, 210.0),
                 Align2::CENTER_TOP,
                 &self.loading_text,
                 FontId::monospace(12.0),
-                C_CYAN.linear_multiply(master_alpha)
+                cyan_color
             );
             
             let bar_rect = Rect::from_center_size(center + Vec2::new(0.0, 230.0), Vec2::new(200.0, 4.0));
-            painter.rect_filled(bar_rect, 2.0, Color32::from_white_alpha(30));
+            painter.rect_filled(bar_rect, 2.0, Color32::from_white_alpha((30.0 * ui_alpha) as u8));
             let prog = (physics_t / (ANIMATION_DURATION - 1.0)).clamp(0.0, 1.0);
             let mut fill = bar_rect;
             fill.set_width(bar_rect.width() * prog);
-            painter.rect_filled(fill, 2.0, C_MAGENTA.linear_multiply(master_alpha));
+            painter.rect_filled(fill, 2.0, magenta_color);
 
-            // Click Anywhere Text
             if t > ANIMATION_DURATION {
-                let pulse = (t * 5.0).sin().abs() * 0.7 + 0.3; // Blinking
+                let pulse = (t * 5.0).sin().abs() * 0.7 + 0.3; 
                 painter.text(
                     center + Vec2::new(0.0, 250.0),
                     Align2::CENTER_TOP,
                     "Click anywhere to continue",
                     FontId::proportional(14.0),
-                    C_CYAN.linear_multiply(master_alpha * pulse)
+                    cyan_color.linear_multiply(pulse)
                 );
             }
         }

@@ -81,6 +81,7 @@ pub struct SettingsApp {
     recording_hotkey_for_preset: Option<usize>,
     hotkey_conflict_msg: Option<String>,
     splash: Option<crate::gui::splash::SplashScreen>,
+    fade_in_start: Option<f64>,
     startup_centered: bool,
     
     // Cache monitors
@@ -199,6 +200,7 @@ impl SettingsApp {
             recording_hotkey_for_preset: None,
             hotkey_conflict_msg: None,
             splash: Some(crate::gui::splash::SplashScreen::new(&ctx)),
+            fade_in_start: None,
             startup_centered: false,
             cached_monitors,
         }
@@ -285,6 +287,7 @@ impl eframe::App for SettingsApp {
                 }
                 crate::gui::splash::SplashStatus::Finished => {
                     self.splash = None; // Drop splash, proceed to normal UI
+                    self.fade_in_start = Some(ctx.input(|i| i.time)); // Start fade in
                     // Restore decorations
                     ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 }
@@ -388,6 +391,28 @@ impl eframe::App for SettingsApp {
         }
 
         let text = LocaleText::get(&self.config.ui_language);
+
+        // --- FADE IN OVERLAY (Dark Hyperspace Reveal) ---
+        if let Some(start_time) = self.fade_in_start {
+            let now = ctx.input(|i| i.time);
+            let elapsed = now - start_time;
+            let fade_duration = 0.6; // Faster fade, match warp duration
+            
+            if elapsed < fade_duration {
+                let opacity = 1.0 - (elapsed / fade_duration) as f32;
+                // Create a black overlay on top of everything
+                let rect = ctx.input(|i| i.screen_rect());
+                let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("fade_overlay")));
+                
+                // Black -> Transparent (Dark Hyperspace Jump effect)
+                let color = eframe::egui::Color32::from_black_alpha((opacity * 255.0) as u8);
+                painter.rect_filled(rect, 0.0, color);
+                
+                ctx.request_repaint();
+            } else {
+                self.fade_in_start = None;
+            }
+        }
 
         // --- UI LAYOUT ---
         egui::CentralPanel::default().show(ctx, |ui| {
