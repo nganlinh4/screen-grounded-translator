@@ -353,17 +353,41 @@ impl SplashScreen {
         if master_alpha > 0.1 {
             let grid_t = (t * 0.2) % 1.0;
             let horizon_y = center.y + 200.0;
+            let corner_radius = 32.0;
+
             for i in 0..10 {
                 let z_fac = (i as f32 + grid_t) / 10.0; // 0 to 1
                 let y = horizon_y + (z_fac * z_fac * 200.0);
+                
+                // Skip lines completely outside vertical bounds
+                if y < rect.top() || y > rect.bottom() { continue; }
+
                 let w = rect.width() * z_fac * 2.0;
                 let alpha = (1.0 - z_fac) * 0.1 * master_alpha;
                 
-                let line_color = C_CYAN.linear_multiply(alpha);
-                painter.line_segment(
-                    [Pos2::new(center.x - w, y), Pos2::new(center.x + w, y)],
-                    Stroke::new(1.0, line_color)
-                );
+                // Corner Clipping Logic to prevent drawing outside rounded corners
+                let mut x_min = rect.left();
+                let mut x_max = rect.right();
+
+                // Only calculate for bottom corners as grid is strictly on floor
+                if y > rect.bottom() - corner_radius {
+                    let dy = y - (rect.bottom() - corner_radius);
+                    // Safe sqrt to prevent domain errors
+                    let dx = (corner_radius.powi(2) - dy.min(corner_radius).powi(2)).max(0.0).sqrt();
+                    x_min = rect.left() + corner_radius - dx;
+                    x_max = rect.right() - corner_radius + dx;
+                }
+                
+                let line_start_x = (center.x - w).clamp(x_min, x_max);
+                let line_end_x = (center.x + w).clamp(x_min, x_max);
+                
+                if line_start_x < line_end_x {
+                    let line_color = C_CYAN.linear_multiply(alpha);
+                    painter.line_segment(
+                        [Pos2::new(line_start_x, y), Pos2::new(line_end_x, y)],
+                        Stroke::new(1.0, line_color)
+                    );
+                }
             }
         }
 
