@@ -6,6 +6,7 @@ use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::core::*;
 use std::mem::size_of;
+use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::overlay::utils::to_wstring;
@@ -19,21 +20,25 @@ pub use state::{WindowType, link_windows};
 
 static mut CURRENT_BG_COLOR: u32 = 0x00222222;
 
+// OPTIMIZATION: Thread-safe one-time window class registration
+static REGISTER_RESULT_CLASS: Once = Once::new();
+
 pub fn create_result_window(target_rect: RECT, win_type: WindowType) -> HWND {
     unsafe {
         let instance = GetModuleHandleW(None).unwrap();
         let class_name = w!("TranslationResult");
         
-        let mut wc = WNDCLASSW::default();
-        if !GetClassInfoW(instance, class_name, &mut wc).as_bool() {
+        // OPTIMIZATION: Register class only once, thread-safely
+        REGISTER_RESULT_CLASS.call_once(|| {
+            let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(result_wnd_proc);
             wc.hInstance = instance;
             wc.hCursor = HCURSOR(0); 
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
             wc.hbrBackground = HBRUSH(0);
-            RegisterClassW(&wc);
-        }
+            let _ = RegisterClassW(&wc);
+        });
 
         let width = (target_rect.right - target_rect.left).abs();
         let height = (target_rect.bottom - target_rect.top).abs();

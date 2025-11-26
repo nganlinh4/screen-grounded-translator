@@ -6,6 +6,24 @@ use std::mem::size_of;
 use crate::overlay::broom_assets::{render_procedural_broom, BroomRenderParams, BROOM_W, BROOM_H};
 use super::state::{WINDOW_STATES, AnimationMode};
 
+// OPTIMIZATION: GDI object wrapper for automatic cleanup (RAII pattern)
+struct GdiObj(HGDIOBJ);
+impl GdiObj {
+    fn from_hpen(pen: HPEN) -> Self {
+        GdiObj(HGDIOBJ(pen.0))
+    }
+    fn from_hbrush(brush: HBRUSH) -> Self {
+        GdiObj(HGDIOBJ(brush.0))
+    }
+}
+impl Drop for GdiObj {
+    fn drop(&mut self) {
+        if self.0.0 != 0 {
+            unsafe { let _ = DeleteObject(self.0); }
+        }
+    }
+}
+
 // Helper: Efficiently measure text height
 unsafe fn measure_text_height(hdc: windows::Win32::Graphics::Gdi::CreatedHDC, text: &mut [u16], font_size: i32, width: i32) -> i32 {
     let hfont = CreateFontW(font_size, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
@@ -371,8 +389,9 @@ pub fn paint_window(hwnd: HWND) {
             let icx = cx.round() as i32;
             let icy = cy.round() as i32;
 
-            let icon_pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF));
-            let old_pen = SelectObject(mem_dc, icon_pen);
+            // OPTIMIZATION: Use GDI wrapper for automatic cleanup
+            let icon_pen = GdiObj::from_hpen(CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF)));
+            let old_pen = SelectObject(mem_dc, icon_pen.0);
             
             if copy_success {
                 // Checkmark
@@ -391,15 +410,13 @@ pub fn paint_window(hwnd: HWND) {
                 
                 // Fill Front Rect (Masking)
                 let brush_col = (tb as u32) << 16 | (tg as u32) << 8 | (tr as u32);
-                let solid_brush = CreateSolidBrush(COLORREF(brush_col));
-                SelectObject(mem_dc, solid_brush);
+                let solid_brush = GdiObj::from_hbrush(CreateSolidBrush(COLORREF(brush_col)));
+                SelectObject(mem_dc, solid_brush.0);
                 Rectangle(mem_dc, r1_l, r1_t, r1_r, r1_b);
                 
                 SelectObject(mem_dc, old_brush);
-                DeleteObject(solid_brush);
             }
             SelectObject(mem_dc, old_pen);
-            DeleteObject(icon_pen);
         }
 
         if let Some((px, py, hbm)) = broom_bitmap_data {

@@ -41,6 +41,13 @@ struct ChatMessage {
     content: String,
 }
 
+lazy_static::lazy_static! {
+    static ref UREQ_AGENT: ureq::Agent = ureq::AgentBuilder::new()
+        .timeout_read(std::time::Duration::from_secs(30))
+        .timeout_write(std::time::Duration::from_secs(30))
+        .build();
+}
+
 pub fn translate_image_streaming<F>(
     groq_api_key: &str,
     gemini_api_key: &str,
@@ -95,7 +102,7 @@ where
             }]
         });
 
-        let resp = ureq::post(&url)
+        let resp = UREQ_AGENT.post(&url)
             .set("x-goog-api-key", gemini_api_key)
             .send_json(payload)
             .map_err(|e| {
@@ -190,7 +197,7 @@ where
             payload_obj
         };
 
-        let resp = ureq::post("https://api.groq.com/openai/v1/chat/completions")
+        let resp = UREQ_AGENT.post("https://api.groq.com/openai/v1/chat/completions")
             .set("Authorization", &format!("Bearer {}", groq_api_key))
             .send_json(payload)
             .map_err(|e| {
@@ -323,7 +330,7 @@ where
         payload_obj
     };
 
-    let resp = ureq::post("https://api.groq.com/openai/v1/chat/completions")
+    let resp = UREQ_AGENT.post("https://api.groq.com/openai/v1/chat/completions")
         .set("Authorization", &format!("Bearer {}", groq_api_key))
         .send_json(payload)
         .map_err(|e| {
@@ -432,7 +439,7 @@ where
         }]
     });
 
-    let resp = ureq::post(&url)
+    let resp = UREQ_AGENT.post(&url)
         .set("x-goog-api-key", gemini_api_key)
         .send_json(payload)
         .map_err(|e| {
@@ -610,24 +617,16 @@ pub fn record_audio_and_transcribe(
         return;
     }
 
-    // Write to temporary WAV file
-    let temp_dir = std::env::temp_dir();
-    let wav_path = temp_dir.join(format!("sgt_debug_audio_{}.wav", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis()));
-    
-    let mut writer = hound::WavWriter::create(&wav_path, spec).expect("Failed to create WAV file");
-    for sample in &samples {
-        writer.write_sample(*sample).expect("Failed to write sample");
+    // OPTIMIZATION: Write directly to in-memory buffer instead of disk
+    let mut wav_cursor = Cursor::new(Vec::new());
+    {
+        let mut writer = hound::WavWriter::new(&mut wav_cursor, spec).expect("Failed to create memory writer");
+        for sample in &samples {
+            writer.write_sample(*sample).expect("Failed to write sample");
+        }
+        writer.finalize().expect("Failed to finalize WAV");
     }
-    writer.finalize().expect("Failed to finalize WAV file");
-
-    // Read WAV file for upload
-    let wav_data = std::fs::read(&wav_path).expect("Failed to read WAV file");
-    
-    // FIX 1: Clean up the temporary file immediately after reading
-    let _ = std::fs::remove_file(&wav_path);
+    let wav_data = wav_cursor.into_inner();
     
     // Determine API endpoint, model, and provider
     let model_config = get_model_by_id(&preset.model);
@@ -742,7 +741,7 @@ fn upload_audio_to_whisper(api_key: &str, model: &str, audio_data: Vec<u8>) -> a
     body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
     
     // Make API request
-    let response = ureq::post("https://api.groq.com/openai/v1/audio/transcriptions")
+    let response = UREQ_AGENT.post("https://api.groq.com/openai/v1/audio/transcriptions")
         .set("Authorization", &format!("Bearer {}", api_key))
         .set("Content-Type", &format!("multipart/form-data; boundary={}", boundary))
         .send_bytes(&body)

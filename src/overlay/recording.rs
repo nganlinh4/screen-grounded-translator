@@ -3,7 +3,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::core::*;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}, Once};
 use crate::APP;
 
 static mut RECORDING_HWND: HWND = HWND(0);
@@ -24,6 +24,9 @@ lazy_static::lazy_static! {
     pub static ref AUDIO_STOP_SIGNAL: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     pub static ref AUDIO_PAUSE_SIGNAL: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 }
+
+// OPTIMIZATION: Thread-safe one-time window class registration
+static REGISTER_RECORDING_CLASS: Once = Once::new();
 
 pub fn is_recording_overlay_active() -> bool {
     unsafe { IS_RECORDING && RECORDING_HWND.0 != 0 }
@@ -56,15 +59,16 @@ pub fn show_recording_overlay(preset_idx: usize) {
         let instance = GetModuleHandleW(None).unwrap();
         let class_name = w!("RecordingOverlay");
 
-        let mut wc = WNDCLASSW::default();
-        if !GetClassInfoW(instance, class_name, &mut wc).as_bool() {
+        // OPTIMIZATION: Register class only once, thread-safely
+        REGISTER_RECORDING_CLASS.call_once(|| {
+            let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(recording_wnd_proc);
             wc.hInstance = instance;
             wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap(); 
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
-            RegisterClassW(&wc);
-        }
+            let _ = RegisterClassW(&wc);
+        });
 
         let screen_x = GetSystemMetrics(SM_CXSCREEN);
         let screen_y = GetSystemMetrics(SM_CYSCREEN);

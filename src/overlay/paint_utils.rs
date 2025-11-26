@@ -70,8 +70,10 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
         if is_large_area && is_glowing {
             // === FAST LOOP (Outer Glow for Performance) ===
             // Simplified math for massive regions to prevent lag.
+            // OPTIMIZATION: Pre-calculate trig values outside the loop
             let time_rad = time_offset.to_radians();
-            let glow_width = 12.0 + (time_rad * 4.0).sin() * 4.0;
+            let time_sin = (time_rad * 4.0).sin();
+            let glow_width = 12.0 + time_sin * 4.0;
             let hue = (time_offset * 3.0) % 360.0;
             let global_color = hsv_to_rgb(hue, 0.75, 1.0);
             
@@ -86,6 +88,7 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
                     
                     let qx = px.abs() - bx + eff_radius;
                     let qy = py.abs() - by + eff_radius;
+                    // OPTIMIZATION: Inline sd_rounded_box logic and avoid function call
                     let d = if qx > 0.0 && qy > 0.0 { ((qx * qx + qy * qy).sqrt()) - eff_radius } else { qx.max(qy) - eff_radius };
                     
                     if d <= 0.0 {
@@ -105,7 +108,10 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
             }
         } else {
             // === FANCY LOOP (Small/Medium or Dragging) ===
+            // OPTIMIZATION: Pre-calculate trig values outside the loop
             let time_rad = time_offset.to_radians();
+            let time_sin_2 = (time_rad * 2.0).sin();
+            let time_sin_neg_3 = (-time_rad * 3.0).sin();
             let min_dim = (w.min(h) as f32).max(1.0);
             let perimeter = 2.0 * (w + h) as f32;
             
@@ -121,7 +127,10 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
                     let px = (x as f32) - center_x;
                     let py = (y as f32) - center_y;
                     
-                    let d = sd_rounded_box(px, py, bx, by, eff_radius);
+                    // OPTIMIZATION: Inline sd_rounded_box to avoid function call overhead in tight loop
+                    let qx = px.abs() - bx + eff_radius;
+                    let qy = py.abs() - by + eff_radius;
+                    let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + (qx.max(qy).min(0.0)) - eff_radius;
                     
                     let mut final_col = 0u32;
                     let mut final_alpha = 0.0f32;
@@ -159,8 +168,9 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
                         if is_glowing {
                             // PROCESSING: Inner Rainbow Glow
                             let angle = py.atan2(px);
-                            let noise = (angle * freq1 + time_rad * 2.0).sin() * 0.5
-                                      + (angle * freq2 - time_rad * 3.0).sin() * 0.4;
+                            // OPTIMIZATION: Reuse pre-calculated trig values
+                            let noise = (angle * freq1 + time_sin_2).sin() * 0.5
+                                      + (angle * freq2 + time_sin_neg_3).sin() * 0.4;
 
                             let local_glow_width = dynamic_base_scale + (noise * (dynamic_base_scale * 0.65));
                             let dist_in = d.abs();

@@ -14,6 +14,7 @@ use windows::core::*;
 
 use crate::gui::locale::LocaleText;
 use crate::gui::key_mapping::egui_key_to_vk;
+use crate::gui::icons::{Icon, icon_button, draw_icon_static};
 use crate::model_config::{get_all_models, ModelType, get_model_by_id};
 
 // --- Monitor Enumeration Helper ---
@@ -426,8 +427,8 @@ impl eframe::App for SettingsApp {
                 ui.allocate_ui_with_layout(egui::vec2(left_width, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                     // Theme & Language Controls (Moved from Header)
                     ui.horizontal(|ui| {
-                        let theme_icon = if self.config.dark_mode { "🌙" } else { "☀" };
-                        if ui.button(theme_icon).on_hover_text("Toggle Theme").clicked() {
+                        let theme_icon = if self.config.dark_mode { Icon::Moon } else { Icon::Sun };
+                        if icon_button(ui, theme_icon).on_hover_text("Toggle Theme").clicked() {
                             self.config.dark_mode = !self.config.dark_mode;
                             self.save_and_sync();
                         }
@@ -454,9 +455,12 @@ impl eframe::App for SettingsApp {
 
                     // Global Settings Button
                     let is_global = matches!(self.view_mode, ViewMode::Global);
-                    if ui.selectable_label(is_global, format!("⚙ {}", text.global_settings)).clicked() {
-                        self.view_mode = ViewMode::Global;
-                    }
+                    ui.horizontal(|ui| {
+                        draw_icon_static(ui, Icon::Settings, 16.0);
+                        if ui.selectable_label(is_global, text.global_settings).clicked() {
+                            self.view_mode = ViewMode::Global;
+                        }
+                    });
                     
                     ui.add_space(10.0);
                     ui.label(egui::RichText::new(text.presets_section).strong());
@@ -468,29 +472,34 @@ impl eframe::App for SettingsApp {
                          ui.horizontal(|ui| {
                              let is_selected = matches!(self.view_mode, ViewMode::Preset(i) if i == idx);
                              
-                             let icon = if preset.preset_type == "audio" { "🎤" } 
-                             else if preset.preset_type == "video" { "🎥" } 
-                             else { "🖼" };
+                             // OPTIMIZATION: Use programmatic icons instead of emoji
+                             let icon_type = if preset.preset_type == "audio" { Icon::Microphone }
+                             else if preset.preset_type == "video" { Icon::Video }
+                             else { Icon::Image };
                              
-                             let label_text = format!("{} {}", icon, preset.name);
-                            
-                            if preset.is_upcoming {
-                                ui.add_enabled_ui(false, |ui| {
-                                    let _ = ui.selectable_label(is_selected, &label_text);
-                                });
-                            } else {
-                                if ui.selectable_label(is_selected, &label_text).clicked() {
-                                    self.view_mode = ViewMode::Preset(idx);
-                                }
-                                // Delete button (small x)
-                                if self.config.presets.len() > 1 {
-                                    if ui.small_button("x").clicked() {
-                                        preset_idx_to_delete = Some(idx);
-                                    }
-                                }
-                            }
-                        });
-                    }
+                             if preset.is_upcoming {
+                                 ui.add_enabled_ui(false, |ui| {
+                                     ui.horizontal(|ui| {
+                                         draw_icon_static(ui, icon_type, 14.0);
+                                         let _ = ui.selectable_label(is_selected, &preset.name);
+                                     });
+                                 });
+                             } else {
+                                 ui.horizontal(|ui| {
+                                     draw_icon_static(ui, icon_type, 14.0);
+                                     if ui.selectable_label(is_selected, &preset.name).clicked() {
+                                         self.view_mode = ViewMode::Preset(idx);
+                                     }
+                                 });
+                                 // Delete button (X icon)
+                                 if self.config.presets.len() > 1 {
+                                     if icon_button(ui, Icon::Delete).clicked() {
+                                         preset_idx_to_delete = Some(idx);
+                                     }
+                                 }
+                             }
+                         });
+                     }
                     
                     ui.add_space(5.0);
                     if ui.button(text.add_preset_btn).clicked() {
@@ -533,7 +542,8 @@ impl eframe::App for SettingsApp {
                                     if ui.add(egui::TextEdit::singleline(&mut self.config.api_key).password(!self.show_api_key).desired_width(200.0)).changed() {
                                         self.save_and_sync();
                                     }
-                                    if ui.button(if self.show_api_key { "👁" } else { "🔒" }).clicked() { self.show_api_key = !self.show_api_key; }
+                                    let eye_icon = if self.show_api_key { Icon::EyeOpen } else { Icon::EyeClosed };
+                                    if icon_button(ui, eye_icon).clicked() { self.show_api_key = !self.show_api_key; }
                                 });
                                 if ui.link(text.get_key_link).clicked() { let _ = open::that("https://console.groq.com/keys"); }
                                 
@@ -543,7 +553,8 @@ impl eframe::App for SettingsApp {
                                     if ui.add(egui::TextEdit::singleline(&mut self.config.gemini_api_key).password(!self.show_gemini_api_key).desired_width(200.0)).changed() {
                                         self.save_and_sync();
                                     }
-                                    if ui.button(if self.show_gemini_api_key { "👁" } else { "🔒" }).clicked() { self.show_gemini_api_key = !self.show_gemini_api_key; }
+                                    let eye_icon = if self.show_gemini_api_key { Icon::EyeOpen } else { Icon::EyeClosed };
+                                    if icon_button(ui, eye_icon).clicked() { self.show_gemini_api_key = !self.show_gemini_api_key; }
                                 });
                                 if ui.link(text.gemini_get_key_link).clicked() { let _ = open::that("https://aistudio.google.com/app/apikey"); }
                             });
@@ -554,7 +565,7 @@ impl eframe::App for SettingsApp {
                             ui.group(|ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(egui::RichText::new(text.usage_statistics_title).strong());
-                                    ui.label("ℹ").on_hover_text(text.usage_statistics_tooltip);
+                                    icon_button(ui, Icon::Info).on_hover_text(text.usage_statistics_tooltip);
                                 });
                                 
                                 let usage_stats = {
