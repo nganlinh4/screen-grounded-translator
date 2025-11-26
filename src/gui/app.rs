@@ -456,7 +456,7 @@ impl eframe::App for SettingsApp {
                     // Global Settings Button
                     let is_global = matches!(self.view_mode, ViewMode::Global);
                     ui.horizontal(|ui| {
-                        draw_icon_static(ui, Icon::Settings, 16.0);
+                        draw_icon_static(ui, Icon::Settings);
                         if ui.selectable_label(is_global, text.global_settings).clicked() {
                             self.view_mode = ViewMode::Global;
                         }
@@ -480,13 +480,13 @@ impl eframe::App for SettingsApp {
                              if preset.is_upcoming {
                                  ui.add_enabled_ui(false, |ui| {
                                      ui.horizontal(|ui| {
-                                         draw_icon_static(ui, icon_type, 14.0);
+                                         draw_icon_static(ui, icon_type);
                                          let _ = ui.selectable_label(is_selected, &preset.name);
                                      });
                                  });
                              } else {
                                  ui.horizontal(|ui| {
-                                     draw_icon_static(ui, icon_type, 14.0);
+                                     draw_icon_static(ui, icon_type);
                                      if ui.selectable_label(is_selected, &preset.name).clicked() {
                                          self.view_mode = ViewMode::Preset(idx);
                                      }
@@ -564,6 +564,7 @@ impl eframe::App for SettingsApp {
                             // --- NEW: USAGE STATISTICS ---
                             ui.group(|ui| {
                                 ui.horizontal(|ui| {
+                                    draw_icon_static(ui, Icon::Statistics);
                                     ui.label(egui::RichText::new(text.usage_statistics_title).strong());
                                     icon_button(ui, Icon::Info).on_hover_text(text.usage_statistics_tooltip);
                                 });
