@@ -55,32 +55,64 @@ pub fn create_result_window(target_rect: RECT, win_type: WindowType) -> HWND {
             },
             WindowType::Secondary => {
                 let padding = 10;
-                let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-                let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-                let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-                let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
                 
-                let screen_right = screen_x + screen_w;
-                let screen_bottom = screen_y + screen_h;
+                // --- INTELLIGENT MONITOR-AWARE POSITIONING ---
+                // 1. Get the monitor that contains the selection
+                let hmonitor = MonitorFromRect(&target_rect, MONITOR_DEFAULTTONEAREST);
+                
+                // 2. Get that monitor's WORK AREA (excludes taskbars)
+                let mut mi = MONITORINFO::default();
+                mi.cbSize = size_of::<MONITORINFO>() as u32;
+                GetMonitorInfoW(hmonitor, &mut mi);
+                let work_rect = mi.rcWork;
 
-                let right_x = target_rect.right + padding;
-                let bottom_y = target_rect.bottom + padding;
-                let left_x = target_rect.left - width - padding;
-                let top_y = target_rect.top - height - padding;
+                // Potential coordinates
+                let pos_right_x = target_rect.right + padding;
+                let pos_left_x  = target_rect.left - width - padding;
+                let pos_bottom_y = target_rect.bottom + padding;
+                let pos_top_y    = target_rect.top - height - padding;
 
-                let (new_x, new_y) = if right_x + width <= screen_right {
-                    (right_x, target_rect.top)
-                } else if bottom_y + height <= screen_bottom {
-                    (target_rect.left, bottom_y)
-                } else if left_x >= screen_x {
-                    (left_x, target_rect.top)
-                } else if top_y >= screen_y {
-                    (target_rect.left, top_y)
+                // Calculate available space on each side relative to the WORK AREA
+                let space_right  = work_rect.right - pos_right_x;
+                let space_left   = (target_rect.left - padding) - work_rect.left;
+                let space_bottom = work_rect.bottom - pos_bottom_y;
+                let space_top    = (target_rect.top - padding) - work_rect.top;
+
+                // 3. Logic: Find best side
+                // Priority: Right -> Bottom -> Left -> Top
+                let (mut best_x, mut best_y) = if space_right >= width {
+                    (pos_right_x, target_rect.top)
+                } else if space_bottom >= height {
+                    (target_rect.left, pos_bottom_y)
+                } else if space_left >= width {
+                    (pos_left_x, target_rect.top)
+                } else if space_top >= height {
+                    (target_rect.left, pos_top_y)
                 } else {
-                    (right_x, target_rect.top)
+                    // 4. Fallback: Pick the side with the MOST available space (minimizes overlap)
+                    let max_space = space_right.max(space_left).max(space_bottom).max(space_top);
+                    
+                    if max_space == space_right {
+                        (pos_right_x, target_rect.top)
+                    } else if max_space == space_left {
+                        (pos_left_x, target_rect.top)
+                    } else if max_space == space_bottom {
+                        (target_rect.left, pos_bottom_y)
+                    } else {
+                        (target_rect.left, pos_top_y)
+                    }
                 };
+                
+                // 5. FINAL SAFEGUARD: Hard Clamp to Monitor Work Area
+                // This ensures the window is fully visible even if it has to overlap the selection.
+                let safe_w = width.min(work_rect.right - work_rect.left);
+                let safe_h = height.min(work_rect.bottom - work_rect.top);
+                
+                best_x = best_x.clamp(work_rect.left, work_rect.right - safe_w);
+                best_y = best_y.clamp(work_rect.top, work_rect.bottom - safe_h);
+
                 CURRENT_BG_COLOR = 0x002d4a22; 
-                (new_x, new_y, 0x002d4a22)
+                (best_x, best_y, 0x002d4a22)
             }
         };
 
