@@ -165,9 +165,11 @@ impl SplashScreen {
 
         for _ in 0..60 {
             let h_y = (rng() * 300.0) - 150.0;
+            // FIX: Revert to tight initial radius (was 80.0) so it looks closed at start
             let h_radius = 80.0 + rng() * 60.0;
             let h_angle = rng() * PI * 2.0;
-            let target = Vec3::new(h_angle.cos(), 0.0, h_angle.sin()).mul(500.0);
+            // Target is far out (800.0) so they eventually orbit wide
+            let target = Vec3::new(h_angle.cos(), 0.0, h_angle.sin()).mul(800.0);
 
             self.voxels.push(Voxel {
                 helix_radius: h_radius,
@@ -253,7 +255,18 @@ impl SplashScreen {
             if progress <= 0.0 {
                 let current_h_y = v.helix_y + (physics_t * 2.0 + v.noise_factor * 10.0).sin() * 5.0;
                 let current_angle = v.helix_angle_offset + helix_spin;
-                let current_radius = v.helix_radius * (1.0 + physics_t * 0.1);
+                
+                // FIX: Dynamic expansion for debris
+                // Normal scaling for everyone
+                let mut current_radius = v.helix_radius * (1.0 + physics_t * 0.1);
+                
+                // Extra "Flare Out" for debris in the last few seconds
+                if v.is_debris && physics_t > 3.5 {
+                    // Exponential growth to push them far away
+                    let flare = (physics_t - 3.5).powi(2) * 15.0; 
+                    current_radius += flare;
+                }
+
                 v.pos = Vec3::new(current_angle.cos() * current_radius, current_h_y, current_angle.sin() * current_radius);
                 v.rot.y += 0.05;
                 v.scale = 0.8;
@@ -261,7 +274,13 @@ impl SplashScreen {
             } else {
                 let current_h_y = v.helix_y + (physics_t * 2.0 + v.noise_factor * 10.0).sin() * 5.0;
                 let current_angle = v.helix_angle_offset + helix_spin;
-                let current_radius = v.helix_radius * (1.0 + physics_t * 0.1);
+                
+                let mut current_radius = v.helix_radius * (1.0 + physics_t * 0.1);
+                if v.is_debris && physics_t > 3.5 {
+                    let flare = (physics_t - 3.5).powi(2) * 15.0; 
+                    current_radius += flare;
+                }
+
                 let helix_pos = Vec3::new(current_angle.cos() * current_radius, current_h_y, current_angle.sin() * current_radius);
 
                 let mut target_base = v.target_pos;
@@ -410,20 +429,17 @@ impl SplashScreen {
             ([4, 5, 1, 0], Vec3::new(0.0, -1.0, 0.0)),
         ];
 
-        // FIX: Per-particle organic fade instead of global uniform fade
-        // Removed: let debris_fade = 1.0 - smoothstep(4.5, 6.5, physics_t);
-
         for v in &self.voxels {
-            // FIX: Calculate local fade for debris based on noise
+            // FIX: Organic, staggered fade for debris
             let mut local_debris_alpha = 1.0;
             if v.is_debris {
-                // Stagger fade start between 4.0s and 7.0s
+                // Stagger fade start between 4.0s and 7.0s based on random noise
                 let fade_start = 4.0 + (v.noise_factor * 3.0); 
-                // Fade duration of 2.5s
+                // Long fade duration (2.5s) for smoothness
                 let fade_end = fade_start + 2.5;
                 local_debris_alpha = 1.0 - smoothstep(fade_start, fade_end, physics_t);
                 
-                // Cull if invisible
+                // Performance cull
                 if local_debris_alpha <= 0.01 { continue; }
             }
 
@@ -531,7 +547,8 @@ impl SplashScreen {
             if t > ANIMATION_DURATION {
                 let pulse = (t * 5.0).sin().abs() * 0.7 + 0.3; 
                 painter.text(
-                    center - Vec2::new(0.0, 220.0), // Changed from +250.0 to -220.0 to show at TOP
+                    // Moved to TOP (negative Y) so it is visible and not hidden by taskbar
+                    center - Vec2::new(0.0, 220.0), 
                     Align2::CENTER_TOP,
                     "Click anywhere to continue",
                     FontId::proportional(14.0),
