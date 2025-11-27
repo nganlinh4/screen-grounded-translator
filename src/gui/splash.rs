@@ -107,6 +107,11 @@ impl SplashScreen {
         }
     }
 
+    // NEW: Method to reset timer when window becomes visible
+    pub fn reset_timer(&mut self, ctx: &egui::Context) {
+        self.start_time = ctx.input(|i| i.time);
+    }
+
     fn init_scene(&mut self) {
         let mut rng_state = 12345u64;
         let mut rng = || {
@@ -319,8 +324,14 @@ impl SplashScreen {
         let alpha = if t < 1.0 { t } else { 1.0 };
         let master_alpha = alpha.clamp(0.0, 1.0);
 
-        // 1. Background - Keep it DARK during warp
-        painter.rect_filled(rect, 32.0, C_VOID);
+        // 1. Background - Keep it DARK but respect entrance Fade-In
+        let mut bg_color = C_VOID;
+        if t < 1.0 {
+            // Smooth easing for background appearance
+            let bg_alpha = (t * t).clamp(0.0, 1.0); 
+            bg_color = bg_color.linear_multiply(bg_alpha);
+        }
+        painter.rect_filled(rect, 32.0, bg_color);
 
         // 2. Grid
         if master_alpha > 0.05 {
@@ -399,10 +410,22 @@ impl SplashScreen {
             ([4, 5, 1, 0], Vec3::new(0.0, -1.0, 0.0)),
         ];
 
-        let debris_fade = 1.0 - smoothstep(4.5, 6.5, physics_t);
+        // FIX: Per-particle organic fade instead of global uniform fade
+        // Removed: let debris_fade = 1.0 - smoothstep(4.5, 6.5, physics_t);
 
         for v in &self.voxels {
-            if v.is_debris && debris_fade <= 0.01 { continue; }
+            // FIX: Calculate local fade for debris based on noise
+            let mut local_debris_alpha = 1.0;
+            if v.is_debris {
+                // Stagger fade start between 4.0s and 7.0s
+                let fade_start = 4.0 + (v.noise_factor * 3.0); 
+                // Fade duration of 2.5s
+                let fade_end = fade_start + 2.5;
+                local_debris_alpha = 1.0 - smoothstep(fade_start, fade_end, physics_t);
+                
+                // Cull if invisible
+                if local_debris_alpha <= 0.01 { continue; }
+            }
 
             let mut v_center = v.pos;
             v_center = v_center.rotate_x(global_rot.x).rotate_y(global_rot.y).rotate_z(global_rot.z);
@@ -422,7 +445,7 @@ impl SplashScreen {
                 let intensity = 0.3 + 0.7 * diffuse;
                 
                 let mut alpha_local = master_alpha;
-                if v.is_debris { alpha_local *= debris_fade; }
+                if v.is_debris { alpha_local *= local_debris_alpha; }
                 
                 // COLOR SHIFT: During warp, turn everything into Cyan/Magenta streaks
                 let mut base_col = v.color;

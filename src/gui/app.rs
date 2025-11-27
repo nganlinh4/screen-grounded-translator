@@ -264,10 +264,10 @@ impl eframe::App for SettingsApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // --- 2-Stage Anti-Flash Centering Logic ---
-        // 1. Window starts offscreen (-2000, -2000).
-        // 2. Stage 0: Calculate center, move window.
-        // 3. Stage 1: Make visible.
+        // --- 3-Stage Startup Logic (Anti-Flash & Centering) ---
+        // Stage 0: Calculate center, move window (Invisible).
+        // Stage 1: Render one frame of dark splash content (Invisible).
+        // Stage 2: Reveal window.
         
         if self.startup_stage == 0 {
             // Get the monitor size in logical points (DPI aware)
@@ -281,20 +281,32 @@ impl eframe::App for SettingsApp {
                 // Move invisible window to center
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
                 
-                // Advance to next stage (Visible) in next frame
+                // Go to warm-up stage
                 self.startup_stage = 1;
                 ctx.request_repaint();
-                return; // Do not draw this frame
+                return; // Skip drawing this frame, just moved
             }
         } else if self.startup_stage == 1 {
-            // Now that we've moved it, make it visible
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            // WARM-UP FRAME:
+            // We fall through to the Splash rendering code below.
+            // This paints the dark pixels into the buffer while the window is still invisible.
             self.startup_stage = 2;
+            ctx.request_repaint(); 
+            // Fall through...
+        } else if self.startup_stage == 2 {
+            // REVEAL:
+            // 1. Reset splash timer so the fade-in animation starts NOW.
+            if let Some(splash) = &mut self.splash {
+                splash.reset_timer(ctx);
+            }
+            // 2. Show the window (buffer is already dark from previous frame)
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.startup_stage = 3;
         }
 
         // Check Splash
         if let Some(splash) = &mut self.splash {
-            // Hide decorations during splash
+            // Hide decorations during splash (redundant but safe)
             ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
             
             // Render Splash
@@ -306,7 +318,7 @@ impl eframe::App for SettingsApp {
                 crate::gui::splash::SplashStatus::Finished => {
                     self.splash = None; // Drop splash, proceed to normal UI
                     self.fade_in_start = Some(ctx.input(|i| i.time)); // Start fade in
-                    // Restore decorations
+                    // Restore decorations when splash is done
                     ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 }
             }

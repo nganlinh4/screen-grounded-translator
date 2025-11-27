@@ -100,7 +100,7 @@ fn main() -> eframe::Result<()> {
         // App.rs will move it to center before showing.
         .with_position(eframe::egui::pos2(-2000.0, -2000.0)) 
         .with_transparent(true) 
-        .with_decorations(true); 
+        .with_decorations(false); // FIX: Start without decorations to prevent white titlebar flash
     
     let app_icon_bytes = include_bytes!("../assets/app-icon-small.png");
     if let Ok(img) = image::load_from_memory(app_icon_bytes) {
