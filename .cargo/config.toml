@@ -1,0 +1,6 @@
+[build]
+# Optimize compilation
+rustflags = [
+    "-Z", "location-detail=none",
+    "-C", "target-cpu=native"
+]
