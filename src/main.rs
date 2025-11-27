@@ -190,8 +190,9 @@ fn run_hotkey_listener() {
                     unregister_all_hotkeys(hwnd);
                     register_all_hotkeys(hwnd);
                     
-                    let mut app = APP.lock().unwrap();
-                    app.hotkeys_updated = false;
+                    if let Ok(mut app) = APP.lock() { // FIXED: Safer lock
+                         app.hotkeys_updated = false;
+                    }
                 } else {
                     TranslateMessage(&msg);
                     DispatchMessageW(&msg);
@@ -210,10 +211,14 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 
                 // Get preset type
                 let preset_type = {
-                    let app = APP.lock().unwrap();
-                    if preset_idx < app.config.presets.len() {
-                        app.config.presets[preset_idx].preset_type.clone()
-                    } else { "image".to_string() }
+                    if let Ok(app) = APP.lock() { // FIXED: Safer lock check
+                        if preset_idx < app.config.presets.len() {
+                            app.config.presets[preset_idx].preset_type.clone()
+                        } else { "image".to_string() }
+                    } else {
+                        eprintln!("Error: APP mutex poisoned on hotkey trigger.");
+                        return LRESULT(0); // Cannot proceed if mutex is poisoned
+                    }
                 };
 
                 if preset_type == "audio" {
@@ -231,18 +236,32 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     if overlay::is_selection_overlay_active_and_dismiss() {
                         return LRESULT(0);
                     }
-                    match capture_full_screen() {
-                        Ok(img) => {
-                            {
-                                let mut app = APP.lock().unwrap();
-                                app.original_screenshot = Some(img);
+                    
+                    let app_clone = APP.clone();
+                    let p_idx = preset_idx;
+
+                    // FIX: Spawn a thread to perform the blocking capture *before* showing the UI.
+                    // This is the original behavior, but now protected against mutex poisoning,
+                    // and correctly runs on a separate thread from the Hotkey Listener loop.
+                    std::thread::spawn(move || {
+                        match capture_full_screen() {
+                            Ok(img) => {
+                                // Store image SAFELY
+                                if let Ok(mut app) = app_clone.lock() {
+                                    app.original_screenshot = Some(img);
+                                } else {
+                                    eprintln!("Warning: APP mutex poisoned, failed to store screenshot.");
+                                    return; // Cannot proceed if state cannot be updated.
+                                }
+
+                                // Show the selection UI only AFTER the capture is complete and stored
+                                overlay::show_selection_overlay(p_idx);
+                            },
+                            Err(e) => {
+                                eprintln!("Capture Error: {}", e);
                             }
-                            std::thread::spawn(move || {
-                               overlay::show_selection_overlay(preset_idx); 
-                            });
-                        },
-                        Err(e) => println!("Capture Error: {}", e),
-                    }
+                        }
+                    });
                 }
             }
             LRESULT(0)
@@ -260,7 +279,13 @@ fn capture_full_screen() -> anyhow::Result<ImageBuffer<image::Rgba<u8>, Vec<u8>>
 
         let hdc_screen = GetDC(None);
         let hdc_mem = CreateCompatibleDC(hdc_screen);
+        // FIX: Error handling on resource creation
         let hbitmap = CreateCompatibleBitmap(hdc_screen, width, height);
+        if hbitmap.0 == 0 {
+             DeleteDC(hdc_mem);
+             ReleaseDC(None, hdc_screen);
+             return Err(anyhow::anyhow!("GDI Error: Failed to create compatible bitmap."));
+        }
         SelectObject(hdc_mem, hbitmap);
 
         BitBlt(hdc_mem, 0, 0, width, height, hdc_screen, x, y, SRCCOPY).ok()?;
