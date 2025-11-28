@@ -18,15 +18,24 @@ impl Drop for GdiObj {
     }
 }
 
-// Helper: Measure text height
-unsafe fn measure_text_height(hdc: windows::Win32::Graphics::Gdi::CreatedHDC, text: &mut [u16], font_size: i32, width: i32) -> i32 {
+// Helper: Measure text dimensions (Height AND Width)
+unsafe fn measure_text_bounds(hdc: windows::Win32::Graphics::Gdi::CreatedHDC, text: &mut [u16], font_size: i32, max_width: i32) -> (i32, i32) {
     let hfont = CreateFontW(font_size, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
     let old_font = SelectObject(hdc, hfont);
-    let mut calc_rect = RECT { left: 0, top: 0, right: width, bottom: 0 };
-    DrawTextW(hdc, text, &mut calc_rect, DT_CALCRECT | DT_WORDBREAK);
+    
+    // We start with the max width constraint.
+    // DT_CALCRECT will expand the 'right' value if a single word is wider than max_width (unless we handle it),
+    // or wrap lines which increases 'bottom'.
+    let mut calc_rect = RECT { left: 0, top: 0, right: max_width, bottom: 0 };
+    
+    // DT_EDITCONTROL helps simulate multiline text box behavior
+    DrawTextW(hdc, text, &mut calc_rect, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL);
+    
     SelectObject(hdc, old_font);
     DeleteObject(hfont);
-    calc_rect.bottom
+    
+    // Return (Height, Width)
+    (calc_rect.bottom, calc_rect.right)
 }
 
 pub fn create_bitmap_from_pixels(pixels: &[u32], w: i32, h: i32) -> HBITMAP {
@@ -203,8 +212,13 @@ pub fn paint_window(hwnd: HWND) {
             } else {
                 while low <= high {
                     let mid = (low + high) / 2;
-                    let h = measure_text_height(cache_dc, &mut buf, mid, available_w);
-                    if h <= available_h {
+                    let (h, w) = measure_text_bounds(cache_dc, &mut buf, mid, available_w);
+                    
+                    // FIX: Check BOTH height and width constraints.
+                    // Even if the height fits, if the text expands horizontally beyond available_w
+                    // (which happens with long words like filenames that GDI refuses to break),
+                    // we must reject this font size.
+                    if h <= available_h && w <= available_w {
                         best_fit = mid;
                         low = mid + 1;
                     } else {
@@ -217,9 +231,11 @@ pub fn paint_window(hwnd: HWND) {
             let hfont = CreateFontW(font_size_val, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
             let old_font = SelectObject(cache_dc, hfont);
 
+            // Re-measure with selected font for vertical alignment
             let mut measure_rect = RECT { left: 0, top: 0, right: available_w, bottom: 0 };
-            DrawTextW(cache_dc, &mut buf, &mut measure_rect, DT_CALCRECT | DT_WORDBREAK);
+            DrawTextW(cache_dc, &mut buf, &mut measure_rect, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL);
             let text_h = measure_rect.bottom;
+            
             let offset_y = ((height - text_h) / 2).max(0);
             let mut draw_rect = RECT {
                 left: h_padding,
@@ -227,7 +243,9 @@ pub fn paint_window(hwnd: HWND) {
                 right: width - h_padding,
                 bottom: height
             };
-            DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, DT_LEFT | DT_WORDBREAK);
+            
+            // Draw actual text
+            DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, DT_LEFT | DT_WORDBREAK | DT_EDITCONTROL);
 
             SelectObject(cache_dc, old_font);
             DeleteObject(hfont);
