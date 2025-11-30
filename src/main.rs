@@ -6,6 +6,7 @@ mod gui;
 mod overlay;
 mod icon_gen;
 mod model_config;
+mod updater;
 
 use std::sync::{Arc, Mutex};
 use std::panic;

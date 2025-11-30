@@ -1,8 +1,18 @@
-# Build and compress the executable
-Write-Host "Building release binary..." -ForegroundColor Green
+# Extract version from Cargo.toml
+$cargoContent = Get-Content "Cargo.toml" -Raw
+if ($cargoContent -match 'version\s*=\s*"([^"]+)"') {
+    $version = $matches[1]
+} else {
+    Write-Host "Failed to extract version from Cargo.toml" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "Building release binary (v$version)..." -ForegroundColor Green
 cargo build --release
 
 $exePath = "target/release/screen-grounded-translator.exe"
+$outputExeName = "ScreenGroundedTranslator_v$version.exe"
+$outputPath = "target/release/$outputExeName"
 $upxDir = "tools/upx"
 $upxPath = "$upxDir/upx.exe"
 
@@ -27,8 +37,15 @@ if (Test-Path $exePath) {
     Write-Host "Compressing with UPX..." -ForegroundColor Green
     & $upxPath --best --lzma $exePath
     
-    $size = (Get-Item $exePath).Length / 1MB
-    Write-Host "Done! Binary size: $([Math]::Round($size, 2)) MB" -ForegroundColor Green
+    # Rename exe to include version
+    if (Test-Path $outputPath) {
+        Remove-Item $outputPath
+    }
+    Move-Item $exePath $outputPath
+    
+    $size = (Get-Item $outputPath).Length / 1MB
+    Write-Host "Done! Output: $outputExeName" -ForegroundColor Green
+    Write-Host "Binary size: $([Math]::Round($size, 2)) MB" -ForegroundColor Green
 } else {
     Write-Host "Build failed - exe not found" -ForegroundColor Red
 }

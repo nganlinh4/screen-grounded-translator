@@ -16,6 +16,7 @@ use crate::gui::locale::LocaleText;
 use crate::gui::key_mapping::egui_key_to_vk;
 use crate::gui::icons::{Icon, icon_button, draw_icon_static};
 use crate::model_config::{get_all_models, ModelType, get_model_by_id};
+use crate::updater::{Updater, UpdateStatus};
 
 // --- Monitor Enumeration Helper ---
 struct MonitorEnumContext {
@@ -89,6 +90,11 @@ pub struct SettingsApp {
     
     // Cache monitors
     cached_monitors: Vec<String>,
+    
+    // Updater State
+    updater: Option<Updater>,
+    update_rx: Receiver<UpdateStatus>,
+    update_status: UpdateStatus,
 }
 
 impl SettingsApp {
@@ -186,6 +192,7 @@ impl SettingsApp {
         };
         
         let cached_monitors = get_monitor_names();
+        let (up_tx, up_rx) = channel();
 
         Self {
             config,
@@ -206,6 +213,9 @@ impl SettingsApp {
             fade_in_start: None,
             startup_stage: 0,
             cached_monitors,
+            updater: Some(Updater::new(up_tx)),
+            update_rx: up_rx,
+            update_status: UpdateStatus::Idle,
         }
     }
 
@@ -264,6 +274,11 @@ impl eframe::App for SettingsApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Process updater status messages
+        while let Ok(status) = self.update_rx.try_recv() {
+            self.update_status = status;
+        }
+
         // --- 3-Stage Startup Logic (Anti-Flash & Centering) ---
         // Stage 0: Calculate center, move window (Invisible).
         // Stage 1: Render one frame of dark splash content (Invisible).
@@ -498,7 +513,8 @@ impl eframe::App for SettingsApp {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(text.footer_admin_text).size(11.0).color(ui.visuals().weak_text_color()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(egui::RichText::new(text.footer_version).size(11.0).color(ui.visuals().weak_text_color()));
+                        let version_text = format!("{} v{}", text.footer_version, env!("CARGO_PKG_VERSION"));
+                        ui.label(egui::RichText::new(version_text).size(11.0).color(ui.visuals().weak_text_color()));
                     });
                 });
             });
@@ -666,42 +682,107 @@ impl eframe::App for SettingsApp {
                                     app.model_usage_stats.clone()
                                 };
 
-                                egui::Grid::new("usage_grid").striped(true).show(ui, |ui| {
-                                    ui.label(egui::RichText::new(text.usage_model_column).strong());
-                                    ui.label(egui::RichText::new(text.usage_remaining_column).strong());
-                                    ui.end_row();
-
-                                    // Track shown models to avoid duplicates (by full_name)
-                                    let mut shown_models = std::collections::HashSet::new();
-                                    
-                                    for model in get_all_models() {
-                                        if !model.enabled { continue; }
-                                        
-                                        // Skip duplicates (same full_name)
-                                        if shown_models.contains(&model.full_name) {
-                                            continue;
-                                        }
-                                        shown_models.insert(model.full_name.clone());
-                                        
-                                        // Display model name without speed labels
-                                        ui.label(model.full_name.clone());
-                                        
-                                        // 2. Real-time Status
-                                        if model.provider == "groq" {
-                                            // Look up by FULL NAME
-                                            let status = usage_stats.get(&model.full_name).cloned().unwrap_or_else(|| {
-                                                "??? / ?".to_string()
-                                            });
-                                            ui.label(status);
-                                        } else if model.provider == "google" {
-                                            // Link for Gemini
-                                            ui.hyperlink_to(text.usage_check_link, "https://aistudio.google.com/usage?timeRange=last-1-day&tab=rate-limit");
-                                        }
+                                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                                    egui::Grid::new("usage_grid").striped(true).show(ui, |ui| {
+                                        ui.label(egui::RichText::new(text.usage_model_column).strong());
+                                        ui.label(egui::RichText::new(text.usage_remaining_column).strong());
                                         ui.end_row();
-                                    }
+
+                                        // Track shown models to avoid duplicates (by full_name)
+                                        let mut shown_models = std::collections::HashSet::new();
+                                        
+                                        for model in get_all_models() {
+                                            if !model.enabled { continue; }
+                                            
+                                            // Skip duplicates (same full_name)
+                                            if shown_models.contains(&model.full_name) {
+                                                continue;
+                                            }
+                                            shown_models.insert(model.full_name.clone());
+                                            
+                                            // Display model name without speed labels
+                                            ui.label(model.full_name.clone());
+                                            
+                                            // 2. Real-time Status
+                                            if model.provider == "groq" {
+                                                // Look up by FULL NAME
+                                                let status = usage_stats.get(&model.full_name).cloned().unwrap_or_else(|| {
+                                                    "??? / ?".to_string()
+                                                });
+                                                ui.label(status);
+                                            } else if model.provider == "google" {
+                                                // Link for Gemini
+                                                ui.hyperlink_to(text.usage_check_link, "https://aistudio.google.com/usage?timeRange=last-1-day&tab=rate-limit");
+                                            }
+                                            ui.end_row();
+                                        }
+                                    });
                                 });
                             });
                             // -----------------------------
+
+                            ui.add_space(10.0);
+
+                            // --- Software Update Section ---
+                            match &self.update_status {
+                                UpdateStatus::Idle => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("{} v{}", text.current_version_label, env!("CARGO_PKG_VERSION")));
+                                        if ui.button(text.check_for_updates_btn).clicked() {
+                                            if let Some(u) = &self.updater { u.check_for_updates(); }
+                                        }
+                                    });
+                                },
+                                UpdateStatus::Checking => {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(text.checking_github);
+                                    });
+                                },
+                                UpdateStatus::UpToDate(ver) => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(format!("{} (v{})", text.up_to_date, ver)).color(egui::Color32::GREEN));
+                                        if ui.button(text.check_again_btn).clicked() {
+                                            if let Some(u) = &self.updater { u.check_for_updates(); }
+                                        }
+                                    });
+                                },
+                                UpdateStatus::UpdateAvailable { version, body } => {
+                                    ui.colored_label(egui::Color32::YELLOW, format!("{} {}", text.new_version_available, version));
+                                    
+                                    ui.collapsing(text.release_notes_label, |ui| {
+                                        ui.label(body);
+                                    });
+                                    
+                                    ui.add_space(5.0);
+                                    if ui.button(egui::RichText::new(text.download_update_btn).strong()).clicked() {
+                                        if let Some(u) = &self.updater { u.perform_update(); }
+                                    }
+                                },
+                                UpdateStatus::Downloading => {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(text.downloading_update);
+                                    });
+                                },
+                                UpdateStatus::Error(e) => {
+                                    ui.colored_label(egui::Color32::RED, format!("{} {}", text.update_failed, e));
+                                    ui.label(egui::RichText::new(text.app_folder_writable_hint).size(11.0));
+                                    if ui.button(text.retry_btn).clicked() {
+                                        if let Some(u) = &self.updater { u.check_for_updates(); }
+                                    }
+                                },
+                                UpdateStatus::UpdatedAndRestartRequired => {
+                                    ui.label(egui::RichText::new(text.update_success).color(egui::Color32::GREEN).heading());
+                                    ui.label(text.restart_to_use_new_version);
+                                    if ui.button(text.restart_app_btn).clicked() {
+                                        if let Ok(exe_path) = std::env::current_exe() {
+                                            let _ = std::process::Command::new(exe_path).spawn();
+                                            std::process::exit(0);
+                                        }
+                                    }
+                                }
+                            }
 
                             ui.add_space(10.0);
 
