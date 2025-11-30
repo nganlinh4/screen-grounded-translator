@@ -74,6 +74,7 @@ impl Updater {
             match self_update::backends::github::Update::configure()
                 .repo_owner("nganlinh4")
                 .repo_name("screen-grounded-translator")
+                .bin_name("screen-grounded-translator")
                 .show_download_progress(false)
                 .current_version(env!("CARGO_PKG_VERSION"))
                 .build()
