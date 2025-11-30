@@ -478,10 +478,22 @@ impl eframe::App for SettingsApp {
         // --- UI LAYOUT ---
 
         // 1. Footer (Bottom Panel)
+        let visuals = ctx.style().visuals.clone();
+        let footer_bg = if visuals.dark_mode {
+            // Dark theme: slightly lighter background
+            egui::Color32::from_gray(20)
+        } else {
+            // Light theme: slightly darker background
+            egui::Color32::from_gray(240)
+        };
         egui::TopBottomPanel::bottom("footer_panel")
             .resizable(false)
-            .show_separator_line(false) // Remove the bar
-            .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(10.0, 4.0))) // Compact height
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::default()
+                    .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                    .fill(footer_bg)
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(text.footer_admin_text).size(11.0).color(ui.visuals().weak_text_color()));
