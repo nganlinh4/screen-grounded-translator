@@ -63,19 +63,9 @@ pub fn translate_image_streaming<F>(
 where
     F: FnMut(&str),
 {
-    // FIX 6: Resize image if too large to save bandwidth
-    let processed_image = if image.width() > 1920 {
-        let ratio = 1920.0 / image.width() as f32;
-        let new_h = (image.height() as f32 * ratio) as u32;
-        image::imageops::resize(&image, 1920, new_h, image::imageops::FilterType::Triangle)
-    } else {
-        image
-    };
-
+    // Reverted resizing logic as it caused issues with main overlay capture
     let mut image_data = Vec::new();
-    // Use PNG for resized image (JPEG support requires feature flag)
-    // Resizing from original size to 1920px width already saves ~75% payload
-    processed_image.write_to(&mut Cursor::new(&mut image_data), image::ImageFormat::Png)?;
+    image.write_to(&mut Cursor::new(&mut image_data), image::ImageFormat::Png)?;
     let b64_image = general_purpose::STANDARD.encode(&image_data);
 
     let mut full_content = String::new();
@@ -219,7 +209,7 @@ where
                 } else if err_str.contains("400") {
                     anyhow::anyhow!("Groq API 400: Bad request. Check model availability or API request format.")
                 } else {
-                    anyhow::anyhow!("{}", err_str)
+                    anyhow::anyhow!("Error: https://api.groq.com/openai/v1/chat/completions: {}", err_str)
                 }
             })?;
 
@@ -282,10 +272,6 @@ where
                 on_chunk(&full_content);
             }
         }
-    }
-
-    if full_content.is_empty() {
-        return Err(anyhow::anyhow!("No content received from API"));
     }
 
     Ok(full_content)
@@ -846,60 +832,173 @@ pub fn refine_text_streaming<F>(
 where
     F: FnMut(&str),
 {
-    let context_desc = match &context {
-        RefineContext::Image(_) => "from an image",
-        RefineContext::Audio(_) => "from audio",
-        RefineContext::None => "from previous output",
-    };
-
+    // 1. CONSTRUCT SIMPLE PROMPT
+    // Removed "Previous Output (context):" labeling which confuses small models.
     let final_prompt = format!(
-        "Previous Output ({}):\n{}\n\nUser Instruction: {}\n\nPlease refine the output based on the user instruction. Return ONLY the updated/refined text.",
-        context_desc, previous_text, user_prompt
+        "Content:\n{}\n\nInstruction:\n{}\n\nOutput ONLY the result.",
+        previous_text, user_prompt
     );
 
-    // Resolve actual model ID to use
-    let mut model_to_use = original_model_id.to_string();
-    let mut provider_to_use = original_provider.to_string();
+    // 2. Determine the Base Model ID/Name and Provider we WANT to use
+    let (mut target_id_or_name, mut target_provider) = match context {
+        RefineContext::Image(_) => {
+            // For images, we try to stick to the original vision model.
+            (original_model_id.to_string(), original_provider.to_string())
+        },
+        _ => {
+            // RefineContext::None (Retranslate) or RefineContext::Audio (Transcript Refinement)
+            // Force smart text model: prioritize Google if key present, else Groq
+            if !gemini_api_key.trim().is_empty() {
+                 ("gemini-flash-lite".to_string(), "google".to_string()) 
+            } else if !groq_api_key.trim().is_empty() {
+                 ("text_accurate_kimi".to_string(), "groq".to_string()) 
+            } else {
+                 (original_model_id.to_string(), original_provider.to_string())
+            }
+        }
+    };
 
-    // Handle Whisper Edge Case: If original was Whisper (audio-only), we must fallback to a text model
-    if model_to_use.starts_with("whisper") && provider_to_use == "groq" {
-        // Switch to a capable text model on Groq (e.g., Llama3 or Mixtral)
-        // Using "llama3-70b-8192" as a safe, high-quality default for Groq text ops
-        model_to_use = "llama3-70b-8192".to_string();
+    // 3. Resolve to Full Name (API-ready)
+    // This converts IDs like "gemini-flash-lite" -> "gemini-flash-lite-latest"
+    if let Some(conf) = get_model_by_id(&target_id_or_name) {
+        target_id_or_name = conf.full_name;
+        target_provider = conf.provider; // Also ensure provider matches config
     }
+    
+    // Helper closure to execute Text-Only generation using final_prompt
+    let mut exec_text_only = |p_model: String, p_provider: String| -> Result<String> {
+        let mut full_content = String::new();
 
-    // Resolve full model name if it's an ID
-    if let Some(conf) = get_model_by_id(&model_to_use) {
-        model_to_use = conf.full_name;
-    }
+        if p_provider == "google" {
+             if gemini_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_GEMINI_KEY")); }
+             
+             let method = if streaming_enabled { "streamGenerateContent" } else { "generateContent" };
+             let url = if streaming_enabled {
+                 format!("https://generativelanguage.googleapis.com/v1beta/models/{}:{}?alt=sse", p_model, method)
+             } else {
+                 format!("https://generativelanguage.googleapis.com/v1beta/models/{}:{}", p_model, method)
+             };
+
+             let payload = serde_json::json!({
+                 "contents": [{ "role": "user", "parts": [{ "text": final_prompt }] }]
+             });
+
+             let resp = UREQ_AGENT.post(&url)
+                 .set("x-goog-api-key", gemini_api_key)
+                 .send_json(payload)
+                 .map_err(|e| anyhow::anyhow!("Gemini Refine Error: {}", e))?;
+
+             if streaming_enabled {
+                 let reader = BufReader::new(resp.into_reader());
+                 for line in reader.lines() {
+                     let line = line?;
+                     if line.starts_with("data: ") {
+                         let json_str = &line["data: ".len()..];
+                         if json_str.trim() == "[DONE]" { break; }
+                         if let Ok(chunk_resp) = serde_json::from_str::<serde_json::Value>(json_str) {
+                             if let Some(candidates) = chunk_resp.get("candidates").and_then(|c| c.as_array()) {
+                                 if let Some(first) = candidates.first() {
+                                     if let Some(parts) = first.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+                                         if let Some(p) = parts.first() {
+                                             if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
+                                                 full_content.push_str(t);
+                                                 on_chunk(t);
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                 }
+             } else {
+                 let json: serde_json::Value = resp.into_json()?;
+                 if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array()) {
+                     if let Some(first) = candidates.first() {
+                         if let Some(parts) = first.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+                            full_content = parts.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect::<String>();
+                            on_chunk(&full_content);
+                         }
+                     }
+                 }
+             }
+        } else {
+            // Groq
+            if groq_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_API_KEY")); }
+            
+            let payload = serde_json::json!({
+                "model": p_model,
+                "messages": [{ "role": "user", "content": final_prompt }],
+                "stream": streaming_enabled
+            });
+            
+            let resp = UREQ_AGENT.post("https://api.groq.com/openai/v1/chat/completions")
+                .set("Authorization", &format!("Bearer {}", groq_api_key))
+                .send_json(payload)
+                .map_err(|e| anyhow::anyhow!("Groq Refine Error: {}", e))?;
+
+            // Capture Rate Limits
+            if let Some(remaining) = resp.header("x-ratelimit-remaining-requests") {
+                 let limit = resp.header("x-ratelimit-limit-requests").unwrap_or("?");
+                 let usage_str = format!("{} / {}", remaining, limit);
+                 if let Ok(mut app) = APP.lock() {
+                     app.model_usage_stats.insert(p_model.clone(), usage_str);
+                 }
+            }
+
+            if streaming_enabled {
+                let reader = BufReader::new(resp.into_reader());
+                for line in reader.lines() {
+                    let line = line?;
+                    if line.starts_with("data: ") {
+                         let data = &line[6..];
+                         if data == "[DONE]" { break; }
+                         if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                             if let Some(content) = chunk.choices.get(0).and_then(|c| c.delta.content.as_ref()) {
+                                 full_content.push_str(content);
+                                 on_chunk(content);
+                             }
+                         }
+                    }
+                }
+            } else {
+                 let json: ChatCompletionResponse = resp.into_json()?;
+                 if let Some(choice) = json.choices.first() {
+                     full_content = choice.message.content.clone();
+                     on_chunk(&full_content);
+                 }
+            }
+        }
+        
+        Ok(full_content)
+    };
 
     match context {
         RefineContext::Image(img_bytes) => {
-            if provider_to_use == "google" {
+            if target_provider == "google" {
                 if gemini_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_GEMINI_KEY")); }
                 let img = image::load_from_memory(&img_bytes)?.to_rgba8();
-                translate_image_streaming(groq_api_key, gemini_api_key, final_prompt, model_to_use, provider_to_use, img, streaming_enabled, false, on_chunk)
+                translate_image_streaming(groq_api_key, gemini_api_key, final_prompt, target_id_or_name, target_provider, img, streaming_enabled, false, on_chunk)
             } else {
                 // Groq/Llama Vision
                 if groq_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_API_KEY")); }
                 let img = image::load_from_memory(&img_bytes)?.to_rgba8();
-                translate_image_streaming(groq_api_key, gemini_api_key, final_prompt, model_to_use, provider_to_use, img, streaming_enabled, false, on_chunk)
+                translate_image_streaming(groq_api_key, gemini_api_key, final_prompt, target_id_or_name, target_provider, img, streaming_enabled, false, on_chunk)
             }
         },
         RefineContext::Audio(wav_bytes) => {
-            if provider_to_use == "google" {
+            if target_provider == "google" {
                 if gemini_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_GEMINI_KEY")); }
-                transcribe_audio_gemini(gemini_api_key, final_prompt, model_to_use, wav_bytes, on_chunk)
+                transcribe_audio_gemini(gemini_api_key, final_prompt, target_id_or_name, wav_bytes, on_chunk)
             } else {
-                // Groq Audio (Whisper) - Fallback to TEXT refinement because Whisper API is not chat
-                // This case should be handled by the model override above, forcing it to text flow
-                // But if we reached here with Audio context on Groq, we treat it as text-only refinement
-                translate_text_streaming(groq_api_key, gemini_api_key, previous_text, "Refined".to_string(), model_to_use, provider_to_use, streaming_enabled, false, on_chunk)
+                // Groq Audio (Whisper) - Fallback to TEXT refinement using the helper
+                // because Whisper cannot do chat refinement on audio.
+                exec_text_only(target_id_or_name, target_provider)
             }
         },
         RefineContext::None => {
-            // Text Only
-            translate_text_streaming(groq_api_key, gemini_api_key, previous_text, "Refined".to_string(), model_to_use, provider_to_use, streaming_enabled, false, on_chunk)
+            // Text Only - Use the helper to execute with final_prompt
+            exec_text_only(target_id_or_name, target_provider)
         }
     }
 }
