@@ -131,11 +131,10 @@ pub fn paint_window(hwnd: HWND) {
         let height = rect.bottom - rect.top;
 
         // --- PHASE 1: STATE SNAPSHOT & CACHE MANAGEMENT ---
-         // We lock the mutex ONCE to read state and update caches if dirty.
-         let (
+        let (
              bg_color_u32, is_hovered, on_copy_btn, copy_success, on_edit_btn, on_undo_btn, broom_data, particles,
              mut cached_text_bm, _cached_font_size, cache_dirty,
-             cached_bg_bm, // The background gradient cache
+             cached_bg_bm,
              is_refining,
              anim_offset,
              history_count
@@ -143,7 +142,7 @@ pub fn paint_window(hwnd: HWND) {
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
                 
-                // 1.1 Update Background Cache if needed (Resize or First Run)
+                // 1.1 Update Background Cache if needed
                 if state.bg_bitmap.0 == 0 || state.bg_w != width || state.bg_h != height {
                     if state.bg_bitmap.0 != 0 { DeleteObject(state.bg_bitmap); }
 
@@ -157,7 +156,6 @@ pub fn paint_window(hwnd: HWND) {
                     let mut p_bg_bits: *mut core::ffi::c_void = std::ptr::null_mut();
                     let hbm_bg = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &mut p_bg_bits, None, 0).unwrap();
                     
-                    // Draw Gradient into Cache
                     if !p_bg_bits.is_null() {
                         let pixels = std::slice::from_raw_parts_mut(p_bg_bits as *mut u32, (width * height) as usize);
                         let top_r = (state.bg_color >> 16) & 0xFF;
@@ -179,7 +177,6 @@ pub fn paint_window(hwnd: HWND) {
                             pixels[start..end].fill(col);
                         }
                     }
-                    
                     state.bg_bitmap = hbm_bg;
                     state.bg_w = width;
                     state.bg_h = height;
@@ -191,17 +188,16 @@ pub fn paint_window(hwnd: HWND) {
                     state.last_h = height;
                 }
 
-                // Prepare Data for Rendering
                 let particles_vec: Vec<(f32, f32, f32, f32, u32)> = state.physics.particles.iter()
                     .map(|p| (p.x, p.y, p.life, p.size, p.color)).collect();
 
-                // HIDE BROOM IF HOVERING RESIZE EDGE OR BUTTONS
                 let show_broom = state.is_hovered 
                     && !state.on_copy_btn 
                     && !state.on_edit_btn
                     && !state.on_undo_btn
                     && state.current_resize_edge == ResizeEdge::None 
                     || state.physics.mode == AnimationMode::Smashing;
+                
                 let broom_info = if show_broom {
                      Some((state.physics.x, state.physics.y, BroomRenderParams {
                             tilt_angle: state.physics.current_tilt,
@@ -224,12 +220,7 @@ pub fn paint_window(hwnd: HWND) {
             }
         };
 
-        // --- PHASE 2: COMPOSITOR SETUP (Scratch Buffer) ---
-        // We create a "Scratch" DIBSection for this frame. This allows us to:
-        // 1. BitBlt the static background (Fast)
-        // 2. Manipulate pixels directly for particles (Fast)
-        // 3. BitBlt the text on top
-        // 4. AlphaBlend the broom
+        // --- PHASE 2: COMPOSITOR SETUP ---
         let mem_dc = CreateCompatibleDC(hdc);
         
         let bmi_scratch = BITMAPINFO {
@@ -242,7 +233,7 @@ pub fn paint_window(hwnd: HWND) {
         let scratch_bitmap = CreateDIBSection(hdc, &bmi_scratch, DIB_RGB_COLORS, &mut scratch_bits, None, 0).unwrap();
         let old_scratch = SelectObject(mem_dc, scratch_bitmap);
 
-        // 2.1 Copy Background from Cache -> Scratch
+        // 2.1 Copy Background
         if cached_bg_bm.0 != 0 {
             let cache_dc = CreateCompatibleDC(hdc);
             let old_cbm = SelectObject(cache_dc, cached_bg_bm);
@@ -251,8 +242,7 @@ pub fn paint_window(hwnd: HWND) {
             DeleteDC(cache_dc);
         }
 
-        // --- PHASE 3: TEXT CACHE UPDATE (If needed) ---
-        // Skip text rendering if refining
+        // --- PHASE 3: TEXT CACHE UPDATE ---
         if !is_refining {
             if cache_dirty || cached_text_bm.0 == 0 {
                 if cached_text_bm.0 != 0 { DeleteObject(cached_text_bm); }
@@ -261,7 +251,6 @@ pub fn paint_window(hwnd: HWND) {
                 let cache_dc = CreateCompatibleDC(hdc);
                 let old_cache_bm = SelectObject(cache_dc, cached_text_bm);
 
-                // Clear with background color
                 let dark_brush = CreateSolidBrush(COLORREF(bg_color_u32));
                 let fill_rect = RECT { left: 0, top: 0, right: width, bottom: height };
                 FillRect(cache_dc, &fill_rect, dark_brush);
@@ -274,8 +263,6 @@ pub fn paint_window(hwnd: HWND) {
                 let mut buf = vec![0u16; text_len as usize];
                 GetWindowTextW(hwnd, &mut buf);
 
-                // Font sizing logic
-                // FIX: Reduced padding to 6 to accommodate smaller windows
                 let h_padding = 6; 
                 let available_w = (width - (h_padding * 2)).max(1);
                 let v_safety_margin = 4;
@@ -292,7 +279,6 @@ pub fn paint_window(hwnd: HWND) {
                     while low <= high {
                         let mid = (low + high) / 2;
                         let (h, w) = measure_text_bounds(cache_dc, &mut buf, mid, available_w);
-                        
                         if h <= available_h && w <= available_w {
                             best_fit = mid;
                             low = mid + 1;
@@ -306,7 +292,6 @@ pub fn paint_window(hwnd: HWND) {
                 let hfont = CreateFontW(font_size_val, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
                 let old_font = SelectObject(cache_dc, hfont);
 
-                // Re-measure with selected font for vertical alignment
                 let mut measure_rect = RECT { left: 0, top: 0, right: available_w, bottom: 0 };
                 DrawTextW(cache_dc, &mut buf, &mut measure_rect, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL);
                 let text_h = measure_rect.bottom;
@@ -319,7 +304,6 @@ pub fn paint_window(hwnd: HWND) {
                     bottom: height
                 };
                 
-                // Draw actual text
                 DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, DT_LEFT | DT_WORDBREAK | DT_EDITCONTROL);
 
                 SelectObject(cache_dc, old_font);
@@ -327,7 +311,6 @@ pub fn paint_window(hwnd: HWND) {
                 SelectObject(cache_dc, old_cache_bm);
                 DeleteDC(cache_dc);
 
-                // Update State with new text cache
                 let mut states = WINDOW_STATES.lock().unwrap();
                 if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
                     state.content_bitmap = cached_text_bm;
@@ -336,7 +319,6 @@ pub fn paint_window(hwnd: HWND) {
                 }
             }
 
-            // 3.1 Blit Text Cache -> Scratch
             if cached_text_bm.0 != 0 {
                 let cache_dc = CreateCompatibleDC(hdc);
                 let old_cbm = SelectObject(cache_dc, cached_text_bm);
@@ -346,12 +328,11 @@ pub fn paint_window(hwnd: HWND) {
             }
         }
 
-        // --- PHASE 4: PIXEL MANIPULATION (Particles, Glow & Button) ---
-        // We modify the Scratch DIB pixels directly
+        // --- PHASE 4: PIXEL MANIPULATION ---
         if !scratch_bits.is_null() {
             let raw_pixels = std::slice::from_raw_parts_mut(scratch_bits as *mut u32, (width * height) as usize);
 
-            // 4.0 REFINEMENT GLOW (Spinning SDF)
+            // 4.0 REFINEMENT GLOW
             if is_refining {
                 let bx = width as f32 / 2.0;
                 let by = height as f32 / 2.0;
@@ -364,54 +345,35 @@ pub fn paint_window(hwnd: HWND) {
                         let idx = (y * width + x) as usize;
                         let px = x as f32 - center_x;
                         let py = y as f32 - center_y;
-
-                        // SDF for inner window bounds
-                        // Radius 12.0 matches the window rounded corners.
                         let d = sd_rounded_box(px, py, bx, by, 12.0);
 
-                        // We only care about the inside (d <= 0). 
                         if d <= 0.0 {
-                             let dist = d.abs(); // Distance from edge (positive)
-                             
-                             // Only compute glow near the edge (e.g. 20px) to prevent filling the whole window
+                             let dist = d.abs();
                              if dist < 20.0 {
                                  let angle = py.atan2(px);
-                                 // "Inner random reach" processing effect
                                  let noise = (angle * 12.0 - time_rad * 2.0).sin() * 0.5;
                                  let glow_width = 14.0;
-                                 
-                                 // Calculate intensity based on distance from edge
-                                 // dist 0 -> t 0 -> intensity 1
-                                 // dist glow_width -> t 1 -> intensity 0
                                  let t = (dist / glow_width).clamp(0.0, 1.0);
                                  let base_intensity = (1.0 - t).powi(3);
 
                                  if base_intensity > 0.01 {
-                                     // Modulate intensity with noise
                                      let noise_mod = (1.0 + noise * 0.3).clamp(0.0, 2.0);
                                      let final_intensity = (base_intensity * noise_mod).clamp(0.0, 1.0);
-                                     
                                      if final_intensity > 0.01 {
-                                         // Vibrant Rainbow
                                          let deg = angle.to_degrees() + (anim_offset * 2.0);
-                                         // Ensure hue is positive
                                          let hue = (deg % 360.0 + 360.0) % 360.0;
                                          let rgb = hsv_to_rgb(hue, 0.85, 1.0); 
-                                         
                                          let bg_px = raw_pixels[idx];
                                          let bg_b = (bg_px & 0xFF) as f32;
                                          let bg_g = ((bg_px >> 8) & 0xFF) as f32;
                                          let bg_r = ((bg_px >> 16) & 0xFF) as f32;
-                                         
                                          let fg_r = ((rgb >> 16) & 0xFF) as f32;
                                          let fg_g = ((rgb >> 8) & 0xFF) as f32;
                                          let fg_b = (rgb & 0xFF) as f32;
                                          
-                                         // Alpha blend over background
                                          let out_r = (fg_r * final_intensity + bg_r * (1.0 - final_intensity)) as u32;
                                          let out_g = (fg_g * final_intensity + bg_g * (1.0 - final_intensity)) as u32;
                                          let out_b = (fg_b * final_intensity + bg_b * (1.0 - final_intensity)) as u32;
-
                                          raw_pixels[idx] = (255 << 24) | (out_r << 16) | (out_g << 8) | out_b;
                                      }
                                  }
@@ -452,7 +414,6 @@ pub fn paint_window(hwnd: HWND) {
                         if aa_edge > 0.0 {
                             let idx = (y * width + x) as usize;
                             let bg_px = raw_pixels[idx];
-
                             let bg_b = (bg_px & 0xFF) as f32;
                             let bg_g = ((bg_px >> 8) & 0xFF) as f32;
                             let bg_r = ((bg_px >> 16) & 0xFF) as f32;
@@ -470,8 +431,7 @@ pub fn paint_window(hwnd: HWND) {
                 }
             }
 
-            // 4.2 Buttons (Copy & Edit & Undo) (Rounded Rect) & Icons (Antialiased & Thick)
-            // HIDE buttons if refining
+            // 4.2 Buttons
             if is_hovered && !is_refining {
                 let btn_size = 28;
                 let margin = 12;
@@ -483,31 +443,29 @@ pub fn paint_window(hwnd: HWND) {
                 };
                 let cx_copy = (width - margin - btn_size / 2) as f32;
                 let cx_edit = cx_copy - (btn_size as f32) - 8.0;
-                
                 let cx_undo = cx_edit - (btn_size as f32) - 8.0;
                 
                 let radius = 13.0;
 
                 let (tr_c, tg_c, tb_c) = if copy_success {
-                    (30.0, 180.0, 30.0) // Success Green
+                    (30.0, 180.0, 30.0) 
                 } else if on_copy_btn {
-                    (128.0, 128.0, 128.0) // Hover Bright
+                    (128.0, 128.0, 128.0)
                 } else {
-                    (80.0, 80.0, 80.0)    // Standard Visible Grey
+                    (80.0, 80.0, 80.0)
                 };
                 
                 let (tr_e, tg_e, tb_e) = if on_edit_btn {
-                    (128.0, 128.0, 128.0) // Hover Bright
+                    (128.0, 128.0, 128.0)
                 } else {
-                    (80.0, 80.0, 80.0)    // Standard Visible Grey
+                    (80.0, 80.0, 80.0)
                 };
                 let (tr_u, tg_u, tb_u) = if on_undo_btn {
-                    (128.0, 128.0, 128.0) // Hover Bright
+                    (128.0, 128.0, 128.0)
                 } else {
-                    (80.0, 80.0, 80.0)    // Standard Visible Grey
+                    (80.0, 80.0, 80.0)
                 };
 
-                // Bounding box covering all possible buttons
                 let b_start_x = (cx_undo - radius - 4.0) as i32;
                 let b_end_x = (cx_copy + radius + 4.0) as i32;
                 let b_start_y = (cy - radius - 4.0) as i32;
@@ -521,7 +479,6 @@ pub fn paint_window(hwnd: HWND) {
                         let fy = y as f32;
                         let dy = (fy - cy).abs();
                         
-                        // Distance to centers
                         let dx_c = (fx - cx_copy).abs();
                         let dist_c = (dx_c*dx_c + dy*dy).sqrt();
                         
@@ -549,16 +506,25 @@ pub fn paint_window(hwnd: HWND) {
                             (front_fill + back_outline * mask_d.clamp(0.0, 1.0)).clamp(0.0, 1.0)
                         };
 
-                        // --- EDIT BUTTON ---
+                        // --- EDIT BUTTON (AI SPARKLE) ---
                         let aa_body_e = (radius + 0.5 - dist_e).clamp(0.0, 1.0);
                         let border_alpha_e = ((radius + 0.5 - dist_e).clamp(0.0, 1.0) * ((dist_e - (border_inner_radius - 0.5)).clamp(0.0, 1.0))) * 0.6;
                         
-                        // Pencil Icon SDF
-                        // Diagonal line from (-3, 3) to (3, -3)
-                        let d_body = dist_segment(fx, fy, cx_edit - 3.0, cy + 3.0, cx_edit + 3.0, cy - 3.0);
-                        let icon_alpha_e = (1.2 - d_body).clamp(0.0, 1.0);
+                        // Main Star
+                        let sx = (fx - cx_edit).abs();
+                        let sy = (fy - cy).abs();
+                        // Concave Star Shape: (x^0.5 + y^0.5)^2 approximation
+                        let star_dist = (sx.powf(0.6) + sy.powf(0.6)).powf(1.0/0.6) - 4.5;
+                        let mut icon_alpha_e = (1.2 - star_dist).clamp(0.0, 1.0);
+                        
+                        // Small Star (Offset)
+                        let sx2 = (fx - (cx_edit + 4.5)).abs();
+                        let sy2 = (fy - (cy - 3.5)).abs();
+                        let star2_dist = (sx2.powf(0.6) + sy2.powf(0.6)).powf(1.0/0.6) - 2.2;
+                        icon_alpha_e = icon_alpha_e.max((1.2 - star2_dist).clamp(0.0, 1.0));
 
-                        // --- UNDO BUTTON (Conditional) ---
+
+                        // --- UNDO BUTTON (Simple Back Arrow) ---
                         let mut aa_body_u = 0.0;
                         let mut border_alpha_u = 0.0;
                         let mut icon_alpha_u = 0.0;
@@ -567,20 +533,25 @@ pub fn paint_window(hwnd: HWND) {
                             aa_body_u = (radius + 0.5 - dist_u).clamp(0.0, 1.0);
                             border_alpha_u = ((radius + 0.5 - dist_u).clamp(0.0, 1.0) * ((dist_u - (border_inner_radius - 0.5)).clamp(0.0, 1.0))) * 0.6;
                             
-                            // Left Arrow Icon (Back)
-                            // Main shaft: right to left
-                            let d_shaft = dist_segment(fx, fy, cx_undo + 3.0, cy, cx_undo - 3.0, cy);
-                            // Upper head part
-                            let d_head_top = dist_segment(fx, fy, cx_undo - 3.0, cy, cx_undo, cy - 3.0);
-                            // Lower head part
-                            let d_head_bot = dist_segment(fx, fy, cx_undo - 3.0, cy, cx_undo, cy + 3.0);
+                            // Simple Straight Arrow <-
+                            // Shaft: Right to Left
+                            let tip_x = cx_undo - 3.5;
+                            let tail_x = cx_undo + 3.5;
+                            let d_shaft = dist_segment(fx, fy, tip_x, cy, tail_x, cy);
                             
-                            let d_icon = d_shaft.min(d_head_top).min(d_head_bot);
-                            icon_alpha_u = (1.2 - d_icon).clamp(0.0, 1.0);
+                            // Wings: Tip to Right-Up/Right-Down
+                            // Wing length approx 3.5, angle 45 deg
+                            let wing_dx = 3.0; 
+                            let wing_dy = 3.0;
+                            let d_wing1 = dist_segment(fx, fy, tip_x, cy, tip_x + wing_dx, cy - wing_dy);
+                            let d_wing2 = dist_segment(fx, fy, tip_x, cy, tip_x + wing_dx, cy + wing_dy);
+                            
+                            let d_arrow = d_shaft.min(d_wing1).min(d_wing2);
+                            icon_alpha_u = (1.3 - d_arrow).clamp(0.0, 1.0);
                         }
 
                         if aa_body_c > 0.0 || border_alpha_c > 0.0 || icon_alpha_c > 0.0 ||
-                            aa_body_e > 0.0 || border_alpha_e > 0.0 || icon_alpha_e > 0.0 ||
+                           aa_body_e > 0.0 || border_alpha_e > 0.0 || icon_alpha_e > 0.0 ||
                            aa_body_u > 0.0 || border_alpha_u > 0.0 || icon_alpha_u > 0.0 {
                             let idx = (y * width + x) as usize;
                             let bg = raw_pixels[idx];
@@ -610,7 +581,7 @@ pub fn paint_window(hwnd: HWND) {
                                 final_b = 255.0 * icon_alpha_c + final_b * (1.0 - icon_alpha_c);
                             }
 
-                            // BLEND EDIT
+                            // BLEND EDIT (Sparkle)
                             if aa_body_e > 0.0 {
                                 let alpha = 0.9 * aa_body_e;
                                 final_r = tr_e * alpha + final_r * (1.0 - alpha);
@@ -683,10 +654,9 @@ pub fn paint_window(hwnd: HWND) {
             }
         }
 
-        // --- PHASE 6: FINAL BLIT TO SCREEN ---
+        // --- PHASE 6: FINAL BLIT ---
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY).ok();
 
-        // Cleanup Scratch Resources
         SelectObject(mem_dc, old_scratch);
         DeleteObject(scratch_bitmap);
         DeleteDC(mem_dc);
