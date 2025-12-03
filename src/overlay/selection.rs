@@ -4,28 +4,25 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetCapture, ReleaseCapture, VK_ESCAPE};
 use windows::core::*;
+use image::GenericImageView; 
 
-use super::process::process_and_close;
-use crate::{APP};
+use super::process::start_processing_pipeline;
+use crate::APP;
 
 // --- CONFIGURATION ---
 const FADE_TIMER_ID: usize = 2;
-const ANIM_TIMER_ID: usize = 1;
 const TARGET_OPACITY: u8 = 120; 
-const FADE_STEP: u8 = 40; // Increased for much faster fade (approx 3 frames / 50ms)
+const FADE_STEP: u8 = 40; 
 
 // --- STATE ---
 static mut START_POS: POINT = POINT { x: 0, y: 0 };
 static mut CURR_POS: POINT = POINT { x: 0, y: 0 };
 static mut IS_DRAGGING: bool = false;
-static mut IS_PROCESSING: bool = false;
 static mut IS_FADING_OUT: bool = false;
 static mut CURRENT_ALPHA: u8 = 0;
 static mut SELECTION_OVERLAY_ACTIVE: bool = false;
 static mut SELECTION_OVERLAY_HWND: HWND = HWND(0);
 static mut CURRENT_PRESET_IDX: usize = 0;
-static mut ANIMATION_OFFSET: f32 = 0.0;
-
 
 pub fn is_selection_overlay_active_and_dismiss() -> bool {
     unsafe {
@@ -42,11 +39,9 @@ pub fn show_selection_overlay(preset_idx: usize) {
     unsafe {
         CURRENT_PRESET_IDX = preset_idx;
         SELECTION_OVERLAY_ACTIVE = true;
-        ANIMATION_OFFSET = 0.0;
         CURRENT_ALPHA = 0;
         IS_FADING_OUT = false;
         IS_DRAGGING = false;
-        IS_PROCESSING = false;
         
         let instance = GetModuleHandleW(None).unwrap();
         let class_name = w!("SnippingOverlay");
@@ -103,7 +98,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
-            if !IS_PROCESSING && !IS_FADING_OUT {
+            if !IS_FADING_OUT {
                 IS_DRAGGING = true;
                 GetCursorPos(std::ptr::addr_of_mut!(START_POS));
                 CURR_POS = START_POS;
@@ -135,14 +130,41 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                 let height = (rect.bottom - rect.top).abs();
 
                 if width > 10 && height > 10 {
-                    IS_PROCESSING = true;
-                    SetTimer(hwnd, ANIM_TIMER_ID, 16, None);
-                    
-                    let app_clone = APP.clone();
-                    let p_idx = CURRENT_PRESET_IDX;
+                    // 1. CROP IMMEDIATELY
+                    let (cropped_img, config, preset) = {
+                        let guard = APP.lock().unwrap();
+                        let original = guard.original_screenshot.as_ref().expect("Screenshot missing");
+                        let config_clone = guard.config.clone();
+                        let preset_clone = guard.config.presets[CURRENT_PRESET_IDX].clone();
+
+                        let x_virt = GetSystemMetrics(SM_XVIRTUALSCREEN);
+                        let y_virt = GetSystemMetrics(SM_YVIRTUALSCREEN);
+                        
+                        let crop_x = (rect.left - x_virt).max(0) as u32;
+                        let crop_y = (rect.top - y_virt).max(0) as u32;
+                        let crop_w = (rect.right - rect.left).abs() as u32;
+                        let crop_h = (rect.bottom - rect.top).abs() as u32;
+                        
+                        let img_w = original.width();
+                        let img_h = original.height();
+                        
+                        let final_w = crop_w.min(img_w.saturating_sub(crop_x));
+                        let final_h = crop_h.min(img_h.saturating_sub(crop_y));
+                        
+                        let cropped = original.view(crop_x, crop_y, final_w, final_h).to_image();
+                        (cropped, config_clone, preset_clone)
+                    };
+
+                    // 2. TRIGGER PROCESSING THREAD IMMEDIATELY
                     std::thread::spawn(move || {
-                        process_and_close(app_clone, rect, hwnd, p_idx);
+                        start_processing_pipeline(cropped_img, rect, config, preset);
                     });
+
+                    // 3. START FADE OUT
+                    IS_FADING_OUT = true;
+                    SetTimer(hwnd, FADE_TIMER_ID, 16, None); 
+                    
+                    return LRESULT(0);
                 } else {
                     SendMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
@@ -150,9 +172,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             LRESULT(0)
         }
         WM_TIMER => {
-            let timer_id = wparam.0;
-            
-            if timer_id == FADE_TIMER_ID {
+            if wparam.0 == FADE_TIMER_ID {
                 let mut changed = false;
                 if IS_FADING_OUT {
                     if CURRENT_ALPHA > FADE_STEP {
@@ -178,13 +198,6 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                     SetLayeredWindowAttributes(hwnd, COLORREF(0), CURRENT_ALPHA, LWA_ALPHA);
                 }
             }
-            
-            if timer_id == ANIM_TIMER_ID && IS_PROCESSING {
-                // ANIMATION UPDATE
-                ANIMATION_OFFSET += 5.0; 
-                if ANIMATION_OFFSET > 360.0 { ANIMATION_OFFSET -= 360.0; }
-                InvalidateRect(hwnd, None, false);
-            }
             LRESULT(0)
         }
         WM_PAINT => {
@@ -198,13 +211,12 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             let mem_bitmap = CreateCompatibleBitmap(hdc, width, height);
             SelectObject(mem_dc, mem_bitmap);
 
-            // Clear Background
             let brush = CreateSolidBrush(COLORREF(0x00000000));
             let full_rect = RECT { left: 0, top: 0, right: width, bottom: height };
             FillRect(mem_dc, &full_rect, brush);
             DeleteObject(brush);
 
-            if IS_DRAGGING || IS_PROCESSING {
+            if IS_DRAGGING {
                 let rect_abs = RECT {
                     left: START_POS.x.min(CURR_POS.x),
                     top: START_POS.y.min(CURR_POS.y),
@@ -225,16 +237,13 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                 let w = (r.right - r.left) as i32;
                 let h = (r.bottom - r.top) as i32;
                 if w > 0 && h > 0 {
-                    // FIX: Always use the optimized render_box_sdf.
-                    // Pass IS_PROCESSING as the is_glowing flag for animated rainbow.
-                    // Pass ANIMATION_OFFSET for time-based animation.
                     super::paint_utils::render_box_sdf(
                         HDC(mem_dc.0),
                         r,
                         w,
                         h,
-                        IS_PROCESSING, // True = Animated Rainbow, False = Static White
-                        ANIMATION_OFFSET
+                        false,
+                        0.0
                     );
                 }
             }
@@ -248,7 +257,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
         WM_CLOSE => {
             if !IS_FADING_OUT {
                 IS_FADING_OUT = true;
-                KillTimer(hwnd, ANIM_TIMER_ID);
+                KillTimer(hwnd, FADE_TIMER_ID);
                 SetTimer(hwnd, FADE_TIMER_ID, 16, None);
             }
             LRESULT(0)

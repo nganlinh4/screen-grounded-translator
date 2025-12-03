@@ -68,18 +68,13 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
         let eff_radius = CORNER_RADIUS.min(bx).min(by);
 
         if is_large_area && is_glowing {
-            // === FAST LOOP (Outer Glow for Performance) ===
-            // Simplified math for massive regions to prevent lag.
-            // OPTIMIZATION: Pre-calculate trig values outside the loop
-            let time_rad = time_offset.to_radians();
-            let time_sin = (time_rad * 4.0).sin();
-            let glow_width = 12.0 + time_sin * 4.0;
-            let hue = (time_offset * 3.0) % 360.0;
-            let global_color = hsv_to_rgb(hue, 0.75, 1.0);
+            // === FAST LOOP (Optimized Inner Rainbow Glow) ===
+            // Renders the same "Fancy" style (Inner Rainbow + White Border)
+            // but optimizes by skipping expensive trig/noise calculations for the deep center.
             
-            let gc_r = ((global_color >> 16) & 0xFF) as u32;
-            let gc_g = ((global_color >> 8) & 0xFF) as u32;
-            let gc_b = (global_color & 0xFF) as u32;
+            let time_rad = time_offset.to_radians();
+            let dynamic_base_scale = 60.0; // Fixed large glow width
+            let glow_threshold = -dynamic_base_scale * 1.5; // Cutoff for deep center
 
             for y in 0..buf_h {
                 let py = (y as f32) - center_y;
@@ -88,34 +83,69 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
                     
                     let qx = px.abs() - bx + eff_radius;
                     let qy = py.abs() - by + eff_radius;
-                    // OPTIMIZATION: Inline sd_rounded_box logic and avoid function call
-                    let d = if qx > 0.0 && qy > 0.0 { ((qx * qx + qy * qy).sqrt()) - eff_radius } else { qx.max(qy) - eff_radius };
+                    let d = if qx > 0.0 && qy > 0.0 { 
+                        ((qx * qx + qy * qy).sqrt()) - eff_radius 
+                    } else { 
+                        qx.max(qy) - eff_radius 
+                    };
                     
-                    if d <= 0.0 {
-                        pixels[(y * buf_w + x) as usize] = 0xD80E0E0E;
-                    } else if d < glow_width {
-                        let t = d / glow_width;
-                        let alpha_f = (1.0 - t).powi(2);
-                        let a = (alpha_f * 255.0) as u32;
-                        if a > 0 {
-                            let r = (gc_r * a) >> 8;
-                            let g = (gc_g * a) >> 8;
-                            let b = (gc_b * a) >> 8;
-                            pixels[(y * buf_w + x) as usize] = (a << 24) | (r << 16) | (g << 8) | b;
+                    if d > 0.0 {
+                        // == OUTSIDE: White Border (1.5px) ==
+                        let aa = (1.5 - d).clamp(0.0, 1.0);
+                        if aa > 0.0 {
+                             let a = (aa * 255.0) as u32;
+                             // Pre-multiplied white
+                             pixels[(y * buf_w + x) as usize] = (a << 24) | (a << 16) | (a << 8) | a;
+                        } else {
+                             pixels[(y * buf_w + x) as usize] = 0;
+                        }
+                    } else {
+                        // == INSIDE: Rainbow Glow ==
+                        if d < glow_threshold {
+                            // Deep center: Transparent
+                            pixels[(y * buf_w + x) as usize] = 0;
+                        } else {
+                            // Glow Region: Expensive logic, but only for edge band
+                            let dist_in = d.abs();
+                            let angle = py.atan2(px);
+                            
+                            // Simplified noise
+                            let noise = (angle * 4.0 + time_rad * 2.0).sin() * 0.5; 
+                            let local_glow_width = dynamic_base_scale + (noise * (dynamic_base_scale * 0.4));
+                            
+                            let t = (dist_in / local_glow_width).clamp(0.0, 1.0);
+                            let intensity = (1.0 - t).powi(3); // Cubic falloff
+                            
+                            // Hard white core edge (3px)
+                            let final_alpha = if dist_in < 3.0 { 1.0 } else { intensity };
+                            
+                            if final_alpha > 0.005 {
+                                 let deg = angle.to_degrees() + 180.0;
+                                 let hue = (deg + time_offset) % 360.0;
+                                 // White edge (dist < 2.0) or Color
+                                 let rgb = if dist_in < 2.0 { 0x00FFFFFF } else { hsv_to_rgb(hue, 0.8, 1.0) };
+                                 
+                                 let a = (final_alpha * 255.0) as u32;
+                                 let r = ((rgb >> 16) & 0xFF) * a / 255;
+                                 let g = ((rgb >> 8) & 0xFF) * a / 255;
+                                 let b = (rgb & 0xFF) * a / 255;
+                                 
+                                 pixels[(y * buf_w + x) as usize] = (a << 24) | (r << 16) | (g << 8) | b;
+                            } else {
+                                pixels[(y * buf_w + x) as usize] = 0;
+                            }
                         }
                     }
                 }
             }
         } else {
             // === FANCY LOOP (Small/Medium or Dragging) ===
-            // OPTIMIZATION: Pre-calculate trig values outside the loop
             let time_rad = time_offset.to_radians();
             let time_sin_2 = (time_rad * 2.0).sin();
             let time_sin_neg_3 = (-time_rad * 3.0).sin();
             let min_dim = (w.min(h) as f32).max(1.0);
             let perimeter = 2.0 * (w + h) as f32;
             
-            // Restored noise scaling for Inner Glow
             let dynamic_base_scale = (min_dim * 0.2).clamp(30.0, 180.0);
             let complexity_scale = 1.0 + (perimeter / 1800.0);
             let freq1 = (2.0 * complexity_scale).round();
@@ -127,7 +157,6 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
                     let px = (x as f32) - center_x;
                     let py = (y as f32) - center_y;
                     
-                    // OPTIMIZATION: Inline sd_rounded_box to avoid function call overhead in tight loop
                     let qx = px.abs() - bx + eff_radius;
                     let qy = py.abs() - by + eff_radius;
                     let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + (qx.max(qy).min(0.0)) - eff_radius;
@@ -135,7 +164,6 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
                     let mut final_col = 0u32;
                     let mut final_alpha = 0.0f32;
 
-                    // --- LOGIC SPLIT ---
                     if d > 0.0 {
                         // == OUTSIDE THE BOX ==
                         if is_glowing {
@@ -146,20 +174,13 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
                                 final_col = 0x00FFFFFF;
                             }
                         } else {
-                            // DRAGGING: Grey Border (Anti-Aliased)
-                            // Soft fade out from d=1.5 to d=2.5
+                            // DRAGGING: Grey Border
                             let t_out = (d - 1.5).max(0.0);
                             let fade = (1.0 - t_out).clamp(0.0, 1.0);
-                            
                             if fade > 0.0 {
-                                // Transition from Dark Fill (0.85) to Border (1.0)
-                                // At d=0 (boundary), we mix.
-                                let t_in = (d * 2.0).clamp(0.0, 1.0); // Rapid blend over 0.5px
+                                let t_in = (d * 2.0).clamp(0.0, 1.0);
                                 final_alpha = (0.85 * (1.0 - t_in)) + (1.0 * t_in);
                                 final_alpha *= fade;
-                                
-                                // Color blend: Dark(0x111111) -> Grey(0xAAAAAA)
-                                // Simplification: Just set to Grey for d>0 to keep it crisp
                                 final_col = 0x00AAAAAA; 
                             }
                         }
@@ -168,7 +189,6 @@ pub unsafe fn render_box_sdf(hdc_dest: HDC, bounds: RECT, w: i32, h: i32, is_glo
                         if is_glowing {
                             // PROCESSING: Inner Rainbow Glow
                             let angle = py.atan2(px);
-                            // OPTIMIZATION: Reuse pre-calculated trig values
                             let noise = (angle * freq1 + time_sin_2).sin() * 0.5
                                       + (angle * freq2 + time_sin_neg_3).sin() * 0.4;
 

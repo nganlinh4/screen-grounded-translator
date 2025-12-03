@@ -1,283 +1,404 @@
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use std::sync::{Arc, Mutex};
-use image::GenericImageView;
+use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::LibraryLoader::*;
+use windows::core::*;
+use std::sync::{Arc, Mutex, Once};
+use image::{ImageBuffer, Rgba};
 
-use crate::{AppState, api::{translate_image_streaming, translate_text_streaming}};
+use crate::api::{translate_image_streaming, translate_text_streaming};
+use crate::config::{Config, Preset};
 use super::utils::{copy_to_clipboard, get_error_message};
 use super::result::{create_result_window, update_window_text, WindowType, link_windows, RefineContext};
 
-pub fn process_and_close(app: Arc<Mutex<AppState>>, rect: RECT, overlay_hwnd: HWND, preset_idx: usize) {
-    // 1. Snapshot and Configuration Retrieval
-    let (img, config, preset) = {
-        let guard = app.lock().unwrap();
-        if preset_idx >= guard.config.presets.len() {
-            // Should not happen, but safety check
-            unsafe { PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
-            return;
-        }
-        (
-            guard.original_screenshot.clone().unwrap(), 
-            guard.config.clone(),
-            guard.config.presets[preset_idx].clone()
-        )
+// --- PROCESSING WINDOW STATIC STATE ---
+static REGISTER_PROC_CLASS: Once = Once::new();
+
+struct ProcessingState {
+    animation_offset: f32,
+}
+
+static mut PROC_STATES: Option<std::collections::HashMap<isize, ProcessingState>> = None;
+
+unsafe fn get_proc_state(hwnd: HWND) -> &'static mut ProcessingState {
+    if PROC_STATES.is_none() {
+        PROC_STATES = Some(std::collections::HashMap::new());
+    }
+    let map = PROC_STATES.as_mut().unwrap();
+    map.entry(hwnd.0 as isize).or_insert(ProcessingState { animation_offset: 0.0 })
+}
+
+unsafe fn remove_proc_state(hwnd: HWND) {
+    if let Some(map) = PROC_STATES.as_mut() {
+        map.remove(&(hwnd.0 as isize));
+    }
+}
+
+// --- MAIN ENTRY POINT FOR PROCESSING ---
+pub fn start_processing_pipeline(
+    cropped_img: ImageBuffer<Rgba<u8>, Vec<u8>>, 
+    screen_rect: RECT, 
+    config: Config, 
+    preset: Preset
+) {
+    let hide_overlay = preset.hide_overlay;
+
+    // 1. Create the Processing Overlay Window (The glowing rainbow box)
+    let processing_hwnd = if !hide_overlay {
+        unsafe { create_processing_window(screen_rect) }
+    } else {
+        HWND(0)
     };
 
+    // 2. Prepare Data for API Thread
     let model_id = preset.model.clone();
     let model_config = crate::model_config::get_model_by_id(&model_id);
     let model_config = model_config.expect("Model config not found for preset model");
     let model_name = model_config.full_name.clone();
     let provider = model_config.provider.clone();
 
-    let x_virt = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
-    let y_virt = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    // Prepare Refine Context
+    let mut png_data = Vec::new();
+    let _ = cropped_img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
+    let refine_context = RefineContext::Image(png_data);
     
-    let crop_x = (rect.left - x_virt).max(0) as u32;
-    let crop_y = (rect.top - y_virt).max(0) as u32;
-    let crop_w = (rect.right - rect.left).abs() as u32;
-    let crop_h = (rect.bottom - rect.top).abs() as u32;
+    // API Config
+    let groq_api_key = config.api_key.clone();
+    let gemini_api_key = config.gemini_api_key.clone();
+    let ui_language = config.ui_language.clone();
     
-    let img_w = img.width();
-    let img_h = img.height();
-    let crop_w = crop_w.min(img_w.saturating_sub(crop_x));
-    let crop_h = crop_h.min(img_h.saturating_sub(crop_y));
+    // Prepare Prompt
+    let mut final_prompt = preset.prompt.clone();
+    for (key, value) in &preset.language_vars {
+        final_prompt = final_prompt.replace(&format!("{{{}}}", key), value);
+    }
+    final_prompt = final_prompt.replace("{language}", &preset.selected_language);
+    
+    let streaming_enabled = preset.streaming_enabled;
+    let use_json_format = preset.id == "preset_translate";
+    let auto_copy = preset.auto_copy;
+    let do_retranslate = preset.retranslate;
+    let retranslate_to = preset.retranslate_to.clone();
+    let retranslate_model_id = preset.retranslate_model.clone();
+    let retranslate_streaming_enabled = preset.retranslate_streaming_enabled;
+    let retranslate_auto_copy = preset.retranslate_auto_copy;
+    let cropped_for_history = cropped_img.clone();
 
-    if crop_w > 0 && crop_h > 0 {
-        let cropped = img.view(crop_x, crop_y, crop_w, crop_h).to_image();
+    // 3. Spawn API Worker Thread
+    std::thread::spawn(move || {
+        let accumulated_vision = Arc::new(Mutex::new(String::new()));
+        let acc_vis_clone = accumulated_vision.clone();
+        let mut first_chunk_received = false;
         
-        // Prepare Refine Context (Clone image bytes as PNG)
-        let mut png_data = Vec::new();
-        let _result = cropped.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
-        let refine_context = RefineContext::Image(png_data);
-        
-        let groq_api_key = config.api_key.clone();
-        let gemini_api_key = config.gemini_api_key.clone();
-        let ui_language = config.ui_language.clone();
-        
-        // Prepare Prompt - replace all {languageN} with actual languages
-        let mut final_prompt = preset.prompt.clone();
-        
-        // Replace numbered language tags
-        for (key, value) in &preset.language_vars {
-            let pattern = format!("{{{}}}", key); // e.g., "{language1}"
-            final_prompt = final_prompt.replace(&pattern, value);
-        }
-        
-        // Backward compatibility: also replace old {language} tag
-        final_prompt = final_prompt.replace("{language}", &preset.selected_language);
-        
-        // Settings for thread
-        let streaming_enabled = preset.streaming_enabled;
-        let retranslate_streaming_enabled = preset.retranslate_streaming_enabled;
-        let auto_copy = preset.auto_copy;
-        let retranslate_auto_copy = preset.retranslate_auto_copy;
-        let do_retranslate = preset.retranslate;
-        let retranslate_to = preset.retranslate_to.clone();
-        let retranslate_model_id = preset.retranslate_model.clone();
-        let use_json_format = preset.id == "preset_translate";
-        let hide_overlay = preset.hide_overlay;
-        
-        // Clone for history saving
-        let cropped_for_history = cropped.clone();
-        
-        // Spawn UI Thread for Results
-         std::thread::spawn(move || {
-             // Create Primary Window (Pass metadata)
-             let primary_hwnd = create_result_window(
-                 rect,
-                 WindowType::Primary,
-                 refine_context,
-                 model_id.clone(),
-                 provider.clone(),
-                 streaming_enabled
-             );
-            
-            // Worker thread for API calls
-            std::thread::spawn(move || {
-                let accumulated_vision = Arc::new(Mutex::new(String::new()));
-                let acc_vis_clone = accumulated_vision.clone();
-                let mut first_chunk_received = false;
+        let (tx_hwnd, rx_hwnd) = std::sync::mpsc::channel();
 
-                // --- STEP 1: VISION API ---
-                let vision_res = translate_image_streaming(
-                    &groq_api_key, 
-                    &gemini_api_key, 
-                    final_prompt, 
-                    model_name, 
-                    provider, 
-                    cropped, 
-                    streaming_enabled, 
-                    use_json_format,
-                    |chunk| {
-                        let mut text = acc_vis_clone.lock().unwrap();
-                        text.push_str(chunk);
+        let api_res = translate_image_streaming(
+            &groq_api_key, 
+            &gemini_api_key, 
+            final_prompt, 
+            model_name, 
+            provider.clone(), 
+            cropped_img, 
+            streaming_enabled, 
+            use_json_format,
+            |chunk| {
+                let mut text = acc_vis_clone.lock().unwrap();
+                text.push_str(chunk);
+                
+                if !first_chunk_received {
+                    first_chunk_received = true;
+                    
+                    // Close Processing Overlay
+                    if processing_hwnd.0 != 0 {
+                        unsafe { PostMessageW(processing_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                    }
+
+                    // Spawn the Result Window Thread
+                    let rect_copy = screen_rect;
+                    let refine_ctx_copy = refine_context.clone();
+                    let mid_copy = model_id.clone();
+                    let prov_copy = provider.clone();
+                    let stream_copy = streaming_enabled;
+                    let hide_copy = hide_overlay;
+                    let tx_hwnd_clone = tx_hwnd.clone();
+                    
+                    std::thread::spawn(move || {
+                        let hwnd = create_result_window(
+                            rect_copy,
+                            WindowType::Primary,
+                            refine_ctx_copy,
+                            mid_copy,
+                            prov_copy,
+                            stream_copy
+                        );
+                        if !hide_copy {
+                            unsafe { ShowWindow(hwnd, SW_SHOW); }
+                        }
+                        let _ = tx_hwnd_clone.send(hwnd);
                         
-                        if !first_chunk_received {
-                            first_chunk_received = true;
-                            unsafe {
-                                PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
-                                if !hide_overlay {
-                                    ShowWindow(primary_hwnd, SW_SHOW);
-                                }
+                        unsafe {
+                            let mut msg = MSG::default();
+                            while GetMessageW(&mut msg, None, 0, 0).into() {
+                                TranslateMessage(&msg);
+                                DispatchMessageW(&msg);
+                                if !IsWindow(hwnd).as_bool() { break; }
                             }
                         }
-                        if !hide_overlay {
-                            update_window_text(primary_hwnd, &text);
-                        }
-                    }
+                    });
+                }
+            }
+        );
+
+        let result_hwnd = if first_chunk_received {
+            rx_hwnd.recv().ok()
+        } else {
+             if processing_hwnd.0 != 0 {
+                unsafe { PostMessageW(processing_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            }
+            
+            let rect_copy = screen_rect;
+            let refine_ctx_copy = refine_context.clone();
+            let mid_copy = model_id.clone();
+            let prov_copy = provider.clone();
+            let stream_copy = streaming_enabled;
+            let hide_copy = hide_overlay;
+            let tx_hwnd_clone = tx_hwnd.clone();
+
+            std::thread::spawn(move || {
+                let hwnd = create_result_window(
+                    rect_copy, WindowType::Primary, refine_ctx_copy, mid_copy, prov_copy, stream_copy
                 );
-
-                match vision_res {
-                    Ok(vision_text) => {
-                        // Ensure window is shown if it wasn't already (non-streaming or fast response)
-                        if !first_chunk_received {
-                             unsafe {
-                                 PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
-                                 if !hide_overlay {
-                                     ShowWindow(primary_hwnd, SW_SHOW);
-                                 }
-                             }
-                             if !hide_overlay {
-                                 update_window_text(primary_hwnd, &vision_text);
-                             }
-                         }
-
-                        // SAVE HISTORY
-                        {
-                            let app = app.lock().unwrap();
-                            app.history.save_image(cropped_for_history, vision_text.clone());
-                        }
-
-                        // --- STEP 1.5: MAIN AUTO COPY ---
-                        if auto_copy && !vision_text.trim().is_empty() {
-                            let vt = vision_text.clone();
-                            std::thread::spawn(move || {
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                copy_to_clipboard(&vt, HWND(0));
-                            });
-                        }
-
-                        // --- STEP 2: RETRANSLATE (Optional) ---
-                         if do_retranslate && !vision_text.trim().is_empty() {
-                             // Create Secondary Window
-                             // We need to do this on the UI thread? No, create_result_window handles it?
-                             // Actually create_result_window creates a window on the CURRENT thread.
-                             // The current thread is this worker thread? 
-                             // NO. `create_result_window` creates a window. Windows must be pumped on the thread they are created.
-                             // This worker thread DOES NOT pump messages. The PARENT thread (spawned above) pumps messages for `primary_hwnd`.
-                             // So `primary_hwnd` was created on the parent thread.
-                             // If we want a secondary window, it ALSO needs to be created on the parent thread to share the message loop.
-                             // Solution: We cannot easily create the secondary window from THIS worker thread if we want the parent loop to handle it.
-                             // However, we can use `PostMessage` to signal the parent thread to create it? 
-                             // Or, simplified: Just spawn a NEW thread/loop for the secondary window?
-                             // Yes, spawning a new thread for the secondary window is easiest and isolates it.
-                             
-                             let vision_text_for_retrans = vision_text.clone();
-                             let groq_key_for_retrans = groq_api_key.clone();
-                             let gemini_key_for_retrans = gemini_api_key.clone(); // Capture key
-                             
-                             // Spawn Secondary UI Thread
-                             std::thread::spawn(move || {
-                                 // Resolve text model for metadata
-                                 let tm_config = crate::model_config::get_model_by_id(&retranslate_model_id);
-                                 let (tm_id, tm_name, tm_provider) = match tm_config {
-                                     Some(m) => (m.id, m.full_name, m.provider),
-                                     None => ("fast_text".to_string(), "openai/gpt-oss-20b".to_string(), "groq".to_string())
-                                 };
-                                 
-                                 let secondary_hwnd = create_result_window(
-                                     rect,
-                                     WindowType::Secondary,
-                                     RefineContext::None, // Retranslate has no image context
-                                     tm_id,
-                                     tm_provider.clone(),
-                                     retranslate_streaming_enabled
-                                 );
-                                 super::result::link_windows(primary_hwnd, secondary_hwnd);
-                                 if !hide_overlay {
-                                     unsafe { ShowWindow(secondary_hwnd, SW_SHOW); }
-                                     update_window_text(secondary_hwnd, "");
-                                 }
-
-                                 // API Call for Retranslation
-                                 
-                                 std::thread::spawn(move || {
-                                     let acc_text = Arc::new(Mutex::new(String::new()));
-                                     let acc_text_clone = acc_text.clone();
-
-                                     let text_res = translate_text_streaming(
-                                         &groq_key_for_retrans,
-                                         &gemini_key_for_retrans, // Pass Gemini Key
-                                         vision_text_for_retrans,
-                                         retranslate_to,
-                                         tm_name,
-                                         tm_provider, // Pass Provider
-                                         retranslate_streaming_enabled,
-                                         false,
-                                         |chunk| {
-                                             let mut t = acc_text_clone.lock().unwrap();
-                                             t.push_str(chunk);
-                                             if !hide_overlay {
-                                                 update_window_text(secondary_hwnd, &t);
-                                             }
-                                         }
-                                     );
-                                    
-                                    if let Ok(final_text) = text_res {
-                                        if !hide_overlay {
-                                            update_window_text(secondary_hwnd, &final_text);
-                                        }
-                                        if retranslate_auto_copy {
-                                            std::thread::spawn(move || {
-                                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                                copy_to_clipboard(&final_text, HWND(0));
-                                            });
-                                        }
-                                    } else if let Err(e) = text_res {
-                                         if !hide_overlay {
-                                            update_window_text(secondary_hwnd, &format!("Error: {}", e));
-                                         }
-                                    }
-                                });
-
-                                // Message Loop for Secondary
-                                unsafe {
-                                    let mut msg = MSG::default();
-                                    while GetMessageW(&mut msg, None, 0, 0).into() {
-                                        TranslateMessage(&msg);
-                                        DispatchMessageW(&msg);
-                                        if !IsWindow(secondary_hwnd).as_bool() { break; }
-                                    }
-                                }
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        if !first_chunk_received {
-                            unsafe {
-                                PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
-                                ShowWindow(primary_hwnd, SW_SHOW);
-                            }
-                        }
-                        let error_msg = get_error_message(&e.to_string(), &ui_language);
-                        update_window_text(primary_hwnd, &error_msg);
+                if !hide_copy { unsafe { ShowWindow(hwnd, SW_SHOW); } }
+                let _ = tx_hwnd_clone.send(hwnd);
+                unsafe {
+                    let mut msg = MSG::default();
+                    while GetMessageW(&mut msg, None, 0, 0).into() {
+                        TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                        if !IsWindow(hwnd).as_bool() { break; }
                     }
                 }
             });
+            rx_hwnd.recv().ok()
+        };
 
-            // Message Loop for Primary
-            unsafe {
-                let mut msg = MSG::default();
-                while GetMessageW(&mut msg, None, 0, 0).into() {
-                    TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                    if !IsWindow(primary_hwnd).as_bool() { break; }
+        if let Some(r_hwnd) = result_hwnd {
+            match api_res {
+                Ok(full_text) => {
+                    if !hide_overlay { update_window_text(r_hwnd, &full_text); }
+                    
+                    if let Ok(app_lock) = crate::APP.lock() {
+                        app_lock.history.save_image(cropped_for_history, full_text.clone());
+                    }
+
+                    if auto_copy && !full_text.trim().is_empty() {
+                         let txt = full_text.clone();
+                         std::thread::spawn(move || {
+                             std::thread::sleep(std::time::Duration::from_millis(100));
+                             copy_to_clipboard(&txt, HWND(0));
+                         });
+                    }
+
+                    if do_retranslate && !full_text.trim().is_empty() {
+                         let text_to_retrans = full_text.clone();
+                         let g_key = groq_api_key.clone();
+                         let gm_key = gemini_api_key.clone();
+                         
+                         std::thread::spawn(move || {
+                             let tm_config = crate::model_config::get_model_by_id(&retranslate_model_id);
+                             let (tm_id, tm_name, tm_provider) = match tm_config {
+                                 Some(m) => (m.id, m.full_name, m.provider),
+                                 None => ("fast_text".to_string(), "openai/gpt-oss-20b".to_string(), "groq".to_string())
+                             };
+
+                             let sec_hwnd = create_result_window(
+                                 screen_rect,
+                                 WindowType::Secondary,
+                                 RefineContext::None,
+                                 tm_id,
+                                 tm_provider.clone(),
+                                 retranslate_streaming_enabled
+                             );
+                             link_windows(r_hwnd, sec_hwnd);
+                             if !hide_overlay {
+                                 unsafe { ShowWindow(sec_hwnd, SW_SHOW); }
+                                 update_window_text(sec_hwnd, "");
+                             }
+                             
+                             std::thread::spawn(move || {
+                                 let acc = Arc::new(Mutex::new(String::new()));
+                                 let acc_c = acc.clone();
+                                 let res = translate_text_streaming(
+                                     &g_key, &gm_key, text_to_retrans, retranslate_to, tm_name, tm_provider, retranslate_streaming_enabled, false,
+                                     |chunk| {
+                                         let mut t = acc_c.lock().unwrap();
+                                         t.push_str(chunk);
+                                         if !hide_overlay { update_window_text(sec_hwnd, &t); }
+                                     }
+                                 );
+                                 if let Ok(fin) = res {
+                                     if !hide_overlay { update_window_text(sec_hwnd, &fin); }
+                                     if retranslate_auto_copy {
+                                         std::thread::spawn(move || {
+                                             std::thread::sleep(std::time::Duration::from_millis(100));
+                                             copy_to_clipboard(&fin, HWND(0));
+                                         });
+                                     }
+                                 } else if let Err(e) = res {
+                                     if !hide_overlay { update_window_text(sec_hwnd, &format!("Error: {}", e)); }
+                                 }
+                             });
+
+                             unsafe {
+                                let mut msg = MSG::default();
+                                while GetMessageW(&mut msg, None, 0, 0).into() {
+                                    TranslateMessage(&msg);
+                                    DispatchMessageW(&msg);
+                                    if !IsWindow(sec_hwnd).as_bool() { break; }
+                                }
+                             }
+                         });
+                    }
+                },
+                Err(e) => {
+                    let err_msg = get_error_message(&e.to_string(), &ui_language);
+                    update_window_text(r_hwnd, &err_msg);
                 }
             }
-        });
+        }
+    });
 
-    } else {
-        unsafe { PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+    if processing_hwnd.0 != 0 {
+        unsafe {
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).into() {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+                if !IsWindow(processing_hwnd).as_bool() { break; }
+            }
+        }
+    }
+}
+
+// --- PROCESSING OVERLAY WINDOW IMPLEMENTATION ---
+
+unsafe fn create_processing_window(rect: RECT) -> HWND {
+    let instance = GetModuleHandleW(None).unwrap();
+    let class_name = w!("SGTProcessingOverlay");
+
+    REGISTER_PROC_CLASS.call_once(|| {
+        let mut wc = WNDCLASSW::default();
+        wc.lpfnWndProc = Some(processing_wnd_proc);
+        wc.hInstance = instance;
+        wc.hCursor = LoadCursorW(None, IDC_WAIT).unwrap();
+        wc.lpszClassName = class_name;
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.hbrBackground = HBRUSH(0); 
+        RegisterClassW(&wc);
+    });
+
+    let w = (rect.right - rect.left).abs();
+    let h = (rect.bottom - rect.top).abs();
+
+    let hwnd = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
+        class_name,
+        w!("Processing"),
+        WS_POPUP,
+        rect.left, rect.top, w, h,
+        None, None, instance, None
+    );
+
+    get_proc_state(hwnd);
+    
+    SetTimer(hwnd, 1, 16, None);
+    ShowWindow(hwnd, SW_SHOW);
+
+    hwnd
+}
+
+unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        WM_TIMER => {
+            let state = get_proc_state(hwnd);
+            state.animation_offset += 5.0;
+            if state.animation_offset > 360.0 { state.animation_offset -= 360.0; }
+            
+            let mut rect = RECT::default();
+            GetWindowRect(hwnd, &mut rect);
+            let w = (rect.right - rect.left).abs();
+            let h = (rect.bottom - rect.top).abs();
+
+            if w > 0 && h > 0 {
+                let screen_dc = GetDC(None);
+                let mem_dc = CreateCompatibleDC(screen_dc);
+                
+                let bmi = BITMAPINFO {
+                    bmiHeader: BITMAPINFOHEADER {
+                        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: w,
+                        biHeight: -h,
+                        biPlanes: 1,
+                        biBitCount: 32,
+                        biCompression: BI_RGB.0 as u32,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                
+                let mut p_bits: *mut core::ffi::c_void = std::ptr::null_mut();
+                let hbm = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut p_bits, None, 0).unwrap();
+                let old_hbm = SelectObject(mem_dc, hbm);
+
+                let local_rect = RECT { left: 0, top: 0, right: w, bottom: h };
+                
+                crate::overlay::paint_utils::render_box_sdf(
+                    HDC(mem_dc.0),
+                    local_rect,
+                    w,
+                    h,
+                    true, 
+                    state.animation_offset
+                );
+
+                let pt_src = POINT { x: 0, y: 0 };
+                let size = SIZE { cx: w, cy: h };
+                let mut blend = BLENDFUNCTION::default();
+                blend.BlendOp = AC_SRC_OVER as u8;
+                blend.SourceConstantAlpha = 255;
+                blend.AlphaFormat = AC_SRC_ALPHA as u8;
+
+                UpdateLayeredWindow(
+                    hwnd, 
+                    None, 
+                    None, 
+                    Some(&size), 
+                    mem_dc, 
+                    Some(&pt_src), 
+                    COLORREF(0), 
+                    Some(&blend), 
+                    ULW_ALPHA
+                );
+
+                SelectObject(mem_dc, old_hbm);
+                DeleteObject(hbm);
+                DeleteDC(mem_dc);
+                ReleaseDC(None, screen_dc);
+            }
+            LRESULT(0)
+        }
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            BeginPaint(hwnd, &mut ps);
+            EndPaint(hwnd, &mut ps);
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            remove_proc_state(hwnd);
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
 
@@ -296,10 +417,6 @@ pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT
      let streaming = preset.streaming_enabled;
      
      std::thread::spawn(move || {
-         // PASS RefineContext::None for Audio Result for now (as per original limitation or explicit Audio bytes if available)
-         // Since we didn't pass audio bytes here, we pass None.
-         
-         // Ideally we should pass Audio bytes.
          let primary_hwnd = create_result_window(
              rect,
              WindowType::Primary,
@@ -326,78 +443,75 @@ pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT
             };
             
             std::thread::spawn(move || {
-            // Resolve retranslate metadata
-            let tm_config = crate::model_config::get_model_by_id(&retranslate_model_id);
-            let (tm_id, tm_name, tm_provider) = match tm_config {
-            Some(m) => (m.id, m.full_name, m.provider),
-            None => ("fast_text".to_string(), "openai/gpt-oss-20b".to_string(), "groq".to_string())
-            };
-            
-            let secondary_hwnd = create_result_window(
-            rect_sec,
-            WindowType::SecondaryExplicit,
-            RefineContext::None,
-            tm_id,
-            tm_provider.clone(),
-            retranslate_streaming_enabled
-            );
-            link_windows(primary_hwnd, secondary_hwnd);
-            
-            if !hide_overlay {
-            unsafe { ShowWindow(secondary_hwnd, SW_SHOW); }
-            update_window_text(secondary_hwnd, "");
-            }
+                let tm_config = crate::model_config::get_model_by_id(&retranslate_model_id);
+                let (tm_id, tm_name, tm_provider) = match tm_config {
+                Some(m) => (m.id, m.full_name, m.provider),
+                None => ("fast_text".to_string(), "openai/gpt-oss-20b".to_string(), "groq".to_string())
+                };
+                
+                let secondary_hwnd = create_result_window(
+                rect_sec,
+                WindowType::SecondaryExplicit,
+                RefineContext::None,
+                tm_id,
+                tm_provider.clone(),
+                retranslate_streaming_enabled
+                );
+                link_windows(primary_hwnd, secondary_hwnd);
+                
+                if !hide_overlay {
+                unsafe { ShowWindow(secondary_hwnd, SW_SHOW); }
+                update_window_text(secondary_hwnd, "");
+                }
 
-            // API Call for Retranslation
-            std::thread::spawn(move || {
-            let acc_text = Arc::new(Mutex::new(String::new()));
-            let acc_text_clone = acc_text.clone();
+                std::thread::spawn(move || {
+                let acc_text = Arc::new(Mutex::new(String::new()));
+                let acc_text_clone = acc_text.clone();
 
-                    let text_res = translate_text_streaming(
-                        &groq_key,
-                        &gemini_key,
-                        text_for_retrans,
-                        retranslate_to,
-                        tm_name,
-                        tm_provider,
-                        retranslate_streaming_enabled,
-                        false,
-                        |chunk| {
-                            let mut t = acc_text_clone.lock().unwrap();
-                            t.push_str(chunk);
+                        let text_res = translate_text_streaming(
+                            &groq_key,
+                            &gemini_key,
+                            text_for_retrans,
+                            retranslate_to,
+                            tm_name,
+                            tm_provider,
+                            retranslate_streaming_enabled,
+                            false,
+                            |chunk| {
+                                let mut t = acc_text_clone.lock().unwrap();
+                                t.push_str(chunk);
+                                if !hide_overlay {
+                                    update_window_text(secondary_hwnd, &t);
+                                }
+                            }
+                        );
+                        
+                        if let Ok(final_text) = text_res {
                             if !hide_overlay {
-                                update_window_text(secondary_hwnd, &t);
+                                update_window_text(secondary_hwnd, &final_text);
+                            }
+                            if retranslate_auto_copy {
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(std::time::Duration::from_millis(100));
+                                    copy_to_clipboard(&final_text, HWND(0));
+                                });
+                            }
+                        } else if let Err(e) = text_res {
+                            if !hide_overlay {
+                                update_window_text(secondary_hwnd, &format!("Error: {}", e));
                             }
                         }
-                    );
-                    
-                    if let Ok(final_text) = text_res {
-                        if !hide_overlay {
-                            update_window_text(secondary_hwnd, &final_text);
-                        }
-                        if retranslate_auto_copy {
-                            std::thread::spawn(move || {
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                copy_to_clipboard(&final_text, HWND(0));
-                            });
-                        }
-                    } else if let Err(e) = text_res {
-                        if !hide_overlay {
-                            update_window_text(secondary_hwnd, &format!("Error: {}", e));
+                    });
+
+                    unsafe {
+                        let mut msg = MSG::default();
+                        while GetMessageW(&mut msg, None, 0, 0).into() {
+                            TranslateMessage(&msg);
+                            DispatchMessageW(&msg);
+                            if !IsWindow(secondary_hwnd).as_bool() { break; }
                         }
                     }
                 });
-
-                // Message Loop for Secondary
-                unsafe {
-                    let mut msg = MSG::default();
-                    while GetMessageW(&mut msg, None, 0, 0).into() {
-                        TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
-                        if !IsWindow(secondary_hwnd).as_bool() { break; }
-                    }
-                }
-            });
         }
         
         unsafe {
