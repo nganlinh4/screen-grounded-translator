@@ -203,6 +203,8 @@ impl SettingsApp {
             crate::gui::utils::is_running_as_admin()
         } else { false };
 
+        let start_in_tray = config.start_in_tray;
+
         Self {
             config,
             app_state_ref: app_state,
@@ -220,7 +222,7 @@ impl SettingsApp {
             view_mode,
             recording_hotkey_for_preset: None,
             hotkey_conflict_msg: None,
-            splash: Some(crate::gui::splash::SplashScreen::new(&ctx)),
+            splash: if start_in_tray { None } else { Some(crate::gui::splash::SplashScreen::new(&ctx)) },
             fade_in_start: None,
             startup_stage: 0,
             cached_monitors,
