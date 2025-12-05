@@ -1,11 +1,11 @@
-; Screen Grounded Translator Installer
+; Screen Goated Toolbox Installer
 !include "MUI2.nsh"
 !include "x64.nsh"
 
 ; Basic Settings
-Name "Screen Grounded Translator"
-OutFile "target\release\screen-grounded-translator-installer.exe"
-InstallDir "$PROGRAMFILES\ScreenGroundedTranslator"
+Name "Screen Goated Toolbox"
+OutFile "target\release\screen-goated-toolbox-installer.exe"
+InstallDir "$PROGRAMFILES\ScreenGoatedToolbox"
 RequestExecutionLevel admin
 Icon ".\assets\app.ico"
 
@@ -22,7 +22,7 @@ Section "Install Application"
   SetOutPath "$INSTDIR"
   
   ; Copy main executable
-  File "target\release\screen-grounded-translator.exe"
+  File "target\release\screen-goated-toolbox.exe"
   
   ; Copy Visual C++ Runtime and install it
   File "vc_redist.x64.exe"
@@ -31,34 +31,34 @@ Section "Install Application"
   Delete "$INSTDIR\vc_redist.x64.exe"
   
   ; Create Start Menu shortcut
-  CreateDirectory "$SMPROGRAMS\Screen Grounded Translator"
-  CreateShortcut "$SMPROGRAMS\Screen Grounded Translator\Screen Grounded Translator.lnk" "$INSTDIR\screen-grounded-translator.exe"
-  CreateShortcut "$SMPROGRAMS\Screen Grounded Translator\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+  CreateDirectory "$SMPROGRAMS\Screen Goated Toolbox"
+  CreateShortcut "$SMPROGRAMS\Screen Goated Toolbox\Screen Goated Toolbox.lnk" "$INSTDIR\screen-goated-toolbox.exe"
+  CreateShortcut "$SMPROGRAMS\Screen Goated Toolbox\Uninstall.lnk" "$INSTDIR\uninstall.exe"
   
   ; Create Desktop shortcut (optional, uncomment if desired)
-  ; CreateShortcut "$DESKTOP\Screen Grounded Translator.lnk" "$INSTDIR\screen_grounded_translator.exe"
+  ; CreateShortcut "$DESKTOP\Screen Goated Toolbox.lnk" "$INSTDIR\screen-goated-toolbox.exe"
   
   ; Write uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
   
   ; Write registry entry for Add/Remove Programs
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGroundedTranslator" "DisplayName" "Screen Grounded Translator"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGroundedTranslator" "UninstallString" "$INSTDIR\uninstall.exe"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGroundedTranslator" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGroundedTranslator" "DisplayVersion" "1.6"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGoatedToolbox" "DisplayName" "Screen Goated Toolbox"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGoatedToolbox" "UninstallString" "$INSTDIR\uninstall.exe"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGoatedToolbox" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGoatedToolbox" "DisplayVersion" "1.6"
 SectionEnd
 
 ; Uninstaller Section
 Section "Uninstall"
-  Delete "$INSTDIR\screen-grounded-translator.exe"
+  Delete "$INSTDIR\screen-goated-toolbox.exe"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   
-  Delete "$SMPROGRAMS\Screen Grounded Translator\Screen Grounded Translator.lnk"
-  Delete "$SMPROGRAMS\Screen Grounded Translator\Uninstall.lnk"
-  RMDir "$SMPROGRAMS\Screen Grounded Translator"
+  Delete "$SMPROGRAMS\Screen Goated Toolbox\Screen Goated Toolbox.lnk"
+  Delete "$SMPROGRAMS\Screen Goated Toolbox\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\Screen Goated Toolbox"
   
-  Delete "$DESKTOP\Screen Grounded Translator.lnk"
+  Delete "$DESKTOP\Screen Goated Toolbox.lnk"
   
-  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGroundedTranslator"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ScreenGoatedToolbox"
 SectionEnd

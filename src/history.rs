@@ -87,7 +87,7 @@ impl HistoryManager {
 }
 
 fn get_paths() -> (PathBuf, PathBuf, PathBuf) {
-    let config_dir = dirs::config_dir().unwrap_or_default().join("screen-grounded-translator");
+    let config_dir = dirs::config_dir().unwrap_or_default().join("screen-goated-toolbox");
     let media_dir = config_dir.join("history_media");
     let db_path = config_dir.join("history.json");
     let _ = fs::create_dir_all(&media_dir);

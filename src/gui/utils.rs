@@ -115,7 +115,7 @@ pub fn configure_fonts(ctx: &egui::Context) {
 
 // --- Task Scheduler / Admin Startup ---
 
-const TASK_NAME: &str = "ScreenGroundedTranslator_AutoStart";
+const TASK_NAME: &str = "ScreenGoatedToolbox_AutoStart";
 
 /// Create or delete a Windows Scheduled Task for Admin auto-startup
 pub fn set_admin_startup(enable: bool) -> bool {

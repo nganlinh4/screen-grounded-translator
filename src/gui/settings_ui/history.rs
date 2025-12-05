@@ -39,7 +39,7 @@ pub fn render_history_panel(
         }
         
         if icon_button(ui, Icon::Folder).on_hover_text("Open Media Folder").clicked() {
-            let config_dir = dirs::config_dir().unwrap_or_default().join("screen-grounded-translator").join("history_media");
+            let config_dir = dirs::config_dir().unwrap_or_default().join("screen-goated-toolbox").join("history_media");
             let _ = std::fs::create_dir_all(&config_dir);
             let _ = open::that(config_dir);
         }
@@ -94,7 +94,7 @@ pub fn render_history_panel(
                                 HistoryType::Audio => text.listen_audio_btn,
                             };
                             if ui.button(btn_text).clicked() {
-                                let config_dir = dirs::config_dir().unwrap().join("screen-grounded-translator").join("history_media");
+                                let config_dir = dirs::config_dir().unwrap().join("screen-goated-toolbox").join("history_media");
                                 let path = config_dir.join(&item.media_path);
                                 let _ = open::that(path);
                             }

@@ -463,7 +463,7 @@ fn default_history_limit() -> usize { 100 }
 pub fn get_config_path() -> PathBuf {
     let config_dir = dirs::config_dir()
         .unwrap_or_default()
-        .join("screen-grounded-translator");
+        .join("screen-goated-toolbox");
     let _ = std::fs::create_dir_all(&config_dir);
     config_dir.join("config_v2.json") // Changed filename to avoid conflict/migration issues for now
 }

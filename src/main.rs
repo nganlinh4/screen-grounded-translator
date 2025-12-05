@@ -29,7 +29,7 @@ use history::HistoryManager;
 // Global event for inter-process restore signaling (manual-reset event)
 lazy_static! {
     pub static ref RESTORE_EVENT: Option<windows::Win32::Foundation::HANDLE> = unsafe {
-        CreateEventW(None, true, false, w!("Global\\ScreenGroundedTranslatorRestoreEvent")).ok()
+        CreateEventW(None, true, false, w!("Global\\ScreenGoatedToolboxRestoreEvent")).ok()
     };
 }
 
@@ -89,8 +89,8 @@ fn main() -> eframe::Result<()> {
                     let file_name = entry.file_name();
                     let name_str = file_name.to_string_lossy();
                     
-                    // Delete old ScreenGroundedTranslator_v*.exe files (keep only current)
-                    if (name_str.starts_with("ScreenGroundedTranslator_v") && name_str.ends_with(".exe")) 
+                    // Delete old ScreenGoatedToolbox_v*.exe files (keep only current)
+                    if (name_str.starts_with("ScreenGoatedToolbox_v") && name_str.ends_with(".exe")) 
                         && name_str.as_ref() != current_exe_name {
                         let _ = std::fs::remove_file(entry.path());
                     }
@@ -143,7 +143,7 @@ fn main() -> eframe::Result<()> {
     
     // Keep the handle alive for the duration of the program
     let _single_instance_mutex = unsafe {
-        let instance = CreateMutexW(None, true, w!("Global\\ScreenGroundedTranslatorSingleInstanceMutex"));
+        let instance = CreateMutexW(None, true, w!("Global\\ScreenGoatedToolboxSingleInstanceMutex"));
         if let Ok(handle) = instance {
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 // Another instance is running - signal it to restore
@@ -198,7 +198,7 @@ fn main() -> eframe::Result<()> {
     let initial_config = APP.lock().unwrap().config.clone();
     
     eframe::run_native(
-        "Screen Grounded Translator (SGT by nganlinh4)",
+        "Screen Goated Toolbox (SGT by nganlinh4)",
         options,
         Box::new(move |cc| {
             gui::configure_fonts(&cc.egui_ctx);

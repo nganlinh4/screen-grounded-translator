@@ -10,8 +10,8 @@ if ($cargoContent -match 'version\s*=\s*"([^"]+)"') {
 Write-Host "Building release binary (v$version)..." -ForegroundColor Green
 cargo build --release
 
-$exePath = "target/release/screen-grounded-translator.exe"
-$outputExeName = "ScreenGroundedTranslator_v$version.exe"
+$exePath = "target/release/screen-goated-toolbox.exe"
+$outputExeName = "ScreenGoatedToolbox_v$version.exe"
 $outputPath = "target/release/$outputExeName"
 $upxDir = "tools/upx"
 $upxPath = "$upxDir/upx.exe"

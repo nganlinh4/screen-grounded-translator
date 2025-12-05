@@ -9,12 +9,12 @@ BEGIN
     BLOCK "040904E4"
     BEGIN
       VALUE "CompanyName", "nganlinh4"
-      VALUE "FileDescription", "Screen Grounded Translator"
+      VALUE "FileDescription", "Screen Goated Toolbox"
       VALUE "FileVersion", "1.0.0.0"
-      VALUE "InternalName", "screen-grounded-translator"
+      VALUE "InternalName", "screen-goated-toolbox"
       VALUE "LegalCopyright", "Copyright (c) 2024"
-      VALUE "OriginalFilename", "screen-grounded-translator.exe"
-      VALUE "ProductName", "Screen Grounded Translator"
+      VALUE "OriginalFilename", "screen-goated-toolbox.exe"
+      VALUE "ProductName", "Screen Goated Toolbox"
       VALUE "ProductVersion", "1.0.0.0"
     END
   END

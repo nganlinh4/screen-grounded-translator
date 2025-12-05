@@ -73,7 +73,7 @@ pub struct SettingsApp {
 
 impl SettingsApp {
     pub fn new(mut config: Config, app_state: Arc<Mutex<crate::AppState>>, tray_menu: Menu, ctx: egui::Context) -> Self {
-        let app_name = "ScreenGroundedTranslator";
+        let app_name = "ScreenGoatedToolbox";
         let app_path = std::env::current_exe().unwrap();
         let args: &[&str] = &[];
         
@@ -130,14 +130,14 @@ impl SettingsApp {
         std::thread::spawn(move || {
             loop {
                 unsafe {
-                    match OpenEventW(EVENT_ALL_ACCESS, false, w!("Global\\ScreenGroundedTranslatorRestoreEvent")) {
+                    match OpenEventW(EVENT_ALL_ACCESS, false, w!("Global\\ScreenGoatedToolboxRestoreEvent")) {
                         Ok(event_handle) => {
                             let result = WaitForSingleObject(event_handle, INFINITE);
                             if result == WAIT_OBJECT_0 {
                                 let class_name = w!("eframe");
                                 let mut hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), None);
                                 if hwnd.0 == 0 {
-                                    let title = w!("Screen Grounded Translator (SGT by nganlinh4)");
+                                    let title = w!("Screen Goated Toolbox (SGT by nganlinh4)");
                                     hwnd = FindWindowW(None, PCWSTR(title.as_ptr()));
                                 }
                                 if hwnd.0 != 0 {
@@ -170,7 +170,7 @@ impl SettingsApp {
                             let class_name = w!("eframe");
                             let hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), None);
                             let hwnd = if hwnd.0 == 0 {
-                                let title = w!("Screen Grounded Translator (SGT by nganlinh4)");
+                                let title = w!("Screen Goated Toolbox (SGT by nganlinh4)");
                                 FindWindowW(None, PCWSTR(title.as_ptr()))
                             } else { hwnd };
                             if hwnd.0 != 0 {
@@ -302,7 +302,7 @@ impl eframe::App for SettingsApp {
                 let icon = crate::icon_gen::generate_icon();
                 if let Ok(tray) = TrayIconBuilder::new()
                     .with_menu(Box::new(self.tray_menu.clone()))
-                    .with_tooltip("Screen Grounded Translator (nganlinh4)")
+                    .with_tooltip("Screen Goated Toolbox (nganlinh4)")
                     .with_icon(icon)
                     .build() 
                 {

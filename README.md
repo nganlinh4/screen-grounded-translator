@@ -1,8 +1,6 @@
-# Screen Grounded Translator (SGT)
+# Screen Goated Toolbox (SGT)
 
 A powerful Windows utility that captures any region of your screen **or records system/microphone audio** and processes it using advanced AI models. Whether you need to translate text, extract code (OCR), summarize content, get image descriptions, **or transcribe meetings**, SGT handles it with customizable presets and global hotkeys.
-
-**"Grounded"** = Anchored on screen regions — results appear in an overlay exactly where you selected them.
 
 ## Key Features
 
@@ -34,14 +32,14 @@ A powerful Windows utility that captures any region of your screen **or records 
 ## Installation
 
 ### Option 1: Download Release
-Download the latest `.exe` from the [Releases](https://github.com/nganlinh4/screen-grounded-translator/releases) page.
+Download the latest `.exe` from the [Releases](https://github.com/nganlinh4/screen-goated-toolbox/releases) page.
 
 ### Option 2: Build from Source
 Ensure [Rust](https://www.rust-lang.org/tools/install) is installed.
 
 ```bash
-git clone https://github.com/nganlinh4/screen-grounded-translator
-cd screen-grounded-translator
+git clone https://github.com/nganlinh4/screen-goated-toolbox
+cd screen-goated-toolbox
 # The build script will handle icon resource embedding automatically
 cargo build --release
 ```
@@ -50,7 +48,7 @@ Run the executable found in `target/release/`.
 
 ## Getting Started
 
-1. **Launch the App:** Open `screen-grounded-translator.exe`.
+1. **Launch the App:** Open `screen-goated-toolbox.exe`.
 2. **Global Settings:**
    - Paste your **Groq API Key** and/or **Gemini API Key**.
    - Toggle **Run at Windows Startup** if desired.

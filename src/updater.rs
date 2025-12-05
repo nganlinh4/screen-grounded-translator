@@ -28,11 +28,11 @@ impl Updater {
 
             // Configure the updater to check GitHub Releases
             // NOTE: Ensure your GitHub release asset is either just the .exe 
-            // OR a .zip containing the binary named "screen-grounded-translator.exe"
+            // OR a .zip containing the binary named "screen-goated-toolbox.exe"
             let status = self_update::backends::github::Update::configure()
                 .repo_owner("nganlinh4")
-                .repo_name("screen-grounded-translator")
-                .bin_name("screen-grounded-translator") 
+                .repo_name("screen-goated-toolbox")
+                .bin_name("screen-goated-toolbox") 
                 .show_download_progress(false) 
                 .current_version(env!("CARGO_PKG_VERSION"))
                 .build();
@@ -92,8 +92,8 @@ impl Updater {
             // Get the latest release
             let _updater = match self_update::backends::github::Update::configure()
                 .repo_owner("nganlinh4")
-                .repo_name("screen-grounded-translator")
-                .bin_name("screen-grounded-translator")
+                .repo_name("screen-goated-toolbox")
+                .bin_name("screen-goated-toolbox")
                 .show_download_progress(false)
                 .current_version(env!("CARGO_PKG_VERSION"))
                 .build()
@@ -106,8 +106,8 @@ impl Updater {
             };
 
             // Use a custom HTTP request to get the latest release (the one marked as "Latest" on GitHub)
-            let release_json = match ureq::get("https://api.github.com/repos/nganlinh4/screen-grounded-translator/releases?per_page=1&prerelease=false")
-                .set("User-Agent", "screen-grounded-translator-updater")
+            let release_json = match ureq::get("https://api.github.com/repos/nganlinh4/screen-goated-toolbox/releases?per_page=1&prerelease=false")
+                .set("User-Agent", "screen-goated-toolbox-updater")
                 .call()
             {
                 Ok(response) => {

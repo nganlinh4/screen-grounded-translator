@@ -295,7 +295,7 @@ fn render_update_section(ui: &mut egui::Ui, updater: &Option<Updater>, status: &
                             if let Some(newest_exe) = entries.filter_map(|e| e.ok()).filter(|e| {
                                     let name = e.file_name();
                                     let name_str = name.to_string_lossy();
-                                    name_str.starts_with("ScreenGroundedTranslator_v") && name_str.ends_with(".exe")
+                                    name_str.starts_with("ScreenGoatedToolbox_v") && name_str.ends_with(".exe")
                                 }).max_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
                             {
                                 let _ = std::process::Command::new(newest_exe.path()).spawn();
