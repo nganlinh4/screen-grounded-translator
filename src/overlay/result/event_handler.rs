@@ -381,6 +381,24 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             LRESULT(0)
         }
 
+        WM_MBUTTONUP => {
+            let mut targets = Vec::new();
+            {
+                if let Ok(states) = WINDOW_STATES.lock() {
+                    for (&hwnd_int, _) in states.iter() {
+                        targets.push(HWND(hwnd_int));
+                    }
+                }
+            }
+
+            for target in targets {
+                if IsWindow(target).as_bool() {
+                    PostMessageW(target, WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+            }
+            LRESULT(0)
+        }
+
         WM_TIMER => {
             let mut need_repaint = false;
             let mut pending_update: Option<String> = None;
