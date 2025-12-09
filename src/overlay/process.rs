@@ -226,19 +226,27 @@ pub fn start_processing_pipeline(
 
                     // UPDATED: Logic for Auto Copy AND Auto Paste
                     if auto_copy && !full_text.trim().is_empty() {
-                         let txt = full_text.clone();
+                         let mut txt_to_copy = full_text.clone();
+                         
+                         // MODIFY CONTENT: Append Newline if enabled
+                         if auto_paste_newline {
+                             txt_to_copy.push_str("\r\n");
+                         }
+
                          // NEW: Check logic - only paste if overlay is hidden and we have a target
                          let should_paste = hide_overlay && target_window_for_paste.is_some();
                          let target_hwnd = target_window_for_paste;
                          
                          std::thread::spawn(move || {
                              std::thread::sleep(std::time::Duration::from_millis(200));
-                             copy_to_clipboard(&txt, HWND(0));
+                             
+                             // Copy the modified text (with newline included)
+                             copy_to_clipboard(&txt_to_copy, HWND(0));
                              
                              if should_paste {
                                  if let Some(hwnd) = target_hwnd {
-                                     // Pass the newline setting
-                                     crate::overlay::utils::force_focus_and_paste(hwnd, auto_paste_newline);
+                                     // Just trigger paste, the newline is in the clipboard content
+                                     crate::overlay::utils::force_focus_and_paste(hwnd);
                                  }
                              }
                          });
@@ -534,16 +542,23 @@ pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT
                 app.last_active_window
              } else { None };
              
-             let txt_for_copy = text.clone();
+             let mut txt_for_copy = text.clone();
+             
+             // MODIFY CONTENT: Append Newline if enabled
+             if auto_paste_newline {
+                 txt_for_copy.push_str("\r\n");
+             }
+             
+             // Logic: Only paste if Hide Overlay is ON and we have a target window
+             let should_paste = hide_overlay && target_window.is_some();
+
              std::thread::spawn(move || {
                  std::thread::sleep(std::time::Duration::from_millis(200));
                  copy_to_clipboard(&txt_for_copy, HWND(0));
                  
-                 // Logic: Only paste if Hide Overlay is ON and we have a target window
-                 if hide_overlay && target_window.is_some() {
+                 if should_paste {
                      if let Some(hwnd) = target_window {
-                         // Pass the newline setting
-                         crate::overlay::utils::force_focus_and_paste(hwnd, auto_paste_newline);
+                         crate::overlay::utils::force_focus_and_paste(hwnd);
                      }
                  }
              });

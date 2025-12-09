@@ -77,7 +77,7 @@ pub fn get_target_window_for_paste() -> Option<HWND> {
     }
 }
 
-pub fn force_focus_and_paste(hwnd_target: HWND, send_enter: bool) {
+pub fn force_focus_and_paste(hwnd_target: HWND) {
     unsafe {
         // 1. Force focus back to the target window
         if IsWindow(hwnd_target).as_bool() {
@@ -102,10 +102,8 @@ pub fn force_focus_and_paste(hwnd_target: HWND, send_enter: bool) {
         std::thread::sleep(std::time::Duration::from_millis(350));
 
         // 3. CLEANUP MODIFIERS SMARTLY
-        // FIX: Only send KeyUp if the key is actually physically pressed.
-        // Sending "Alt Up" when Alt isn't down triggers the Windows Menu Bar (the "F E V" hints).
+        // Only send KeyUp if the key is actually physically pressed to avoid side effects
         let release_if_pressed = |vk: u16| {
-             // GetAsyncKeyState returns top bit set if key is down
              let state = GetAsyncKeyState(vk as i32);
              if (state as u16 & 0x8000) != 0 {
                  let input = INPUT {
@@ -161,14 +159,6 @@ pub fn force_focus_and_paste(hwnd_target: HWND, send_enter: bool) {
 
         // Ctrl Up
         send_input_event(VK_CONTROL.0, KEYEVENTF_KEYUP);
-
-        // 5. Send Enter (Optional)
-        if send_enter {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            send_input_event(VK_RETURN.0, KEYBD_EVENT_FLAGS(0)); // Enter Down
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            send_input_event(VK_RETURN.0, KEYEVENTF_KEYUP);      // Enter Up
-        }
     }
 }
 
