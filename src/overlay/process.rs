@@ -32,7 +32,9 @@ pub fn start_processing_pipeline(
     config: Config, 
     preset: Preset
 ) {
+    println!("[DEBUG] start_processing_pipeline: Initializing...");
     let hide_overlay = preset.hide_overlay;
+    println!("[DEBUG] hide_overlay = {}", hide_overlay);
 
     // Data for Result Window
     let model_id = preset.model.clone();
@@ -105,6 +107,14 @@ pub fn start_processing_pipeline(
     let retranslate_streaming_enabled = preset.retranslate_streaming_enabled;
     let retranslate_auto_copy = preset.retranslate_auto_copy;
     let cropped_for_history = cropped_img.clone();
+
+    // NEW: Capture the target window we stored in main.rs
+    let target_window_for_paste = if let Ok(app) = crate::APP.lock() {
+        app.last_active_window
+    } else {
+        None
+    };
+    println!("[DEBUG] Process Pipeline: Captured Target Window = {:?}", target_window_for_paste);
 
     // 3. Spawn API Worker Thread
     std::thread::spawn(move || {
@@ -210,17 +220,35 @@ pub fn start_processing_pipeline(
         if let Some(r_hwnd) = result_hwnd {
             match api_res {
                 Ok(full_text) => {
+                    println!("[DEBUG] API Success. Text length: {}", full_text.len());
                     if !hide_overlay { update_window_text(r_hwnd, &full_text); }
                     
                     if let Ok(app_lock) = crate::APP.lock() {
                         app_lock.history.save_image(cropped_for_history, full_text.clone());
                     }
 
+                    // UPDATED: Logic for Auto Copy AND Auto Paste
                     if auto_copy && !full_text.trim().is_empty() {
                          let txt = full_text.clone();
+                         // NEW: Check logic - only paste if overlay is hidden and we have a target
+                         let should_paste = hide_overlay && target_window_for_paste.is_some();
+                         let target_hwnd = target_window_for_paste;
+                         
+                         println!("[DEBUG] Auto-Copy triggered. should_paste={}, target_hwnd={:?}", should_paste, target_hwnd);
+
                          std::thread::spawn(move || {
-                             std::thread::sleep(std::time::Duration::from_millis(100));
+                             std::thread::sleep(std::time::Duration::from_millis(200));
+                             println!("[DEBUG] Copying to clipboard...");
                              copy_to_clipboard(&txt, HWND(0));
+                             println!("[DEBUG] Text copied to clipboard. Length: {}", txt.len());
+                             
+                             if should_paste {
+                                 if let Some(hwnd) = target_hwnd {
+                                     // Ensure we paste into the correct window
+                                     println!("[DEBUG] Triggering auto-paste to {:?}", hwnd);
+                                     crate::overlay::utils::force_focus_and_paste(hwnd);
+                                 }
+                             }
                          });
                     }
 
@@ -507,9 +535,32 @@ pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT
             update_window_text(primary_hwnd, &text);
         }
         
-        if auto_copy {
-            copy_to_clipboard(&text, HWND(0));
+        // --- AUTO PASTE LOGIC FOR AUDIO ---
+        if auto_copy && !text.trim().is_empty() {
+            let target_window = if let Ok(app) = crate::APP.lock() {
+               app.last_active_window
+            } else { None };
+            println!("[DEBUG] Audio show_audio_result: Target Window = {:?}, hide_overlay = {}", target_window, hide_overlay);
+            
+            let txt_for_copy = text.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                println!("[DEBUG] Audio: Copying to clipboard...");
+                copy_to_clipboard(&txt_for_copy, HWND(0));
+                println!("[DEBUG] Audio: Text copied. Length: {}", txt_for_copy.len());
+                
+                // Logic: Only paste if Hide Overlay is ON and we have a target window
+                if hide_overlay && target_window.is_some() {
+                    if let Some(hwnd) = target_window {
+                        println!("[DEBUG] Audio: Triggering auto-paste to {:?}", hwnd);
+                        crate::overlay::utils::force_focus_and_paste(hwnd);
+                    }
+                } else {
+                    println!("[DEBUG] Audio: Not pasting. hide_overlay={}, has_target={}", hide_overlay, target_window.is_some());
+                }
+            });
         }
+        // ----------------------------------
 
         if retranslate && !text.trim().is_empty() {
             let rect_sec = retrans_rect.unwrap();

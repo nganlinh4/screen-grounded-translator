@@ -41,6 +41,7 @@ pub struct AppState {
     // New: Track API usage limits (Key: Model Full Name, Value: "Remaining / Total")
     pub model_usage_stats: HashMap<String, String>,
     pub history: Arc<HistoryManager>, // NEW
+    pub last_active_window: Option<HWND>, // NEW: Store window handle for auto-paste focus restoration
 }
 
 lazy_static! {
@@ -54,6 +55,7 @@ lazy_static! {
             registered_hotkey_ids: Vec::new(),
             model_usage_stats: HashMap::new(),
             history,
+            last_active_window: None, // NEW
         }
     }));
 }
@@ -312,18 +314,36 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_HOTKEY => {
             let id = wparam.0 as i32;
             if id > 0 {
+                // println!("[DEBUG] Hotkey triggered. ID: {}", id);
+
                 let preset_idx = ((id - 1) / 1000) as usize;
                 
-                let preset_type = {
+                // Determine context to decide if we should capture the window
+                let (preset_type, is_audio_stopping) = {
                     if let Ok(app) = APP.lock() {
                         if preset_idx < app.config.presets.len() {
-                            app.config.presets[preset_idx].preset_type.clone()
-                        } else { "image".to_string() }
+                            let p_type = app.config.presets[preset_idx].preset_type.clone();
+                            let stopping = p_type == "audio" && overlay::is_recording_overlay_active();
+                            (p_type, stopping)
+                        } else { ("image".to_string(), false) }
                     } else {
-                        eprintln!("Error: APP mutex poisoned on hotkey trigger.");
-                        return LRESULT(0);
+                        ("image".to_string(), false)
                     }
                 };
+
+                // FIX: Only capture target window if we are NOT stopping an audio recording.
+                // If stopping, the current foreground is our own overlay, which is wrong.
+                // We want to keep the handle captured when recording started.
+                if !is_audio_stopping {
+                    let target_window = crate::overlay::utils::get_target_window_for_paste();
+                    // println!("[DEBUG] Main: Captured Target Window: {:?}", target_window);
+
+                    if let Ok(mut app) = APP.lock() {
+                        app.last_active_window = target_window;
+                    }
+                } else {
+                    // println!("[DEBUG] Main: Stopping audio, preserving previous target window.");
+                }
 
                 if preset_type == "audio" {
                     if overlay::is_recording_overlay_active() {

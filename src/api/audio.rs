@@ -355,6 +355,9 @@ pub fn record_audio_and_transcribe(
 
     match transcription_result {
         Ok(transcription_text) => {
+            println!("[DEBUG] Audio: Transcription successful. Text length: {}", transcription_text.len());
+            println!("[DEBUG] Audio: preset.auto_copy = {}, preset.hide_overlay = {}", preset.auto_copy, preset.hide_overlay);
+            
             // SAVE HISTORY
             {
                 let app = crate::APP.lock().unwrap();

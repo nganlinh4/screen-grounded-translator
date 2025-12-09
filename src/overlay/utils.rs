@@ -1,6 +1,9 @@
 use windows::Win32::Foundation::*;
 use windows::Win32::System::DataExchange::*;
 use windows::Win32::System::Memory::*;
+use windows::Win32::System::Threading::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub fn to_wstring(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -40,6 +43,130 @@ pub fn copy_to_clipboard(text: &str, hwnd: HWND) {
                 eprintln!("Failed to copy to clipboard after 5 attempts");
             }
         }
+    }
+}
+
+// --- AUTO PASTE UTILS ---
+
+/// Checks active window for caret OR keyboard focus and returns its HWND if found
+pub fn get_target_window_for_paste() -> Option<HWND> {
+    unsafe {
+        let hwnd_foreground = GetForegroundWindow();
+        // println!("[DEBUG] get_target_window_for_paste: Foreground HWND = {:?}", hwnd_foreground);
+
+        if hwnd_foreground.0 == 0 { return None; }
+        
+        let thread_id = GetWindowThreadProcessId(hwnd_foreground, None);
+        if thread_id == 0 { return None; }
+        
+        let mut gui_info = GUITHREADINFO::default();
+        gui_info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        
+        if GetGUIThreadInfo(thread_id, &mut gui_info).as_bool() {
+            // Check legacy caret
+            let has_caret = gui_info.hwndCaret.0 != 0;
+            let blinking = (gui_info.flags & GUI_CARETBLINKING).0 != 0;
+            
+            // Check keyboard focus (Fix for Chrome/Electron/WPF)
+            let has_focus = gui_info.hwndFocus.0 != 0;
+            
+            // println!("[DEBUG] GUITHREADINFO for Thread {}: hwndFocus={:?}, hwndCaret={:?}, blinking={}", thread_id, gui_info.hwndFocus, gui_info.hwndCaret, blinking);
+
+            if has_caret || blinking || has_focus {
+                return Some(hwnd_foreground);
+            }
+        }
+        
+        None
+    }
+}
+
+pub fn force_focus_and_paste(hwnd_target: HWND) {
+    unsafe {
+        // println!("[DEBUG] force_focus_and_paste: Target HWND = {:?}", hwnd_target);
+
+        // 1. Force focus back to the target window
+        if IsWindow(hwnd_target).as_bool() {
+            let cur_thread = GetCurrentThreadId();
+            let target_thread = GetWindowThreadProcessId(hwnd_target, None);
+            
+            if cur_thread != target_thread {
+                let _ = AttachThreadInput(cur_thread, target_thread, true);
+                let _ = SetForegroundWindow(hwnd_target);
+                // Important: Bring window to top so it receives input
+                let _ = BringWindowToTop(hwnd_target);
+                let _ = SetFocus(hwnd_target);
+                let _ = AttachThreadInput(cur_thread, target_thread, false);
+            } else {
+                let _ = SetForegroundWindow(hwnd_target);
+            }
+        } else {
+            return;
+        }
+        
+        // 2. Wait for focus to settle
+        std::thread::sleep(std::time::Duration::from_millis(350));
+
+        // 3. CLEANUP MODIFIERS SMARTLY
+        // FIX: Only send KeyUp if the key is actually physically pressed.
+        // Sending "Alt Up" when Alt isn't down triggers the Windows Menu Bar (the "F E V" hints).
+        let release_if_pressed = |vk: u16| {
+             // GetAsyncKeyState returns top bit set if key is down
+             let state = GetAsyncKeyState(vk as i32);
+             if (state as u16 & 0x8000) != 0 {
+                 let input = INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VIRTUAL_KEY(vk),
+                            dwFlags: KEYEVENTF_KEYUP,
+                            ..Default::default()
+                        }
+                    }
+                };
+                SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+             }
+        };
+
+        release_if_pressed(VK_MENU.0);    // Alt
+        release_if_pressed(VK_SHIFT.0);   // Shift
+        release_if_pressed(VK_LWIN.0);    // Win Left
+        release_if_pressed(VK_RWIN.0);    // Win Right
+        release_if_pressed(VK_CONTROL.0); // Ctrl
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // 4. Send Ctrl+V Sequence
+        let send_input_event = |vk: u16, flags: KEYBD_EVENT_FLAGS| {
+            let input = INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(vk),
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                        wScan: 0, 
+                    }
+                }
+            };
+            SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+        };
+
+        // Ctrl Down
+        send_input_event(VK_CONTROL.0, KEYBD_EVENT_FLAGS(0)); 
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // V Down
+        send_input_event(VK_V.0, KEYBD_EVENT_FLAGS(0));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // V Up
+        send_input_event(VK_V.0, KEYEVENTF_KEYUP);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Ctrl Up
+        send_input_event(VK_CONTROL.0, KEYEVENTF_KEYUP);
     }
 }
 
