@@ -110,7 +110,9 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
         WM_MOUSEMOVE => {
             if IS_DRAGGING {
                 GetCursorPos(std::ptr::addr_of_mut!(CURR_POS));
+                // Force immediate repaint for smoothness
                 InvalidateRect(hwnd, None, false);
+                UpdateWindow(hwnd);
             }
             LRESULT(0)
         }
@@ -204,13 +206,16 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             let mut ps = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut ps);
             
-            let mem_dc = CreateCompatibleDC(hdc);
+            // OPTIMIZATION: Use GDI Double Buffering but minimal allocations
             let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
             let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
             
+            let mem_dc = CreateCompatibleDC(hdc);
             let mem_bitmap = CreateCompatibleBitmap(hdc, width, height);
-            SelectObject(mem_dc, mem_bitmap);
+            let old_bmp = SelectObject(mem_dc, mem_bitmap);
 
+            // 1. Clear background (Transparent)
+            // Note: Since we are Layered/Transparent, filling with Black(0,0,0) makes it transparent.
             let brush = CreateSolidBrush(COLORREF(0x00000000));
             let full_rect = RECT { left: 0, top: 0, right: width, bottom: height };
             FillRect(mem_dc, &full_rect, brush);
@@ -234,23 +239,39 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                     bottom: rect_abs.bottom - screen_y,
                 };
                 
-                let w = (r.right - r.left) as i32;
-                let h = (r.bottom - r.top) as i32;
+                let w = (r.right - r.left).abs();
+                let h = (r.bottom - r.top).abs();
+                
                 if w > 0 && h > 0 {
-                    super::paint_utils::render_box_sdf(
-                        HDC(mem_dc.0),
-                        r,
-                        w,
-                        h,
-                        false,
-                        0.0
-                    );
+                    // FIX: Use Native GDI RoundRect instead of CPU-heavy SDF
+                    // This is hardware accelerated and instant for 4K+ resolutions
+                    
+                    // Create White Pen (2px thick)
+                    let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF));
+                    let old_pen = SelectObject(mem_dc, pen);
+                    
+                    // Use Null Brush (Transparent Fill)
+                    let null_brush = GetStockObject(NULL_BRUSH);
+                    let old_brush = SelectObject(mem_dc, null_brush);
+                    
+                    // Draw Rounded Rectangle
+                    RoundRect(mem_dc, r.left, r.top, r.right, r.bottom, 12, 12);
+                    
+                    // Cleanup
+                    SelectObject(mem_dc, old_brush);
+                    SelectObject(mem_dc, old_pen);
+                    DeleteObject(pen);
                 }
             }
 
-            BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY).ok().unwrap();
+            // Blit to screen
+            BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY).ok();
+            
+            // Cleanup GDI
+            SelectObject(mem_dc, old_bmp);
             DeleteObject(mem_bitmap);
             DeleteDC(mem_dc);
+            
             EndPaint(hwnd, &mut ps);
             LRESULT(0)
         }

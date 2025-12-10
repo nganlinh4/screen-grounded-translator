@@ -6,6 +6,7 @@ use windows::core::*;
 use std::sync::{Arc, Mutex, Once};
 use std::collections::HashMap;
 use image::{ImageBuffer, Rgba};
+use std::mem::size_of;
 
 use crate::api::{translate_image_streaming, translate_text_streaming};
 use crate::config::{Config, Preset};
@@ -15,10 +16,43 @@ use super::result::{create_result_window, update_window_text, WindowType, link_w
 // --- PROCESSING WINDOW STATIC STATE ---
 static REGISTER_PROC_CLASS: Once = Once::new();
 
+// Updated struct to cache heavy resources
 struct ProcessingState {
     animation_offset: f32,
     is_fading_out: bool,
     alpha: u8,
+    // Caching resources to prevent crash on large screens
+    cache_hbm: HBITMAP,
+    cache_bits: *mut core::ffi::c_void,
+    cache_w: i32,
+    cache_h: i32,
+}
+
+// Safety: Raw pointers are not Send by default, but we only access them 
+// from the window thread (WM_TIMER/WM_DESTROY) which is synchronized by the message loop.
+// However, the HashMap is behind a Mutex, so we need Send.
+unsafe impl Send for ProcessingState {}
+
+impl ProcessingState {
+    fn new() -> Self {
+        Self {
+            animation_offset: 0.0,
+            is_fading_out: false,
+            alpha: 255,
+            cache_hbm: HBITMAP(0),
+            cache_bits: std::ptr::null_mut(),
+            cache_w: 0,
+            cache_h: 0,
+        }
+    }
+    
+    fn cleanup(&mut self) {
+        if self.cache_hbm.0 != 0 {
+            unsafe { DeleteObject(self.cache_hbm); }
+            self.cache_hbm = HBITMAP(0);
+            self.cache_bits = std::ptr::null_mut();
+        }
+    }
 }
 
 lazy_static::lazy_static! {
@@ -40,13 +74,15 @@ pub fn start_processing_pipeline(
     let model_config = model_config.expect("Model config not found for preset model");
     let provider = model_config.provider.clone();
 
-    // Prepare Refine Context (Image)
-    let mut png_data = Vec::new();
-    let _ = cropped_img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
-    let refine_context = RefineContext::Image(png_data);
-
     // NEW LOGIC: Dynamic Prompt Mode
     if preset.prompt_mode == "dynamic" {
+        // For dynamic mode, we open the result window immediately for editing.
+        // We must prepare the context here, but the slight delay is acceptable 
+        // as the user expects a window transition.
+        let mut png_data = Vec::new();
+        let _ = cropped_img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
+        let refine_context = RefineContext::Image(png_data);
+
         // Skip processing overlay, skip API thread. Open Result Window directly in Edit Mode.
         std::thread::spawn(move || {
             let hwnd = create_result_window(
@@ -76,10 +112,11 @@ pub fn start_processing_pipeline(
 
     // --- STANDARD PROCESSING (Fixed Prompt) ---
 
-    // 1. Create the Processing Overlay Window (The glowing rainbow box)
+    // 1. Create the Processing Overlay Window (The glowing rainbow box) IMMEDIATELY
+    // This ensures visual feedback appears instantly, before any heavy encoding.
     let processing_hwnd = unsafe { create_processing_window(screen_rect) };
 
-    // 2. Prepare Data for API Thread (model_id, provider, refine_context already prepared above)
+    // 2. Prepare Data for API Thread
     let model_config = crate::model_config::get_model_by_id(&model_id);
     let model_config = model_config.expect("Model config not found for preset model");
     let model_name = model_config.full_name.clone();
@@ -99,16 +136,17 @@ pub fn start_processing_pipeline(
     let streaming_enabled = preset.streaming_enabled;
     let use_json_format = preset.id == "preset_translate";
     let auto_copy = preset.auto_copy;
-    let auto_paste = preset.auto_paste; // Capture new field
+    let auto_paste = preset.auto_paste; 
     let auto_paste_newline = preset.auto_paste_newline;
     let do_retranslate = preset.retranslate;
     let retranslate_to = preset.retranslate_to.clone();
     let retranslate_model_id = preset.retranslate_model.clone();
     let retranslate_streaming_enabled = preset.retranslate_streaming_enabled;
     let retranslate_auto_copy = preset.retranslate_auto_copy;
+    
+    // Clone raw buffer for history (fast memory copy)
     let cropped_for_history = cropped_img.clone();
 
-    // NEW: Capture the target window we stored in main.rs
     let target_window_for_paste = if let Ok(app) = crate::APP.lock() {
         app.last_active_window
     } else {
@@ -116,13 +154,21 @@ pub fn start_processing_pipeline(
     };
 
     // 3. Spawn API Worker Thread
+    // Moving heavy operations (PNG encoding) inside this thread prevents the "deadly delay".
     std::thread::spawn(move || {
+        // ENCODE PNG HERE (Background Thread)
+        // This takes time (100ms+ for 4K), but the overlay is already spinning.
+        let mut png_data = Vec::new();
+        let _ = cropped_img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
+        let refine_context = RefineContext::Image(png_data);
+        
         let accumulated_vision = Arc::new(Mutex::new(String::new()));
         let acc_vis_clone = accumulated_vision.clone();
         let mut first_chunk_received = false;
         
         let (tx_hwnd, rx_hwnd) = std::sync::mpsc::channel();
 
+        // Use the original cropped_img for the API call (it was moved into this closure)
         let api_res = translate_image_streaming(
             &groq_api_key, 
             &gemini_api_key, 
@@ -355,6 +401,17 @@ unsafe fn create_processing_window(rect: RECT) -> HWND {
 
     let w = (rect.right - rect.left).abs();
     let h = (rect.bottom - rect.top).abs();
+    
+    // Adaptive Framerate Calculation
+    // Total pixels: 1920x1080 ~ 2M. 4K ~ 8.3M.
+    let pixels = (w as i64) * (h as i64);
+    let timer_interval = if pixels > 5_000_000 {
+        50 // 20 FPS for 4K+ (Massive CPU savings)
+    } else if pixels > 2_000_000 {
+        32 // 30 FPS for 1440p
+    } else {
+        16 // 60 FPS for 1080p and smaller
+    };
 
     let hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
@@ -366,14 +423,10 @@ unsafe fn create_processing_window(rect: RECT) -> HWND {
     );
 
     let mut states = PROC_STATES.lock().unwrap();
-    states.insert(hwnd.0 as isize, ProcessingState {
-        animation_offset: 0.0,
-        is_fading_out: false,
-        alpha: 255
-    });
+    states.insert(hwnd.0 as isize, ProcessingState::new());
     drop(states);
     
-    SetTimer(hwnd, 1, 16, None);
+    SetTimer(hwnd, 1, timer_interval, None);
     ShowWindow(hwnd, SW_SHOW);
 
     hwnd
@@ -382,32 +435,22 @@ unsafe fn create_processing_window(rect: RECT) -> HWND {
 unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => {
-            // When closed (via worker thread), start fade out instead of destroying immediately
             let mut states = PROC_STATES.lock().unwrap();
-            let state = states.entry(hwnd.0 as isize).or_insert(ProcessingState { 
-                animation_offset: 0.0,
-                is_fading_out: false,
-                alpha: 255
-            });
+            let state = states.entry(hwnd.0 as isize).or_insert(ProcessingState::new());
             if !state.is_fading_out {
                 state.is_fading_out = true;
             }
             LRESULT(0)
         }
         WM_TIMER => {
-            let (should_destroy, anim_offset, alpha) = {
+            let (should_destroy, anim_offset, alpha, is_fading) = {
                 let mut states = PROC_STATES.lock().unwrap();
-                let state = states.entry(hwnd.0 as isize).or_insert(ProcessingState { 
-                    animation_offset: 0.0,
-                    is_fading_out: false,
-                    alpha: 255
-                });
+                let state = states.entry(hwnd.0 as isize).or_insert(ProcessingState::new());
                 
-                // Handle Fade Out
                 let mut destroy_flag = false;
                 if state.is_fading_out {
-                    if state.alpha > 30 {
-                        state.alpha -= 30;
+                    if state.alpha > 40 { // Faster fade
+                        state.alpha -= 40;
                     } else {
                         state.alpha = 0;
                         destroy_flag = true;
@@ -417,7 +460,7 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 state.animation_offset += 5.0;
                 if state.animation_offset > 360.0 { state.animation_offset -= 360.0; }
                 
-                (destroy_flag, state.animation_offset, state.alpha)
+                (destroy_flag, state.animation_offset, state.alpha, state.is_fading_out)
             };
             
             if should_destroy {
@@ -432,42 +475,66 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             let h = (rect.bottom - rect.top).abs();
 
             if w > 0 && h > 0 {
+                let mut states = PROC_STATES.lock().unwrap();
+                let state = states.get_mut(&(hwnd.0 as isize)).unwrap();
+                
+                // Reallocate cached buffer only if size changes
+                if state.cache_hbm.0 == 0 || state.cache_w != w || state.cache_h != h {
+                    state.cleanup();
+                    
+                    let screen_dc = GetDC(None);
+                    let bmi = BITMAPINFO {
+                        bmiHeader: BITMAPINFOHEADER {
+                            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                            biWidth: w,
+                            biHeight: -h,
+                            biPlanes: 1,
+                            biBitCount: 32,
+                            biCompression: BI_RGB.0 as u32,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                    
+                    let res = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut state.cache_bits, None, 0);
+                    ReleaseDC(None, screen_dc);
+                    
+                    if let Ok(hbm) = res {
+                        if !hbm.is_invalid() && !state.cache_bits.is_null() {
+                            state.cache_hbm = hbm;
+                            state.cache_w = w;
+                            state.cache_h = h;
+                        } else {
+                             return LRESULT(0);
+                        }
+                    } else {
+                        return LRESULT(0);
+                    }
+                }
+                
+                // PERFORMANCE FIX: Zero-Cost Fade Out
+                // If fading out, DO NOT update the pixels. Just let the alpha blending happen.
+                // This saves massive CPU time during the exit animation, fixing the lag.
+                if !is_fading {
+                    crate::overlay::paint_utils::draw_direct_sdf_glow(
+                        state.cache_bits as *mut u32,
+                        w,
+                        h,
+                        anim_offset,
+                        1.0, // Always draw opaque, let UpdateLayeredWindow handle the alpha
+                        true
+                    );
+                }
+
                 let screen_dc = GetDC(None);
                 let mem_dc = CreateCompatibleDC(screen_dc);
-                
-                let bmi = BITMAPINFO {
-                    bmiHeader: BITMAPINFOHEADER {
-                        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                        biWidth: w,
-                        biHeight: -h,
-                        biPlanes: 1,
-                        biBitCount: 32,
-                        biCompression: BI_RGB.0 as u32,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-                
-                let mut p_bits: *mut core::ffi::c_void = std::ptr::null_mut();
-                let hbm = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut p_bits, None, 0).unwrap();
-                let old_hbm = SelectObject(mem_dc, hbm);
-
-                let local_rect = RECT { left: 0, top: 0, right: w, bottom: h };
-                
-                crate::overlay::paint_utils::render_box_sdf(
-                    HDC(mem_dc.0),
-                    local_rect,
-                    w,
-                    h,
-                    true, 
-                    anim_offset
-                );
+                let old_hbm = SelectObject(mem_dc, state.cache_hbm);
 
                 let pt_src = POINT { x: 0, y: 0 };
                 let size = SIZE { cx: w, cy: h };
                 let mut blend = BLENDFUNCTION::default();
                 blend.BlendOp = AC_SRC_OVER as u8;
-                blend.SourceConstantAlpha = alpha; // Use dynamic alpha
+                blend.SourceConstantAlpha = alpha; // Global Alpha handles the fade out
                 blend.AlphaFormat = AC_SRC_ALPHA as u8;
 
                 UpdateLayeredWindow(
@@ -483,7 +550,6 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 );
 
                 SelectObject(mem_dc, old_hbm);
-                DeleteObject(hbm);
                 DeleteDC(mem_dc);
                 ReleaseDC(None, screen_dc);
             }
@@ -497,7 +563,9 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
         }
         WM_DESTROY => {
             let mut states = PROC_STATES.lock().unwrap();
-            states.remove(&(hwnd.0 as isize));
+            if let Some(mut state) = states.remove(&(hwnd.0 as isize)) {
+                state.cleanup();
+            }
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -506,152 +574,147 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
 }
 
 pub fn show_audio_result(preset: crate::config::Preset, text: String, rect: RECT, retrans_rect: Option<RECT>) {
-     let hide_overlay = preset.hide_overlay;
-     let auto_copy = preset.auto_copy;
-     let auto_paste_newline = preset.auto_paste_newline;
-     let retranslate = preset.retranslate && retrans_rect.is_some();
-     let retranslate_to = preset.retranslate_to.clone();
-     let retranslate_model_id = preset.retranslate_model.clone();
-     let retranslate_streaming_enabled = preset.retranslate_streaming_enabled;
-     let retranslate_auto_copy = preset.retranslate_auto_copy;
-     
-     let model_id = preset.model.clone();
-     let model_config = crate::model_config::get_model_by_id(&model_id);
-     let provider = model_config.map(|m| m.provider).unwrap_or("groq".to_string());
-     let streaming = preset.streaming_enabled;
-     
-     std::thread::spawn(move || {
-         let primary_hwnd = create_result_window(
-             rect,
-             WindowType::Primary,
-             RefineContext::None,
-             model_id,
-             provider,
-             streaming,
-             false
-         );
-        if !hide_overlay {
-             unsafe { ShowWindow(primary_hwnd, SW_SHOW); }
-             update_window_text(primary_hwnd, &text);
-         }
-         
-         // --- AUTO PASTE LOGIC FOR AUDIO ---
-         if auto_copy && !text.trim().is_empty() {
-             let target_window = if let Ok(app) = crate::APP.lock() {
-                app.last_active_window
-             } else { None };
-             
-             let mut txt_for_copy = text.clone();
-             
-             // MODIFY CONTENT: Append Newline if enabled
-             if auto_paste_newline {
-                 txt_for_copy.push_str("\r\n");
-             }
-             
-             // Logic: Explicit Auto Paste + Hide Overlay + Target Window
-             let should_paste = preset.auto_paste && hide_overlay && target_window.is_some();
-
-             std::thread::spawn(move || {
-                 std::thread::sleep(std::time::Duration::from_millis(200));
-                 crate::overlay::utils::copy_to_clipboard(&txt_for_copy, HWND(0));
-                 
-                 if should_paste {
-                     if let Some(hwnd) = target_window {
-                         crate::overlay::utils::force_focus_and_paste(hwnd);
-                     }
-                 }
-             });
-         }
-         // ----------------------------------
-
-        if retranslate && !text.trim().is_empty() {
-            let rect_sec = retrans_rect.unwrap();
-            let text_for_retrans = text.clone();
-            let (groq_key, gemini_key) = {
-                let app = crate::APP.lock().unwrap();
-                (app.config.api_key.clone(), app.config.gemini_api_key.clone())
-            };
-            
-            std::thread::spawn(move || {
-                let tm_config = crate::model_config::get_model_by_id(&retranslate_model_id);
-                let (tm_id, tm_name, tm_provider) = match tm_config {
-                Some(m) => (m.id, m.full_name, m.provider),
-                None => ("fast_text".to_string(), "openai/gpt-oss-20b".to_string(), "groq".to_string())
-                };
-                
-                let secondary_hwnd = create_result_window(
-                rect_sec,
-                WindowType::SecondaryExplicit,
-                RefineContext::None,
-                tm_id,
-                tm_provider.clone(),
-                retranslate_streaming_enabled,
-                false
-                );
-                link_windows(primary_hwnd, secondary_hwnd);
-                
-                if !hide_overlay {
-                unsafe { ShowWindow(secondary_hwnd, SW_SHOW); }
-                update_window_text(secondary_hwnd, "");
-                }
-
-                std::thread::spawn(move || {
-                let acc_text = Arc::new(Mutex::new(String::new()));
-                let acc_text_clone = acc_text.clone();
-
-                        let text_res = translate_text_streaming(
-                            &groq_key,
-                            &gemini_key,
-                            text_for_retrans,
-                            retranslate_to,
-                            tm_name,
-                            tm_provider,
-                            retranslate_streaming_enabled,
-                            false,
-                            |chunk| {
-                                let mut t = acc_text_clone.lock().unwrap();
-                                t.push_str(chunk);
-                                if !hide_overlay {
-                                    update_window_text(secondary_hwnd, &t);
-                                }
-                            }
-                        );
-                        
-                        if let Ok(final_text) = text_res {
-                            if !hide_overlay {
-                                update_window_text(secondary_hwnd, &final_text);
-                            }
-                            if retranslate_auto_copy {
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(std::time::Duration::from_millis(100));
-                                    copy_to_clipboard(&final_text, HWND(0));
-                                });
-                            }
-                        } else if let Err(e) = text_res {
-                            if !hide_overlay {
-                                update_window_text(secondary_hwnd, &format!("Error: {}", e));
-                            }
-                        }
-                    });
-
-                    unsafe {
-                        let mut msg = MSG::default();
-                        while GetMessageW(&mut msg, None, 0, 0).into() {
-                            TranslateMessage(&msg);
-                            DispatchMessageW(&msg);
-                            if !IsWindow(secondary_hwnd).as_bool() { break; }
-                        }
-                    }
-                });
+    let hide_overlay = preset.hide_overlay;
+    let auto_copy = preset.auto_copy;
+    let auto_paste_newline = preset.auto_paste_newline;
+    let retranslate = preset.retranslate && retrans_rect.is_some();
+    let retranslate_to = preset.retranslate_to.clone();
+    let retranslate_model_id = preset.retranslate_model.clone();
+    let retranslate_streaming_enabled = preset.retranslate_streaming_enabled;
+    let retranslate_auto_copy = preset.retranslate_auto_copy;
+    
+    let model_id = preset.model.clone();
+    let model_config = crate::model_config::get_model_by_id(&model_id);
+    let provider = model_config.map(|m| m.provider).unwrap_or("groq".to_string());
+    let streaming = preset.streaming_enabled;
+    
+    std::thread::spawn(move || {
+        let primary_hwnd = create_result_window(
+            rect,
+            WindowType::Primary,
+            RefineContext::None,
+            model_id,
+            provider,
+            streaming,
+            false
+        );
+       if !hide_overlay {
+            unsafe { ShowWindow(primary_hwnd, SW_SHOW); }
+            update_window_text(primary_hwnd, &text);
         }
         
-        unsafe {
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).into() {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-                if !IsWindow(primary_hwnd).as_bool() { break; }
+        if auto_copy && !text.trim().is_empty() {
+            let target_window = if let Ok(app) = crate::APP.lock() {
+               app.last_active_window
+            } else { None };
+            
+            let mut txt_for_copy = text.clone();
+            if auto_paste_newline {
+                txt_for_copy.push_str("\r\n");
             }
+            
+            let should_paste = preset.auto_paste && hide_overlay && target_window.is_some();
+
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                crate::overlay::utils::copy_to_clipboard(&txt_for_copy, HWND(0));
+                
+                if should_paste {
+                    if let Some(hwnd) = target_window {
+                        crate::overlay::utils::force_focus_and_paste(hwnd);
+                    }
+                }
+            });
         }
-    });
+
+       if retranslate && !text.trim().is_empty() {
+           let rect_sec = retrans_rect.unwrap();
+           let text_for_retrans = text.clone();
+           let (groq_key, gemini_key) = {
+               let app = crate::APP.lock().unwrap();
+               (app.config.api_key.clone(), app.config.gemini_api_key.clone())
+           };
+           
+           std::thread::spawn(move || {
+               let tm_config = crate::model_config::get_model_by_id(&retranslate_model_id);
+               let (tm_id, tm_name, tm_provider) = match tm_config {
+               Some(m) => (m.id, m.full_name, m.provider),
+               None => ("fast_text".to_string(), "openai/gpt-oss-20b".to_string(), "groq".to_string())
+               };
+               
+               let secondary_hwnd = create_result_window(
+               rect_sec,
+               WindowType::SecondaryExplicit,
+               RefineContext::None,
+               tm_id,
+               tm_provider.clone(),
+               retranslate_streaming_enabled,
+               false
+               );
+               link_windows(primary_hwnd, secondary_hwnd);
+               
+               if !hide_overlay {
+               unsafe { ShowWindow(secondary_hwnd, SW_SHOW); }
+               update_window_text(secondary_hwnd, "");
+               }
+
+               std::thread::spawn(move || {
+                   let acc_text = Arc::new(Mutex::new(String::new()));
+                   let acc_text_clone = acc_text.clone();
+
+                       let text_res = translate_text_streaming(
+                           &groq_key,
+                           &gemini_key,
+                           text_for_retrans,
+                           retranslate_to,
+                           tm_name,
+                           tm_provider,
+                           retranslate_streaming_enabled,
+                           false,
+                           |chunk| {
+                               let mut t = acc_text_clone.lock().unwrap();
+                               t.push_str(chunk);
+                               if !hide_overlay {
+                                   update_window_text(secondary_hwnd, &t);
+                               }
+                           }
+                       );
+                       
+                       if let Ok(final_text) = text_res {
+                           if !hide_overlay {
+                               update_window_text(secondary_hwnd, &final_text);
+                           }
+                           if retranslate_auto_copy {
+                               std::thread::spawn(move || {
+                                   std::thread::sleep(std::time::Duration::from_millis(100));
+                                   copy_to_clipboard(&final_text, HWND(0));
+                               });
+                           }
+                       } else if let Err(e) = text_res {
+                           if !hide_overlay {
+                               update_window_text(secondary_hwnd, &format!("Error: {}", e));
+                           }
+                       }
+                   });
+
+                   unsafe {
+                       let mut msg = MSG::default();
+                       while GetMessageW(&mut msg, None, 0, 0).into() {
+                           TranslateMessage(&msg);
+                           DispatchMessageW(&msg);
+                           if !IsWindow(secondary_hwnd).as_bool() { break; }
+                       }
+                   }
+               });
+       }
+       
+       unsafe {
+           let mut msg = MSG::default();
+           while GetMessageW(&mut msg, None, 0, 0).into() {
+               TranslateMessage(&msg);
+               DispatchMessageW(&msg);
+               if !IsWindow(primary_hwnd).as_bool() { break; }
+           }
+       }
+   });
 }
