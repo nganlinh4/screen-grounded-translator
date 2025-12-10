@@ -20,7 +20,6 @@ use windows::Win32::System::Threading::*;
 use windows::Win32::System::Com::CoInitialize;
 use windows::core::*;
 use lazy_static::lazy_static;
-use image::ImageBuffer;
 use config::{Config, load_config, ThemeMode};
 use tray_icon::menu::{Menu, MenuItem};
 use std::collections::HashMap;
@@ -47,9 +46,30 @@ lazy_static! {
     static ref MOUSE_HOOK: Mutex<HHOOK> = Mutex::new(HHOOK(0));
 }
 
+// 1. Define a wrapper for the GDI Handle to ensure we clean it up
+pub struct GdiCapture {
+    pub hbitmap: HBITMAP,
+    pub width: i32,
+    pub height: i32,
+}
+
+// Make it safe to send between threads (Handles are process-global in Windows GDI)
+unsafe impl Send for GdiCapture {}
+unsafe impl Sync for GdiCapture {}
+
+impl Drop for GdiCapture {
+    fn drop(&mut self) {
+        unsafe {
+            if self.hbitmap.0 != 0 {
+                DeleteObject(self.hbitmap);
+            }
+        }
+    }
+}
+
 pub struct AppState {
     pub config: Config,
-    pub original_screenshot: Option<ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
+    pub screenshot_handle: Option<GdiCapture>,
     pub hotkeys_updated: bool,
     pub registered_hotkey_ids: Vec<i32>, // Track IDs of currently registered hotkeys
     // New: Track API usage limits (Key: Model Full Name, Value: "Remaining / Total")
@@ -64,7 +84,7 @@ lazy_static! {
         let history = Arc::new(HistoryManager::new(config.max_history_items));
         AppState {
             config,
-            original_screenshot: None,
+            screenshot_handle: None,
             hotkeys_updated: false,
             registered_hotkey_ids: Vec::new(),
             model_usage_stats: HashMap::new(),
@@ -444,10 +464,10 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     let p_idx = preset_idx;
 
                     std::thread::spawn(move || {
-                        match capture_full_screen() {
-                            Ok(img) => {
+                        match capture_screen_fast() {
+                            Ok(capture) => {
                                 if let Ok(mut app) = app_clone.lock() {
-                                    app.original_screenshot = Some(img);
+                                    app.screenshot_handle = Some(capture);
                                 } else {
                                     return;
                                 }
@@ -466,7 +486,7 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
     }
 }
 
-fn capture_full_screen() -> anyhow::Result<ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
+fn capture_screen_fast() -> anyhow::Result<GdiCapture> {
     unsafe {
         let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
         let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
@@ -499,36 +519,17 @@ fn capture_full_screen() -> anyhow::Result<ImageBuffer<image::Rgba<u8>, Vec<u8>>
         
         SelectObject(hdc_mem, hbitmap);
 
+        // This is the only "heavy" part, but it's purely GPU/GDI memory move. Very fast.
         BitBlt(hdc_mem, 0, 0, width, height, hdc_screen, x, y, SRCCOPY).ok()?;
 
-        let mut bmi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width,
-                biHeight: -height,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0 as u32,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let mut buffer: Vec<u8> = vec![0; (width * height * 4) as usize];
-        GetDIBits(hdc_mem, hbitmap, 0, height as u32, Some(buffer.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
-
-        for chunk in buffer.chunks_exact_mut(4) {
-            chunk.swap(0, 2);
-            chunk[3] = 255;
-        }
-
-        DeleteObject(hbitmap);
+        // Cleanup DCs, but KEEP the HBITMAP
         DeleteDC(hdc_mem);
         ReleaseDC(None, hdc_screen);
 
-        let img = ImageBuffer::from_raw(width as u32, height as u32, buffer)
-            .ok_or_else(|| anyhow::anyhow!("Buffer creation failed"))?;
-        
-        Ok(img)
+        Ok(GdiCapture {
+            hbitmap,
+            width,
+            height
+        })
     }
 }

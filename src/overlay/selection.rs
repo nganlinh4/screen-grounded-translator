@@ -4,10 +4,9 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetCapture, ReleaseCapture, VK_ESCAPE};
 use windows::core::*;
-use image::GenericImageView; 
 
 use super::process::start_processing_pipeline;
-use crate::APP;
+use crate::{APP, GdiCapture};
 
 // --- CONFIGURATION ---
 const FADE_TIMER_ID: usize = 2;
@@ -23,6 +22,72 @@ static mut CURRENT_ALPHA: u8 = 0;
 static mut SELECTION_OVERLAY_ACTIVE: bool = false;
 static mut SELECTION_OVERLAY_HWND: HWND = HWND(0);
 static mut CURRENT_PRESET_IDX: usize = 0;
+
+// Helper to extract bytes from the HBITMAP only for the selected area
+unsafe fn extract_crop_from_hbitmap(
+    capture: &GdiCapture, 
+    crop_rect: RECT
+) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
+    let hdc_screen = GetDC(None);
+    let hdc_mem = CreateCompatibleDC(hdc_screen);
+    
+    // Select the big screenshot into DC
+    let old_obj = SelectObject(hdc_mem, capture.hbitmap);
+
+    let w = (crop_rect.right - crop_rect.left).abs();
+    let h = (crop_rect.bottom - crop_rect.top).abs();
+
+    // Create a BMI for just the cropped area
+    let mut bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h, // Top-down
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0 as u32,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut buffer: Vec<u8> = vec![0; (w * h * 4) as usize];
+
+    // Create small temp bitmap, blit crop to it, read bits
+    let hdc_temp = CreateCompatibleDC(hdc_screen);
+    let hbm_temp = CreateCompatibleBitmap(hdc_screen, w, h);
+    SelectObject(hdc_temp, hbm_temp);
+    
+    // Copy only the crop region from the huge screenshot
+    // IMPORTANT: virtual screen coordinates calculation
+    let v_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    let v_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    
+    // source x/y in the bitmap
+    let src_x = crop_rect.left - v_x;
+    let src_y = crop_rect.top - v_y;
+
+    let _ = BitBlt(hdc_temp, 0, 0, w, h, hdc_mem, src_x, src_y, SRCCOPY).ok();
+    
+    // Now read pixels from small bitmap
+    GetDIBits(hdc_temp, hbm_temp, 0, h as u32, Some(buffer.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
+
+    // BGR -> RGB correction
+    for chunk in buffer.chunks_exact_mut(4) {
+        chunk.swap(0, 2);
+        chunk[3] = 255;
+    }
+
+    DeleteObject(hbm_temp);
+    DeleteDC(hdc_temp);
+    
+    // Cleanup main DC
+    SelectObject(hdc_mem, old_obj);
+    DeleteDC(hdc_mem);
+    ReleaseDC(None, hdc_screen);
+
+    image::ImageBuffer::from_raw(w as u32, h as u32, buffer).unwrap()
+}
 
 pub fn is_selection_overlay_active_and_dismiss() -> bool {
     unsafe {
@@ -132,33 +197,23 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                 let height = (rect.bottom - rect.top).abs();
 
                 if width > 10 && height > 10 {
-                    // 1. CROP IMMEDIATELY
+                    // 1. EXTRACT CROP (New Logic)
                     let (cropped_img, config, preset) = {
                         let guard = APP.lock().unwrap();
-                        let original = guard.original_screenshot.as_ref().expect("Screenshot missing");
+                        // Access the handle
+                        let capture = guard.screenshot_handle.as_ref().expect("Screenshot handle missing");
                         let config_clone = guard.config.clone();
                         let preset_clone = guard.config.presets[CURRENT_PRESET_IDX].clone();
 
-                        let x_virt = GetSystemMetrics(SM_XVIRTUALSCREEN);
-                        let y_virt = GetSystemMetrics(SM_YVIRTUALSCREEN);
+                        // Extract pixels NOW (The slow part happens here, AFTER user finishes drawing)
+                        let img = extract_crop_from_hbitmap(capture, rect);
                         
-                        let crop_x = (rect.left - x_virt).max(0) as u32;
-                        let crop_y = (rect.top - y_virt).max(0) as u32;
-                        let crop_w = (rect.right - rect.left).abs() as u32;
-                        let crop_h = (rect.bottom - rect.top).abs() as u32;
-                        
-                        let img_w = original.width();
-                        let img_h = original.height();
-                        
-                        let final_w = crop_w.min(img_w.saturating_sub(crop_x));
-                        let final_h = crop_h.min(img_h.saturating_sub(crop_y));
-                        
-                        let cropped = original.view(crop_x, crop_y, final_w, final_h).to_image();
-                        (cropped, config_clone, preset_clone)
+                        (img, config_clone, preset_clone)
                     };
 
-                    // 2. TRIGGER PROCESSING THREAD IMMEDIATELY
+                    // 2. TRIGGER PROCESSING
                     std::thread::spawn(move || {
+                        // Pass the rect for result window positioning
                         start_processing_pipeline(cropped_img, rect, config, preset);
                     });
 
@@ -265,7 +320,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             }
 
             // Blit to screen
-            BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY).ok();
+            let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY).ok();
             
             // Cleanup GDI
             SelectObject(mem_dc, old_bmp);
