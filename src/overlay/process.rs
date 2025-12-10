@@ -16,6 +16,11 @@ use super::result::{create_result_window, update_window_text, WindowType, link_w
 // --- PROCESSING WINDOW STATIC STATE ---
 static REGISTER_PROC_CLASS: Once = Once::new();
 
+// CRITICAL FIX: Maximum buffer dimensions to prevent crashes on weak hardware.
+// A 1280x1280 buffer is ~6.5MB (manageable) vs 4K which is ~33MB.
+// The glow effect will be drawn at this reduced resolution and then scaled up.
+const MAX_GLOW_BUFFER_DIM: i32 = 1280;
+
 // Updated struct to cache heavy resources
 struct ProcessingState {
     animation_offset: f32,
@@ -26,6 +31,11 @@ struct ProcessingState {
     cache_bits: *mut core::ffi::c_void,
     cache_w: i32,
     cache_h: i32,
+    // Track the scaled buffer dimensions separately from window size
+    scaled_w: i32,
+    scaled_h: i32,
+    // Flag to stop animation immediately on fade (critical for weak PCs)
+    timer_killed: bool,
 }
 
 // Safety: Raw pointers are not Send by default, but we only access them 
@@ -43,6 +53,9 @@ impl ProcessingState {
             cache_bits: std::ptr::null_mut(),
             cache_w: 0,
             cache_h: 0,
+            scaled_w: 0,
+            scaled_h: 0,
+            timer_killed: false,
         }
     }
     
@@ -459,6 +472,18 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             let state = states.entry(hwnd.0 as isize).or_insert(ProcessingState::new());
             if !state.is_fading_out {
                 state.is_fading_out = true;
+                // CRITICAL FIX: Kill timer IMMEDIATELY to stop all rendering.
+                // This frees up CPU/memory during the critical moment when
+                // the result window is being created. On weak PCs, running both
+                // the animation loop AND result window creation causes OOM crashes.
+                if !state.timer_killed {
+                    KillTimer(hwnd, 1);
+                    state.timer_killed = true;
+                    // Use a fast timer for smooth fade-out (25ms = ~40 FPS).
+                    // This is fine because during fade we SKIP the expensive pixel drawing
+                    // (see `!is_fading` check below) - we only update the alpha blend which is cheap.
+                    SetTimer(hwnd, 2, 25, None);
+                }
             }
             LRESULT(0)
         }
@@ -469,21 +494,26 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 
                 let mut destroy_flag = false;
                 if state.is_fading_out {
-                    if state.alpha > 40 { // Faster fade
-                        state.alpha -= 40;
+                    // Smooth fade: 20 alpha per 25ms = ~320ms total fade, 40 FPS smooth
+                    if state.alpha > 20 {
+                        state.alpha -= 20;
                     } else {
                         state.alpha = 0;
                         destroy_flag = true;
                     }
+                } else {
+                    // Only animate when NOT fading (saves CPU during critical transition)
+                    state.animation_offset += 5.0;
+                    if state.animation_offset > 360.0 { state.animation_offset -= 360.0; }
                 }
-
-                state.animation_offset += 5.0;
-                if state.animation_offset > 360.0 { state.animation_offset -= 360.0; }
                 
                 (destroy_flag, state.animation_offset, state.alpha, state.is_fading_out)
             };
             
             if should_destroy {
+                // Kill all timers before destroying
+                KillTimer(hwnd, 1);
+                KillTimer(hwnd, 2);
                 DestroyWindow(hwnd);
                 PostQuitMessage(0);
                 return LRESULT(0);
@@ -498,16 +528,29 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 let mut states = PROC_STATES.lock().unwrap();
                 let state = states.get_mut(&(hwnd.0 as isize)).unwrap();
                 
-                // Reallocate cached buffer only if size changes
-                if state.cache_hbm.0 == 0 || state.cache_w != w || state.cache_h != h {
+                // CRITICAL FIX: Calculate SCALED buffer dimensions
+                // This prevents massive memory allocations for 4K+ selections
+                let scale_factor = if w > MAX_GLOW_BUFFER_DIM || h > MAX_GLOW_BUFFER_DIM {
+                    let scale_w = MAX_GLOW_BUFFER_DIM as f32 / w as f32;
+                    let scale_h = MAX_GLOW_BUFFER_DIM as f32 / h as f32;
+                    scale_w.min(scale_h).min(1.0)
+                } else {
+                    1.0
+                };
+                
+                let buf_w = ((w as f32) * scale_factor).ceil() as i32;
+                let buf_h = ((h as f32) * scale_factor).ceil() as i32;
+                
+                // Reallocate cached buffer only if SCALED size changes
+                if state.cache_hbm.0 == 0 || state.scaled_w != buf_w || state.scaled_h != buf_h {
                     state.cleanup();
                     
                     let screen_dc = GetDC(None);
                     let bmi = BITMAPINFO {
                         bmiHeader: BITMAPINFOHEADER {
                             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                            biWidth: w,
-                            biHeight: -h,
+                            biWidth: buf_w,
+                            biHeight: -buf_h,
                             biPlanes: 1,
                             biBitCount: 32,
                             biCompression: BI_RGB.0 as u32,
@@ -522,8 +565,10 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     if let Ok(hbm) = res {
                         if !hbm.is_invalid() && !state.cache_bits.is_null() {
                             state.cache_hbm = hbm;
-                            state.cache_w = w;
+                            state.cache_w = w; // Store WINDOW dimensions for UpdateLayeredWindow
                             state.cache_h = h;
+                            state.scaled_w = buf_w; // Store BUFFER dimensions for drawing
+                            state.scaled_h = buf_h;
                         } else {
                              return LRESULT(0);
                         }
@@ -537,29 +582,86 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 // This saves massive CPU time during the exit animation, fixing the lag.
                 if !is_fading && !state.cache_bits.is_null() {
                     // FIX: CRITICAL CRASH PREVENTION
-                    // We must use the CACHED dimensions (state.cache_w/h) for the drawing loop bounds,
-                    // NOT the current window dimensions (w/h). If w/h from GetWindowRect drifts even by 1 pixel
-                    // (e.g. during state changes or DPI updates) while the buffer is smaller, 
-                    // the drawing loop will write out of bounds (Buffer Overflow).
-                    // We also only draw if dimensions match to ensure visual consistency.
-                    if state.cache_w == w && state.cache_h == h {
-                        crate::overlay::paint_utils::draw_direct_sdf_glow(
-                            state.cache_bits as *mut u32,
-                            state.cache_w, // Use SAFE allocated width
-                            state.cache_h, // Use SAFE allocated height
-                            anim_offset,
-                            1.0, // Always draw opaque, let UpdateLayeredWindow handle the alpha
-                            true
-                        );
-                    }
+                    // Use the SCALED buffer dimensions for the drawing loop.
+                    // The buffer may be smaller than the window for large selections.
+                    crate::overlay::paint_utils::draw_direct_sdf_glow(
+                        state.cache_bits as *mut u32,
+                        state.scaled_w, // Use SAFE scaled buffer width
+                        state.scaled_h, // Use SAFE scaled buffer height
+                        anim_offset,
+                        1.0, // Always draw opaque, let UpdateLayeredWindow handle the alpha
+                        true
+                    );
                 }
 
                 let screen_dc = GetDC(None);
-                let mem_dc = CreateCompatibleDC(screen_dc);
-                let old_hbm = SelectObject(mem_dc, state.cache_hbm);
+                
+                // CRITICAL FIX: Scale the buffer to window size using StretchBlt
+                // For large windows, we draw to a smaller buffer and scale up.
+                // This dramatically reduces CPU/memory usage for 4K+ selections.
+                let needs_scaling = state.scaled_w != w || state.scaled_h != h;
+                
+                let (final_hbm, final_w, final_h) = if needs_scaling {
+                    // Create a full-size bitmap and stretch the small one into it
+                    let scaled_dc = CreateCompatibleDC(screen_dc);
+                    SelectObject(scaled_dc, state.cache_hbm);
+                    
+                    // Create destination bitmap at window size
+                    let dest_bmi = BITMAPINFO {
+                        bmiHeader: BITMAPINFOHEADER {
+                            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                            biWidth: w,
+                            biHeight: -h,
+                            biPlanes: 1,
+                            biBitCount: 32,
+                            biCompression: BI_RGB.0 as u32,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                    let mut dest_bits: *mut core::ffi::c_void = std::ptr::null_mut();
+                    let dest_hbm = CreateDIBSection(screen_dc, &dest_bmi, DIB_RGB_COLORS, &mut dest_bits, None, 0);
+                    
+                    if let Ok(hbm) = dest_hbm {
+                        if !hbm.is_invalid() {
+                            let dest_dc = CreateCompatibleDC(screen_dc);
+                            SelectObject(dest_dc, hbm);
+                            
+                            // Use high-quality stretch mode
+                            SetStretchBltMode(dest_dc, HALFTONE);
+                            SetBrushOrgEx(dest_dc, 0, 0, None);
+                            
+                            // Stretch the small buffer to full window size
+                            StretchBlt(
+                                dest_dc, 0, 0, w, h,
+                                scaled_dc, 0, 0, state.scaled_w, state.scaled_h,
+                                SRCCOPY
+                            );
+                            
+                            DeleteDC(scaled_dc);
+                            (Some((dest_dc, hbm)), w, h)
+                        } else {
+                            DeleteDC(scaled_dc);
+                            (None, state.scaled_w, state.scaled_h)
+                        }
+                    } else {
+                        DeleteDC(scaled_dc);
+                        (None, state.scaled_w, state.scaled_h)
+                    }
+                } else {
+                    (None, w, h)
+                };
+                
+                let (mem_dc, old_hbm, temp_resources) = if let Some((dc, hbm)) = final_hbm {
+                    (dc, HGDIOBJ::default(), Some(hbm))
+                } else {
+                    let dc = CreateCompatibleDC(screen_dc);
+                    let old = SelectObject(dc, state.cache_hbm);
+                    (dc, old, None)
+                };
 
                 let pt_src = POINT { x: 0, y: 0 };
-                let size = SIZE { cx: w, cy: h };
+                let size = SIZE { cx: final_w, cy: final_h };
                 let mut blend = BLENDFUNCTION::default();
                 blend.BlendOp = AC_SRC_OVER as u8;
                 blend.SourceConstantAlpha = alpha; // Global Alpha handles the fade out
@@ -577,8 +679,17 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     ULW_ALPHA
                 );
 
-                SelectObject(mem_dc, old_hbm);
-                DeleteDC(mem_dc);
+                // Cleanup
+                if temp_resources.is_some() {
+                    // We used a temp DC and bitmap for scaling
+                    DeleteDC(mem_dc);
+                    if let Some(hbm) = temp_resources {
+                        DeleteObject(hbm);
+                    }
+                } else {
+                    SelectObject(mem_dc, old_hbm);
+                    DeleteDC(mem_dc);
+                }
                 ReleaseDC(None, screen_dc);
             }
             LRESULT(0)
