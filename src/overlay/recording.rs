@@ -181,36 +181,104 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
                 let py = (y as f32) - center_y;
                 
                 // Rounded Box SDF
-                let d = super::paint_utils::sd_rounded_box(px, py, bx - 2.0, by - 2.0, 16.0);
+                // FIX: Use consistent corner radius with proper inset compensation
+                // Inner box is inset by 4px from edges, corner radius is 14px
+                // This ensures the glow (which extends outward) follows the same curvature
+                // and doesn't "peek out" at the diagonal corners due to radius mismatch
+                let corner_radius = 14.0;
+                let inset = 4.0;
+                let d = super::paint_utils::sd_rounded_box(px, py, bx - inset, by - inset, corner_radius);
                 
                 let mut final_col = 0x000000;
                 let mut final_alpha = 0.0f32;
 
                 if should_animate {
-                    if d <= 0.0 {
-                         final_alpha = 0.40; 
-                         final_col = 0x00050505;
-                    } else {
-                        let angle = py.atan2(px);
+                    // PROPER SDF ANTI-ALIASING:
+                    // - Fully inside (d < -1): solid fill
+                    // - Edge zone (-1 <= d <= 1): smooth blend  
+                    // - Outside (d > 0): glow
+                    
+                    let aa_half = 0.75; // Half-width of AA zone (~1.5px total)
+                    
+                    if d < -aa_half {
+                        // Fully inside - solid fill, NO gradient
+                        final_alpha = 0.40;
+                        final_col = 0x00050505;
+                    } else if d < aa_half {
+                        // Edge zone - anti-alias by blending fill with glow
+                        // Map d from [-aa_half, aa_half] to [0, 1]
+                        let t = (d + aa_half) / (aa_half * 2.0);
+                        // Smoothstep for sub-pixel curve
+                        let blend = t * t * (3.0 - 2.0 * t);
                         
-                        // Modified Glow Logic based on Processing State
+                        // Calculate glow color/intensity at this point
+                        let angle = py.atan2(px);
                         let noise = if is_waiting {
-                            // "Inner random reach" - high speed, high frequency, spiky
                             (angle * 10.0 - time_rad * 8.0).sin() * 0.5
                         } else {
-                            // Smooth breathing
+                            (angle * 2.0 + time_rad * 3.0).sin() * 0.2
+                        };
+                        let glow_width = if is_waiting { 14.0 } else { 8.0 } + (noise * 5.0);
+                        let glow_t = (d.max(0.0) / glow_width).clamp(0.0, 1.0);
+                        let glow_intensity = (1.0 - glow_t).powi(2);
+                        
+                        let hue_offset = if is_waiting { ANIMATION_OFFSET * 4.0 } else { ANIMATION_OFFSET * 2.0 };
+                        // Use rem_euclid to handle negative values correctly (Rust % preserves sign)
+                        let hue = (angle.to_degrees() + hue_offset).rem_euclid(360.0);
+                        let sat = if is_waiting { 1.0 } else { 0.85 };
+                        let glow_rgb = super::paint_utils::hsv_to_rgb(hue, sat, 1.0);
+                        
+                        // Blend: (1-blend) * fill + blend * glow
+                        let fill_alpha = 0.40 * (1.0 - blend);
+                        let glow_alpha = glow_intensity * blend;
+                        final_alpha = fill_alpha + glow_alpha;
+                        
+                        // Color blend (premultiplied)
+                        let fill_r = 0x05 as f32 * (1.0 - blend);
+                        let fill_g = 0x05 as f32 * (1.0 - blend);
+                        let fill_b = 0x05 as f32 * (1.0 - blend);
+                        let glow_r = ((glow_rgb >> 16) & 0xFF) as f32 * blend * glow_intensity;
+                        let glow_g = ((glow_rgb >> 8) & 0xFF) as f32 * blend * glow_intensity;
+                        let glow_b = (glow_rgb & 0xFF) as f32 * blend * glow_intensity;
+                        
+                        if final_alpha > 0.001 {
+                            let r = ((fill_r + glow_r) / final_alpha * 0.40).min(255.0) as u32;
+                            let g = ((fill_g + glow_g) / final_alpha * 0.40).min(255.0) as u32;
+                            let b = ((fill_b + glow_b) / final_alpha * 0.40).min(255.0) as u32;
+                            final_col = (r << 16) | (g << 8) | b;
+                        }
+                    } else {
+                        // Outside - pure glow with OUTER CORNER CLIPPING
+                        let angle = py.atan2(px);
+                        
+                        let noise = if is_waiting {
+                            (angle * 10.0 - time_rad * 8.0).sin() * 0.5
+                        } else {
                             (angle * 2.0 + time_rad * 3.0).sin() * 0.2
                         };
                         
                         let glow_width = if is_waiting { 14.0 } else { 8.0 } + (noise * 5.0);
                         
+                        // Calculate outer boundary SDF for corner clipping
+                        // Use full window bounds with appropriately scaled corner radius
+                        // Outer corner radius grows with glow but capped to avoid over-clipping
+                        let outer_corner_radius = (corner_radius + glow_width * 0.5).min(by - 2.0);
+                        let d_outer = super::paint_utils::sd_rounded_box(px, py, bx, by, outer_corner_radius);
+                        
+                        // Fade glow based on distance from inner shape
                         let t = (d / glow_width).clamp(0.0, 1.0);
-                        let glow_intensity = (1.0 - t).powi(2);
+                        let mut glow_intensity = (1.0 - t).powi(2);
+                        
+                        // Clip glow at outer rounded boundary (anti-aliased)
+                        if d_outer > -1.5 {
+                            let outer_fade = ((-d_outer) / 1.5).clamp(0.0, 1.0);
+                            glow_intensity *= outer_fade;
+                        }
                         
                         if glow_intensity > 0.01 {
                             let hue_offset = if is_waiting { ANIMATION_OFFSET * 4.0 } else { ANIMATION_OFFSET * 2.0 };
-                            let hue = (angle.to_degrees() + hue_offset) % 360.0;
-                            // More vibrant during processing
+                            // Use rem_euclid to handle negative values correctly
+                            let hue = (angle.to_degrees() + hue_offset).rem_euclid(360.0);
                             let sat = if is_waiting { 1.0 } else { 0.85 };
                             let rgb = super::paint_utils::hsv_to_rgb(hue, sat, 1.0);
                             final_col = rgb;
@@ -218,13 +286,31 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
                         }
                     }
                 } else {
-                     if d <= 0.0 {
+                    // PAUSED STATE - with proper SDF anti-aliasing
+                    let aa_half = 0.75;
+                    
+                    if d < -aa_half {
+                        // Fully inside - solid fill
                         final_alpha = 0.40;
                         final_col = 0x00050505;
-                     } else if d < 2.0 {
-                        final_alpha = 0.8;
+                    } else if d < aa_half {
+                        // Edge zone - anti-alias
+                        let t = (d + aa_half) / (aa_half * 2.0);
+                        let blend = t * t * (3.0 - 2.0 * t);
+                        // Blend fill to border
+                        final_alpha = 0.40 * (1.0 - blend) + 0.8 * blend;
+                        // Color blend from dark fill to gray border
+                        let r = (0x05 as f32 * (1.0 - blend) + 0xAA as f32 * blend) as u32;
+                        let g = r;
+                        let b = r;
+                        final_col = (r << 16) | (g << 8) | b;
+                    } else if d < 2.0 {
+                        // Outer border with AA fade-out
+                        let t = ((d - aa_half) / (2.0 - aa_half)).clamp(0.0, 1.0);
+                        let aa = 1.0 - t * t * (3.0 - 2.0 * t);
+                        final_alpha = 0.8 * aa;
                         final_col = 0x00AAAAAA;
-                     }
+                    }
                 }
 
                 let a = (final_alpha * 255.0) as u32;
