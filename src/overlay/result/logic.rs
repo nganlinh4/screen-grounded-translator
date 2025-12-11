@@ -55,9 +55,9 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                             p.state_timer += 1.0;
                             p.squish_factor = p.squish_factor * 0.8 + 1.2 * 0.2; // Stretch up
                             
-                            // Fade out logic - smooth 10 alpha per frame at 60 FPS = ~425ms fade
-                            if state.alpha > 10 {
-                                state.alpha = state.alpha.saturating_sub(10);
+                            // FAST fade out - 25 alpha per frame at 60 FPS = ~170ms fade
+                            if state.alpha > 25 {
+                                state.alpha = state.alpha.saturating_sub(25);
                                 SetLayeredWindowAttributes(hwnd, COLORREF(0), state.alpha, LWA_ALPHA);
                             } else {
                                 should_close = true;

@@ -335,30 +335,21 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     }
                     SetTimer(hwnd, 1, 1500, None);
                  } else {
-                      {
-                         let mut states = WINDOW_STATES.lock().unwrap();
-                         if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-                             state.physics.mode = AnimationMode::Smashing;
-                             state.physics.state_timer = 0.0;
-                         }
-                     }
-                     
-                     let (linked_hwnd, main_alpha) = {
-                         let states = WINDOW_STATES.lock().unwrap();
-                         let linked = if let Some(state) = states.get(&(hwnd.0 as isize)) { state.linked_window } else { None };
-                         let alpha = if let Some(state) = states.get(&(hwnd.0 as isize)) { state.alpha } else { 220 };
-                         (linked, alpha)
-                     };
-                     if let Some(linked) = linked_hwnd {
-                         if IsWindow(linked).as_bool() {
-                             let mut states = WINDOW_STATES.lock().unwrap();
-                             if let Some(state) = states.get_mut(&(linked.0 as isize)) {
-                                 state.physics.mode = AnimationMode::DragOut;
-                                 state.physics.state_timer = 0.0;
-                                 state.alpha = main_alpha;
-                             }
-                         }
-                     }
+                      // INSTANT CLOSE: No fade animation, just destroy the window
+                      // This eliminates all lag issues from the fade animation
+                      let linked_hwnd = {
+                          let states = WINDOW_STATES.lock().unwrap();
+                          if let Some(state) = states.get(&(hwnd.0 as isize)) { state.linked_window } else { None }
+                      };
+                      
+                      // Close linked window first
+                      if let Some(linked) = linked_hwnd {
+                          if IsWindow(linked).as_bool() {
+                              PostMessageW(linked, WM_CLOSE, WPARAM(0), LPARAM(0));
+                          }
+                      }
+                      // Close this window
+                      PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
                   }
             }
             LRESULT(0)
