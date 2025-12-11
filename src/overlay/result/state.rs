@@ -60,6 +60,7 @@ pub struct CursorPhysics {
     
     // Clean up
     pub initialized: bool,
+    pub needs_cleanup_repaint: bool, // Flag to trigger one final repaint when entering DragOut
 }
 
 impl Default for CursorPhysics {
@@ -74,6 +75,7 @@ impl Default for CursorPhysics {
             state_timer: 0.0,
             particles: Vec::new(),
             initialized: false,
+            needs_cleanup_repaint: false,
         }
     }
 }

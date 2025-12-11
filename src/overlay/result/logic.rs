@@ -44,43 +44,12 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                             p.squish_factor = p.squish_factor * 0.9 + 1.0 * 0.1; // Return to 1.0
                         },
                         AnimationMode::Smashing => {
-                             p.state_timer += 1.0;
-                             
-                             // Start fade immediately
-                             if state.alpha > 10 {
-                                 state.alpha = state.alpha.saturating_sub(15);
-                                 SetLayeredWindowAttributes(hwnd, COLORREF(0), state.alpha, LWA_ALPHA);
-                             }
-                             
-                             // 0-3 frames: Wind up (Squash down slightly)
-                             if p.state_timer < 4.0 {
-                                 p.squish_factor = 0.9;
-                                 p.current_tilt -= 5.0; // Lean back
-                             } 
-                             // 4th frame: IMPACT
-                             else if p.state_timer >= 4.0 && p.state_timer < 5.0 {
-                                 p.squish_factor = 0.4; // Extreme squish
-                                 p.current_tilt = 0.0;  // Snap vertical
-                                 
-                                 // EXPLOSION OF PARTICLES
-                                 let cx = p.x;
-                                 let cy = p.y + 20.0;
-                                 for _ in 0..15 {
-                                     p.particles.push(DustParticle {
-                                         x: cx + rand_float(-10.0, 10.0),
-                                         y: cy,
-                                         vx: rand_float(-8.0, 8.0),
-                                         vy: rand_float(-2.0, -8.0), // Explode up
-                                         life: 1.0,
-                                         size: rand_float(2.0, 5.0),
-                                         color: 0xFFDDDDDD,
-                                     });
-                                 }
-                             }
-                             // Recovery / Transition to DragOut
-                             else if p.state_timer > 8.0 {
-                                 p.mode = AnimationMode::DragOut;
-                             }
+                             // SIMPLIFIED: Skip the broom animation entirely
+                             // Just transition directly to fade-out (DragOut) mode
+                             // This eliminates all freezing frame issues
+                             p.mode = AnimationMode::DragOut;
+                             p.particles.clear(); // No particles
+                             p.state_timer = 0.0;
                          },
                         AnimationMode::DragOut => {
                             p.state_timer += 1.0;
@@ -108,10 +77,12 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                     }
                     p.particles = keep;
 
-                    // PERFORMANCE FIX: Skip ALL repaints during DragOut (fade-out)
-                    // Alpha fade is handled by SetLayeredWindowAttributes (cheap OS-level operation)
-                    // We don't need expensive WM_PAINT calls - broom and particles are not visible anyway
-                    let skip_repaint = matches!(p.mode, AnimationMode::DragOut);
+                    // PERFORMANCE FIX: Skip repaints during DragOut EXCEPT for the cleanup repaint
+                    // The cleanup repaint clears the broom/particles from the visual
+                    let skip_repaint = matches!(p.mode, AnimationMode::DragOut) && !p.needs_cleanup_repaint;
+                    if p.needs_cleanup_repaint {
+                        p.needs_cleanup_repaint = false; // Consume the flag
+                    }
                     if !skip_repaint {
                         InvalidateRect(hwnd, None, false);
                     }

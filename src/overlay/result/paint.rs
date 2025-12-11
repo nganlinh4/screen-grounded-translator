@@ -135,18 +135,17 @@ pub fn paint_window(hwnd: HWND) {
                 let particles_vec: Vec<(f32, f32, f32, f32, u32)> = state.physics.particles.iter()
                     .map(|p| (p.x, p.y, p.life, p.size, p.color)).collect();
 
-                // PERFORMANCE FIX: Don't render broom during fade-out (DragOut mode)
-                // The broom rendering is expensive (procedural generation + bitmap creation every frame)
-                // During fade, we only need alpha blending which is handled by SetLayeredWindowAttributes
-                let is_fading_out = matches!(state.physics.mode, AnimationMode::DragOut);
+                // AGGRESSIVE FIX: Don't render broom during ANY closing animation (Smashing OR DragOut)
+                // This completely eliminates the "frozen frame" issue during fade
+                // The broom is only shown on hover, not during click-to-close
+                let is_closing = matches!(state.physics.mode, AnimationMode::Smashing | AnimationMode::DragOut);
                 
-                let show_broom = !is_fading_out && (
-                    (state.is_hovered 
+                let show_broom = !is_closing && (
+                    state.is_hovered 
                         && !state.on_copy_btn 
                         && !state.on_edit_btn
                         && !state.on_undo_btn
-                        && state.current_resize_edge == ResizeEdge::None)
-                    || state.physics.mode == AnimationMode::Smashing
+                        && state.current_resize_edge == ResizeEdge::None
                 );
                 
                 let broom_info = if show_broom {
