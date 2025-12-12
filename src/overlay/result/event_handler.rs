@@ -436,7 +436,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
 
             // --- TYPE MODE PROMPT LOGIC ---
             if trigger_refine && !user_input.trim().is_empty() {
-                  let (context_data, model_id, provider, streaming, preset_prompt, retrans_config_opt) = {
+                  let (context_data, model_id, provider, streaming, preset_prompt, _retrans_config_opt) = {
                       let states = WINDOW_STATES.lock().unwrap();
                       if let Some(s) = states.get(&(hwnd.0 as isize)) {
                           (s.context_data.clone(), s.model_id.clone(), s.provider.clone(), s.streaming_enabled, s.preset_prompt.clone(), s.retrans_config.clone())
@@ -479,98 +479,8 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                            }
                       );
                       
-                      // --- RETRANSLATION TRIGGER ---
-                      if let Ok(ref final_result) = result {
-                           if let Some(rc) = retrans_config_opt {
-                               if rc.enabled && !final_result.trim().is_empty() {
-                                   // Logic for Type Mode Retranslation
-                                   let text_to_translate = final_result.clone();
-                                   let target_lang = rc.target_lang.clone();
-                                   let r_model = rc.model_id.clone();
-                                   let r_stream = rc.streaming;
-                                   let r_auto_copy = rc.auto_copy;
-                                   let g_key_clone = groq_key.clone();
-                                   let gm_key_clone = gemini_key.clone();
-                                   let primary_hwnd = hwnd;
-                                   
-                                   let mut rect = RECT::default();
-                                   GetWindowRect(primary_hwnd, &mut rect);
-                                   let w = rect.right - rect.left;
-                                   let gap = 20;
-                                   let sec_rect = RECT {
-                                       left: rect.right + gap,
-                                       top: rect.top,
-                                       right: rect.right + gap + w,
-                                       bottom: rect.bottom
-                                   };
-                                   
-                                   let tm_config = crate::model_config::get_model_by_id(&r_model);
-                                   let (tm_id, tm_name, tm_provider) = match tm_config {
-                                       Some(m) => (m.id, m.full_name, m.provider),
-                                       None => ("fast_text".to_string(), "openai/gpt-oss-20b".to_string(), "groq".to_string())
-                                   };
-
-                                   std::thread::spawn(move || {
-                                       let secondary_hwnd = create_result_window(
-                                            sec_rect,
-                                            WindowType::SecondaryExplicit,
-                                            RefineContext::None,
-                                            tm_id,
-                                            tm_provider.clone(),
-                                            r_stream,
-                                            false,
-                                            "".to_string(),
-                                            None
-                                       );
-                                       
-                                       // --- FIX: Enable Loading Animation Immediately ---
-                                       {
-                                           let mut states = WINDOW_STATES.lock().unwrap();
-                                           if let Some(s) = states.get_mut(&(secondary_hwnd.0 as isize)) { 
-                                               s.is_refining = true; 
-                                           }
-                                       }
-
-                                       link_windows(primary_hwnd, secondary_hwnd);
-                                       ShowWindow(secondary_hwnd, SW_SHOW);
-                                       update_window_text(secondary_hwnd, "");
-
-                                       let acc_retrans = Arc::new(Mutex::new(String::new()));
-                                       let acc_retrans_c = acc_retrans.clone();
-                                       let mut first = true;
-                                       
-                                       let _ = crate::api::translate_text_streaming(
-                                            &g_key_clone, &gm_key_clone, text_to_translate, target_lang, tm_name, tm_provider, r_stream, false,
-                                            move |chunk| {
-                                                if first {
-                                                    let mut states = WINDOW_STATES.lock().unwrap();
-                                                    if let Some(s) = states.get_mut(&(secondary_hwnd.0 as isize)) { s.is_refining = false; }
-                                                    first = false;
-                                                }
-
-                                                let mut t = acc_retrans_c.lock().unwrap();
-                                                t.push_str(chunk);
-                                                update_window_text(secondary_hwnd, &t);
-                                            }
-                                       );
-                                       
-                                       if let Ok(fin) = acc_retrans.lock() {
-                                            if r_auto_copy {
-                                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                                crate::overlay::utils::copy_to_clipboard(&fin, HWND(0));
-                                            }
-                                       }
-
-                                       let mut msg = MSG::default();
-                                       while GetMessageW(&mut msg, None, 0, 0).into() {
-                                            TranslateMessage(&msg);
-                                            DispatchMessageW(&msg);
-                                            if !IsWindow(secondary_hwnd).as_bool() { break; }
-                                       }
-                                   });
-                               }
-                           }
-                      }
+                      // Removed redundant retranslation trigger block.
+                      // Refinement should ONLY update the current window, not spawn new windows.
 
                       let mut states = WINDOW_STATES.lock().unwrap();
                       if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
