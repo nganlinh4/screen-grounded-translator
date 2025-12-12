@@ -12,58 +12,67 @@ pub fn render_sidebar(
 ) -> bool {
     let mut changed = false;
 
-    // Theme & Language Controls
-    ui.horizontal(|ui| {
-        // --- THEME SWITCHER LOGIC ---
-        let (theme_icon, tooltip) = match config.theme_mode {
-            ThemeMode::Dark => (Icon::Moon, "Theme: Dark"),
-            ThemeMode::Light => (Icon::Sun, "Theme: Light"),
-            ThemeMode::System => (Icon::SystemTheme, "Theme: System (Auto)"),
-        };
+    // Header Grid Layout (matching presets section)
+    egui::Grid::new("header_grid")
+        .striped(false)
+        .spacing(egui::vec2(10.0, 6.0))
+        .show(ui, |ui| {
+            // Column 1: Theme + Language + History (all in one horizontal row)
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                
+                // --- THEME SWITCHER LOGIC ---
+                let (theme_icon, tooltip) = match config.theme_mode {
+                    ThemeMode::Dark => (Icon::Moon, "Theme: Dark"),
+                    ThemeMode::Light => (Icon::Sun, "Theme: Light"),
+                    ThemeMode::System => (Icon::SystemTheme, "Theme: System (Auto)"),
+                };
 
-        if icon_button(ui, theme_icon).on_hover_text(tooltip).clicked() {
-            // Cycle: System -> Dark -> Light -> System
-            config.theme_mode = match config.theme_mode {
-                ThemeMode::System => ThemeMode::Dark,
-                ThemeMode::Dark => ThemeMode::Light,
-                ThemeMode::Light => ThemeMode::System,
-            };
-            changed = true;
-        }
-        
-        let original_lang = config.ui_language.clone();
-        let lang_display = match config.ui_language.as_str() {
-            "vi" => "VI",
-            "ko" => "KO",
-            _ => "EN",
-        };
-        egui::ComboBox::from_id_source("header_lang_switch")
-            .width(60.0)
-            .selected_text(lang_display)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut config.ui_language, "en".to_string(), "English");
-                ui.selectable_value(&mut config.ui_language, "vi".to_string(), "Vietnamese");
-                ui.selectable_value(&mut config.ui_language, "ko".to_string(), "Korean");
+                if icon_button(ui, theme_icon).on_hover_text(tooltip).clicked() {
+                    // Cycle: System -> Dark -> Light -> System
+                    config.theme_mode = match config.theme_mode {
+                        ThemeMode::System => ThemeMode::Dark,
+                        ThemeMode::Dark => ThemeMode::Light,
+                        ThemeMode::Light => ThemeMode::System,
+                    };
+                    changed = true;
+                }
+                
+                let original_lang = config.ui_language.clone();
+                let lang_display = match config.ui_language.as_str() {
+                    "vi" => "VI",
+                    "ko" => "KO",
+                    _ => "EN",
+                };
+                egui::ComboBox::from_id_source("header_lang_switch")
+                    .width(60.0)
+                    .selected_text(lang_display)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut config.ui_language, "en".to_string(), "English");
+                        ui.selectable_value(&mut config.ui_language, "vi".to_string(), "Vietnamese");
+                        ui.selectable_value(&mut config.ui_language, "ko".to_string(), "Korean");
+                    });
+                if original_lang != config.ui_language {
+                    changed = true;
+                }
+                
+                // History Button
+                if ui.button(text.history_btn).clicked() {
+                    *view_mode = ViewMode::History;
+                }
             });
-        if original_lang != config.ui_language {
-            changed = true;
-        }
-        
-        // NEW: History Button right next to language
-        if ui.button(text.history_btn).clicked() {
-            *view_mode = ViewMode::History;
-        }
-    });
-    ui.add_space(5.0);
 
-    // Global Settings Button
-    let is_global = matches!(view_mode, ViewMode::Global);
-    ui.horizontal(|ui| {
-        draw_icon_static(ui, Icon::Settings, None);
-        if ui.selectable_label(is_global, text.global_settings).clicked() {
-            *view_mode = ViewMode::Global;
-        }
-    });
+            // Column 2: Global Settings (Right Aligned in Column)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.style_mut().spacing.item_spacing.x = 4.0;
+                let is_global = matches!(view_mode, ViewMode::Global);
+                if ui.selectable_label(is_global, text.global_settings).clicked() {
+                    *view_mode = ViewMode::Global;
+                }
+                draw_icon_static(ui, Icon::Settings, None);
+            });
+            ui.end_row();
+        });
     
     ui.add_space(10.0);
     
