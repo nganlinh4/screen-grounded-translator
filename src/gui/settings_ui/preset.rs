@@ -53,12 +53,12 @@ pub fn render_preset_editor(
          egui::ComboBox::from_id_source("preset_type_combo")
              .selected_text(selected_text)
              .show_ui(ui, |ui| {
-                 if ui.selectable_value(&mut preset.preset_type, "image".to_string(), image_label).clicked() {
-                     preset.model = "scout".to_string(); 
-                     changed = true;
-                 }
                  if ui.selectable_value(&mut preset.preset_type, "text".to_string(), text_label).clicked() {
                      preset.model = "text_accurate_kimi".to_string(); 
+                     changed = true;
+                 }
+                 if ui.selectable_value(&mut preset.preset_type, "image".to_string(), image_label).clicked() {
+                     preset.model = "scout".to_string(); 
                      changed = true;
                  }
                  if ui.selectable_value(&mut preset.preset_type, "audio".to_string(), audio_label).clicked() {
@@ -325,8 +325,8 @@ pub fn render_preset_editor(
              });
 
              // 4. Auto Paste Newline Checkbox
-             // Only show if Auto Paste is enabled
-             if preset.auto_copy && preset.hide_overlay && preset.auto_paste {
+             // Only show if Auto Copy is enabled
+             if preset.auto_copy {
                  if ui.checkbox(&mut preset.auto_paste_newline, text.auto_paste_newline_label).clicked() {
                      changed = true;
                  }
