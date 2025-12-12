@@ -29,50 +29,108 @@ pub struct Hotkey {
     pub modifiers: u32,
 }
 
+// --- NEW: PROCESSING BLOCK ---
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ProcessingBlock {
+    pub id: String,
+    pub block_type: String, // "image", "audio", "text"
+    pub model: String,
+    pub prompt: String,
+    pub selected_language: String, // Context var {language}
+    #[serde(default)]
+    pub language_vars: HashMap<String, String>, // Context vars {language1}, etc.
+    pub streaming_enabled: bool,
+    
+    // UI Behavior
+    #[serde(default = "default_true")]
+    pub show_overlay: bool,
+    #[serde(default)]
+    pub auto_copy: bool, // Only one block in chain should have this true
+}
+
+fn default_true() -> bool { true }
+
+impl Default for ProcessingBlock {
+    fn default() -> Self {
+        Self {
+            id: format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()),
+            block_type: "text".to_string(),
+            model: "text_accurate_kimi".to_string(),
+            prompt: "Translate to {language}.".to_string(),
+            selected_language: "Vietnamese".to_string(),
+            language_vars: HashMap::new(),
+            streaming_enabled: true,
+            show_overlay: true,
+            auto_copy: false,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Preset {
     pub id: String,
     pub name: String,
-    pub prompt: String,
-    #[serde(default = "default_prompt_mode")]
-    pub prompt_mode: String, // "fixed" or "dynamic"
-    pub selected_language: String, 
+    
+    // Chain of processing steps
     #[serde(default)]
-    pub language_vars: HashMap<String, String>,
-    pub model: String,
-    pub streaming_enabled: bool,
-    pub auto_copy: bool,
+    pub blocks: Vec<ProcessingBlock>,
+
+    // Legacy/Global Preset Settings
+    #[serde(default = "default_prompt_mode")]
+    pub prompt_mode: String, // "fixed" or "dynamic" (Only applies to first block if Image)
+    
     #[serde(default)]
     pub auto_paste: bool,
-    pub hotkeys: Vec<Hotkey>,
-    pub retranslate: bool,
-    pub retranslate_to: String,
-    pub retranslate_model: String,
-    pub retranslate_streaming_enabled: bool,
-    #[serde(default)]
-    pub retranslate_auto_copy: bool,
     #[serde(default = "default_auto_paste_newline")]
     pub auto_paste_newline: bool,
-    pub hide_overlay: bool,
+    
+    pub hotkeys: Vec<Hotkey>,
+    
     #[serde(default = "default_preset_type")]
-    pub preset_type: String, // "image", "audio", "video", "text"
+    pub preset_type: String, // "image", "audio", "video", "text" (Defines type of Block 0)
     
     // --- Audio Fields ---
     #[serde(default = "default_audio_source")]
-    pub audio_source: String, // "mic" or "device"
+    pub audio_source: String,
     #[serde(default)]
     pub hide_recording_ui: bool,
 
     // --- Video Fields ---
     #[serde(default)]
-    pub video_capture_method: String, // "region" or "monitor:DeviceName"
+    pub video_capture_method: String,
 
-    // --- Text Fields (NEW) ---
+    // --- Text Fields ---
     #[serde(default = "default_text_input_mode")]
-    pub text_input_mode: String, // "select" or "type"
+    pub text_input_mode: String,
 
     #[serde(default)]
     pub is_upcoming: bool,
+    
+    // --- LEGACY FIELDS (for migration from old config format) ---
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub selected_language: String,
+    #[serde(default)]
+    pub language_vars: HashMap<String, String>,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub streaming_enabled: bool,
+    #[serde(default)]
+    pub auto_copy: bool,
+    #[serde(default)]
+    pub hide_overlay: bool,
+    #[serde(default)]
+    pub retranslate: bool,
+    #[serde(default)]
+    pub retranslate_to: String,
+    #[serde(default)]
+    pub retranslate_model: String,
+    #[serde(default)]
+    pub retranslate_streaming_enabled: bool,
+    #[serde(default)]
+    pub retranslate_auto_copy: bool,
 }
 
 fn default_preset_type() -> String { "image".to_string() }
@@ -81,34 +139,88 @@ fn default_prompt_mode() -> String { "fixed".to_string() }
 fn default_text_input_mode() -> String { "select".to_string() }
 fn default_theme_mode() -> ThemeMode { ThemeMode::System }
 fn default_auto_paste_newline() -> bool { true }
+fn default_history_limit() -> usize { 100 }
+fn default_graphics_mode() -> String { "standard".to_string() }
+
+impl Preset {
+    /// Migrate old flat preset to new block-based chain format
+    pub fn migrate_to_blocks(&mut self) {
+        if !self.blocks.is_empty() {
+            // Already migrated
+            return;
+        }
+
+        // Create first block from main preset fields
+        let first_block = ProcessingBlock {
+            block_type: self.preset_type.clone(),
+            model: self.model.clone(),
+            prompt: self.prompt.clone(),
+            selected_language: self.selected_language.clone(),
+            language_vars: self.language_vars.clone(),
+            streaming_enabled: self.streaming_enabled,
+            show_overlay: !self.hide_overlay,
+            auto_copy: self.auto_copy,
+            ..Default::default()
+        };
+        self.blocks.push(first_block);
+
+        // Create retranslate block if enabled
+        if self.retranslate {
+            let retrans_block = ProcessingBlock {
+                block_type: "text".to_string(),
+                model: self.retranslate_model.clone(),
+                prompt: format!("Translate to {}.", self.retranslate_to),
+                selected_language: self.retranslate_to.clone(),
+                language_vars: HashMap::new(),
+                streaming_enabled: self.retranslate_streaming_enabled,
+                show_overlay: true,
+                auto_copy: self.retranslate_auto_copy,
+                ..Default::default()
+            };
+            self.blocks.push(retrans_block);
+        }
+    }
+}
 
 impl Default for Preset {
     fn default() -> Self {
+        // Create a default image chain
         Self {
             id: format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()),
             name: "New Preset".to_string(),
-            prompt: "Extract text from this image.".to_string(),
+            blocks: vec![
+                ProcessingBlock {
+                    block_type: "image".to_string(),
+                    model: "maverick".to_string(),
+                    prompt: "Extract text.".to_string(),
+                    show_overlay: true,
+                    ..Default::default()
+                }
+            ],
             prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: HashMap::new(),
-            model: "maverick".to_string(),
-            streaming_enabled: false,
-            auto_copy: false,
             auto_paste: false,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "text_accurate_kimi".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
             auto_paste_newline: true,
-            hide_overlay: false,
+            hotkeys: vec![],
             preset_type: "image".to_string(),
             audio_source: "mic".to_string(),
             hide_recording_ui: false,
             video_capture_method: "region".to_string(),
             text_input_mode: "select".to_string(),
             is_upcoming: false,
+            
+            // Legacy fields (empty)
+            prompt: String::new(),
+            selected_language: String::new(),
+            language_vars: HashMap::new(),
+            model: String::new(),
+            streaming_enabled: false,
+            auto_copy: false,
+            hide_overlay: false,
+            retranslate: false,
+            retranslate_to: String::new(),
+            retranslate_model: String::new(),
+            retranslate_streaming_enabled: false,
+            retranslate_auto_copy: false,
         }
     }
 }
@@ -132,461 +244,333 @@ pub struct Config {
     pub run_as_admin_on_startup: bool, 
 }
 
-fn default_history_limit() -> usize { 100 }
-fn default_graphics_mode() -> String { "standard".to_string() }
-
 impl Default for Config {
     fn default() -> Self {
-        let _system_ui_lang = get_system_ui_language();
-        
-        // 1. Translation Preset
-        let mut trans_lang_vars = HashMap::new();
-        trans_lang_vars.insert("language1".to_string(), "Vietnamese".to_string());
-        
-        let trans_preset = Preset {
-            id: "preset_translate".to_string(),
-            name: "Translate".to_string(),
-            prompt: "Extract text from this image and translate it to {language1}. Output ONLY the translation text directly.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: trans_lang_vars.clone(),
-            model: "maverick".to_string(),
-            streaming_enabled: false,
-            auto_copy: false,
-            auto_paste: false,
-            hotkeys: vec![Hotkey { code: 192, name: "` / ~".to_string(), modifiers: 0 }],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "image".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 1. Standard Translate Preset (Image -> Text)
+        let mut p1 = Preset::default();
+        p1.id = "preset_translate".to_string();
+        p1.name = "Translate".to_string();
+        p1.preset_type = "image".to_string();
+        p1.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "maverick".to_string(),
+                prompt: "Extract text from this image and translate it to {language}. Output ONLY the translation text directly.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
+        p1.hotkeys.push(Hotkey { code: 192, name: "` / ~".to_string(), modifiers: 0 });
 
-        // 1.2. Translate (Auto paste) Preset
-        let trans_auto_paste_preset = Preset {
-            id: "preset_translate_auto_paste".to_string(),
-            name: "Translate (Auto paste)".to_string(),
-            prompt: "Extract text from this image and translate it to {language1}. Output ONLY the translation text directly.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: trans_lang_vars.clone(),
-            model: "maverick".to_string(),
-            streaming_enabled: false,
-            auto_copy: true,
-            auto_paste: true,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: true,
-            preset_type: "image".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 2. Translate (Auto paste) Preset
+        let mut p2 = Preset::default();
+        p2.id = "preset_translate_auto_paste".to_string();
+        p2.name = "Translate (Auto paste)".to_string();
+        p2.preset_type = "image".to_string();
+        p2.auto_paste = true;
+        p2.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "maverick".to_string(),
+                prompt: "Extract text from this image and translate it to {language}. Output ONLY the translation text directly.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: false,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
 
-        // NEW: Translate (Select text)
-        let trans_select_preset = Preset {
-            id: "preset_translate_select".to_string(),
-            name: "Translate (Select text)".to_string(),
-            prompt: "Translate the following text to {language1}. Output ONLY the translation.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: trans_lang_vars.clone(),
-            model: "text_accurate_kimi".to_string(), // Kimi Text Model
-            streaming_enabled: true,
-            auto_copy: true,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "text".to_string(),
-            audio_source: "".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 3. Translate (Select text)
+        let mut p3 = Preset::default();
+        p3.id = "preset_translate_select".to_string();
+        p3.name = "Translate (Select text)".to_string();
+        p3.preset_type = "text".to_string();
+        p3.text_input_mode = "select".to_string();
+        p3.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Translate the following text to {language}. Output ONLY the translation.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
 
-        // 1.5. Translate+Retranslate Preset
-        let mut trans_retrans_lang_vars = HashMap::new();
-        trans_retrans_lang_vars.insert("language1".to_string(), "Korean".to_string());
+        // 4. Chain: OCR -> Translate
+        let mut p4 = Preset::default();
+        p4.id = "preset_translate_retranslate".to_string();
+        p4.name = "Translate+Retranslate".to_string();
+        p4.preset_type = "image".to_string();
+        p4.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "maverick".to_string(),
+                prompt: "Extract text from this image and translate it to {language}. Output ONLY the translation text directly.".to_string(),
+                selected_language: "Korean".to_string(),
+                streaming_enabled: false,
+                show_overlay: true,
+                auto_copy: true,
+                ..Default::default()
+            },
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Translate to {language}.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
 
-        let trans_retrans_preset = Preset {
-            id: "preset_translate_retranslate".to_string(),
-            name: "Translate+Retranslate".to_string(),
-            prompt: "Extract text from this image and translate it to {language1}. Output ONLY the translation text directly.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Korean".to_string(),
-            language_vars: trans_retrans_lang_vars.clone(),
-            model: "maverick".to_string(),
-            streaming_enabled: false,
-            auto_copy: true,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: true,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "text_accurate_kimi".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "image".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 5. Trans+Retrans (Typing)
+        let mut p5 = Preset::default();
+        p5.id = "preset_trans_retrans_typing".to_string();
+        p5.name = "Trans+Retrans (Typing)".to_string();
+        p5.preset_type = "text".to_string();
+        p5.text_input_mode = "type".to_string();
+        p5.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Translate the following text to {language}. Output ONLY the translation.".to_string(),
+                selected_language: "Korean".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: true,
+                ..Default::default()
+            },
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Translate to {language}.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
 
-        // NEW: Trans+Retrans (Typing)
-        let trans_retrans_typing_preset = Preset {
-            id: "preset_trans_retrans_typing".to_string(),
-            name: "Trans+Retrans (Typing)".to_string(),
-            prompt: "Translate the following text to {language1}. Output ONLY the translation.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Korean".to_string(),
-            language_vars: trans_retrans_lang_vars.clone(),
-            model: "text_accurate_kimi".to_string(), // Text model
-            streaming_enabled: true,
-            auto_copy: true,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: true,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "text_accurate_kimi".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "text".to_string(),
-            audio_source: "".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "type".to_string(),
-            is_upcoming: false,
-        };
+        // 6. OCR Preset
+        let mut p6 = Preset::default();
+        p6.id = "preset_ocr".to_string();
+        p6.name = "Extract text".to_string();
+        p6.preset_type = "image".to_string();
+        p6.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "scout".to_string(),
+                prompt: "Extract all text from this image exactly as it appears. Output ONLY the text.".to_string(),
+                selected_language: "English".to_string(),
+                streaming_enabled: false,
+                show_overlay: false,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
 
-        // 2. OCR Preset
-        let ocr_preset = Preset {
-            id: "preset_ocr".to_string(),
-            name: "Extract text".to_string(),
-            prompt: "Extract all text from this image exactly as it appears. Output ONLY the text.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "English".to_string(),
-            language_vars: HashMap::new(),
-            model: "scout".to_string(),
-            streaming_enabled: false,
-            auto_copy: true,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: false,
-            hide_overlay: true, 
-            preset_type: "image".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 7. Translate (High accuracy)
+        let mut p7 = Preset::default();
+        p7.id = "preset_extract_retranslate".to_string();
+        p7.name = "Translate (High accuracy)".to_string();
+        p7.preset_type = "image".to_string();
+        p7.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "maverick".to_string(),
+                prompt: "Extract all text from this image exactly as it appears. Output ONLY the text.".to_string(),
+                selected_language: "English".to_string(),
+                streaming_enabled: false,
+                show_overlay: true,
+                auto_copy: true,
+                ..Default::default()
+            },
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Translate to {language}.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
 
-        // 2.5. Translate (High accuracy) Preset
-        let extract_retrans_preset = Preset {
-            id: "preset_extract_retranslate".to_string(),
-            name: "Translate (High accuracy)".to_string(),
-            prompt: "Extract all text from this image exactly as it appears. Output ONLY the text.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "English".to_string(),
-            language_vars: HashMap::new(),
-            model: "maverick".to_string(),
-            streaming_enabled: false,
-            auto_copy: true,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: true,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "text_accurate_kimi".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: false,
-            hide_overlay: false,
-            preset_type: "image".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 8. Summarize Preset
+        let mut p8 = Preset::default();
+        p8.id = "preset_summarize".to_string();
+        p8.name = "Summarize content".to_string();
+        p8.preset_type = "image".to_string();
+        p8.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "scout".to_string(),
+                prompt: "Analyze this image and summarize its content in {language}. Only return the summary text, super concisely.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
 
-        // 3. Summarize Preset
-        let mut sum_lang_vars = HashMap::new();
-        sum_lang_vars.insert("language1".to_string(), "Vietnamese".to_string());
-        
-        let sum_preset = Preset {
-            id: "preset_summarize".to_string(),
-            name: "Summarize content".to_string(),
-            prompt: "Analyze this image and summarize its content in {language1}. Only return the summary text, super concisely.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: sum_lang_vars,
-            model: "scout".to_string(),
-            streaming_enabled: true,
-            auto_copy: false,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "image".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 9. Image description Preset
+        let mut p9 = Preset::default();
+        p9.id = "preset_desc".to_string();
+        p9.name = "Image description".to_string();
+        p9.preset_type = "image".to_string();
+        p9.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "scout".to_string(),
+                prompt: "Describe this image in {language}.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
 
-        // 4. Description Preset
-        let mut desc_lang_vars = HashMap::new();
-        desc_lang_vars.insert("language1".to_string(), "Vietnamese".to_string());
-        
-        let desc_preset = Preset {
-            id: "preset_desc".to_string(),
-            name: "Image description".to_string(),
-            prompt: "Describe this image in {language1}.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: desc_lang_vars,
-            model: "scout".to_string(),
-            streaming_enabled: true,
-            auto_copy: false,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "image".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 10. Ask about image
+        let mut p10 = Preset::default();
+        p10.id = "preset_ask_image".to_string();
+        p10.name = "Ask about image".to_string();
+        p10.preset_type = "image".to_string();
+        p10.prompt_mode = "dynamic".to_string();
+        p10.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "gemini-pro".to_string(),
+                prompt: "".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
 
-        // 4.5. Ask about image
-        let mut ask_lang_vars = HashMap::new();
-        ask_lang_vars.insert("language1".to_string(), "Vietnamese".to_string());
+        // 11. Transcribe (Audio)
+        let mut p11 = Preset::default();
+        p11.id = "preset_transcribe".to_string();
+        p11.name = "Transcribe speech".to_string();
+        p11.preset_type = "audio".to_string();
+        p11.audio_source = "mic".to_string();
+        p11.auto_paste = true;
+        p11.blocks = vec![
+            ProcessingBlock {
+                block_type: "audio".to_string(),
+                model: "whisper-accurate".to_string(),
+                prompt: "".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: false,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
 
-        let ask_preset = Preset {
-            id: "preset_ask_image".to_string(),
-            name: "Ask about image".to_string(),
-            prompt: "".to_string(),
-            prompt_mode: "dynamic".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: ask_lang_vars,
-            model: "gemini-pro".to_string(),
-            streaming_enabled: true,
-            auto_copy: false,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "image".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 12. Study language Preset
+        let mut p12 = Preset::default();
+        p12.id = "preset_study_language".to_string();
+        p12.name = "Study language".to_string();
+        p12.preset_type = "audio".to_string();
+        p12.audio_source = "device".to_string();
+        p12.blocks = vec![
+            ProcessingBlock {
+                block_type: "audio".to_string(),
+                model: "whisper-accurate".to_string(),
+                prompt: "".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            },
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Translate to {language}.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
 
-        // 5. Transcribe (Audio)
-        let audio_preset = Preset {
-            id: "preset_transcribe".to_string(),
-            name: "Transcribe speech".to_string(),
-            prompt: "".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: HashMap::new(),
-            model: "whisper-accurate".to_string(),
-            streaming_enabled: false,
-            auto_copy: true,
-            auto_paste: true,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: false,
-            hide_overlay: true,
-            preset_type: "audio".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 13. Quick foreigner reply
+        let mut p13 = Preset::default();
+        p13.id = "preset_transcribe_retranslate".to_string();
+        p13.name = "Quick foreigner reply".to_string();
+        p13.preset_type = "audio".to_string();
+        p13.audio_source = "mic".to_string();
+        p13.blocks = vec![
+            ProcessingBlock {
+                block_type: "audio".to_string(),
+                model: "whisper-accurate".to_string(),
+                prompt: "".to_string(),
+                selected_language: "Korean".to_string(),
+                streaming_enabled: false,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            },
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Translate to {language}.".to_string(),
+                selected_language: "Korean".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
 
-        // 6. Study language Preset
-        let study_lang_preset = Preset {
-            id: "preset_study_language".to_string(),
-            name: "Study language".to_string(),
-            prompt: "".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: HashMap::new(),
-            model: "whisper-accurate".to_string(),
-            streaming_enabled: true,
-            auto_copy: false,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: true,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "text_accurate_kimi".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "audio".to_string(),
-            audio_source: "device".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
+        // 14. Quicker foreigner reply Preset
+        let mut p14 = Preset::default();
+        p14.id = "preset_quicker_foreigner_reply".to_string();
+        p14.name = "Quicker foreigner reply".to_string();
+        p14.preset_type = "audio".to_string();
+        p14.audio_source = "mic".to_string();
+        p14.blocks = vec![
+            ProcessingBlock {
+                block_type: "audio".to_string(),
+                model: "gemini-audio".to_string(),
+                prompt: "Translate the audio to {language}. Only output the translated text.".to_string(),
+                selected_language: "Korean".to_string(),
+                streaming_enabled: false,
+                show_overlay: false,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
 
-        // 7. Quick foreigner reply
-        let transcribe_retrans_preset = Preset {
-            id: "preset_transcribe_retranslate".to_string(),
-            name: "Quick foreigner reply".to_string(),
-            prompt: "".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Korean".to_string(),
-            language_vars: HashMap::new(),
-            model: "whisper-accurate".to_string(),
-            streaming_enabled: false,
-            auto_copy: false,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: true,
-            retranslate_to: "Korean".to_string(),
-            retranslate_model: "text_accurate_kimi".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: true,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "audio".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
-
-        // 8. Quicker foreigner reply Preset
-        let mut quicker_reply_lang_vars = HashMap::new();
-        quicker_reply_lang_vars.insert("language1".to_string(), "Korean".to_string());
-
-        let quicker_reply_preset = Preset {
-            id: "preset_quicker_foreigner_reply".to_string(),
-            name: "Quicker foreigner reply".to_string(),
-            prompt: "Translate the audio to {language1}. Only output the translated text.".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Korean".to_string(),
-            language_vars: quicker_reply_lang_vars,
-            model: "gemini-audio".to_string(),
-            streaming_enabled: false,
-            auto_copy: true,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "fast_text".to_string(),
-            retranslate_streaming_enabled: true,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: true,
-            preset_type: "audio".to_string(),
-            audio_source: "mic".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: false,
-        };
-
-        // 9. Video Summarize Placeholder
-        let video_placeholder_preset = Preset {
-            id: "preset_video_summary_placeholder".to_string(),
-            name: "Summarize video (upcoming)".to_string(),
-            prompt: "".to_string(),
-            prompt_mode: "fixed".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            language_vars: HashMap::new(),
-            model: "".to_string(),
-            streaming_enabled: false,
-            auto_copy: false,
-            auto_paste: false,
-            hotkeys: vec![],
-            retranslate: false,
-            retranslate_to: "Vietnamese".to_string(),
-            retranslate_model: "".to_string(),
-            retranslate_streaming_enabled: false,
-            retranslate_auto_copy: false,
-            auto_paste_newline: true,
-            hide_overlay: false,
-            preset_type: "video".to_string(),
-            audio_source: "".to_string(),
-            hide_recording_ui: false,
-            video_capture_method: "region".to_string(),
-            text_input_mode: "select".to_string(),
-            is_upcoming: true,
-        };
+        // 15. Video Summarize Placeholder
+        let mut p15 = Preset::default();
+        p15.id = "preset_video_summary_placeholder".to_string();
+        p15.name = "Summarize video (upcoming)".to_string();
+        p15.preset_type = "video".to_string();
+        p15.is_upcoming = true;
+        p15.blocks = vec![];
 
         Self {
             api_key: "".to_string(),
             gemini_api_key: "".to_string(),
             presets: vec![
-                trans_preset, extract_retrans_preset, trans_auto_paste_preset, trans_select_preset, // New Select
-                trans_retrans_preset, trans_retrans_typing_preset, // New Typing
-                ocr_preset, 
-                sum_preset, desc_preset, ask_preset, 
-                audio_preset, study_lang_preset, transcribe_retrans_preset, quicker_reply_preset, 
-                video_placeholder_preset
+                p1, p7, p2, p3, p4, p5, p6, p8, p9, p10, p11, p12, p13, p14, p15
             ],
             active_preset_idx: 0,
             theme_mode: ThemeMode::System,
@@ -604,14 +588,29 @@ pub fn get_config_path() -> PathBuf {
         .unwrap_or_default()
         .join("screen-goated-toolbox");
     let _ = std::fs::create_dir_all(&config_dir);
-    config_dir.join("config_v2.json")
+    config_dir.join("config_v3.json")
 }
 
 pub fn load_config() -> Config {
     let path = get_config_path();
     if path.exists() {
         let data = std::fs::read_to_string(path).unwrap_or_default();
-        serde_json::from_str(&data).unwrap_or_default()
+        let mut config: Config = serde_json::from_str(&data).unwrap_or_default();
+        
+        // Safety check: Ensure every preset has at least one block matching its type
+        for preset in &mut config.presets {
+            if preset.blocks.is_empty() {
+                preset.migrate_to_blocks();
+            }
+            // If still empty (old preset without legacy fields), add default block
+            if preset.blocks.is_empty() {
+                preset.blocks.push(ProcessingBlock {
+                    block_type: preset.preset_type.clone(),
+                    ..Default::default()
+                });
+            }
+        }
+        config
     } else {
         Config::default()
     }

@@ -11,7 +11,30 @@ use std::sync::Once;
 use super::state::{WINDOW_STATES, WindowState, CursorPhysics, InteractionMode, ResizeEdge, RefineContext, WindowType, RetranslationConfig};
 use super::event_handler::result_wnd_proc;
 
-static mut CURRENT_BG_COLOR: u32 = 0x00222222;
+// Palette for chain windows
+// 0: Dark (Primary)
+// 1: Green (Secondary)
+// 2: Blue
+// 3: Purple
+// 4: Orange
+// 5+: Random/Cyclic
+pub const CHAIN_PALETTE: [u32; 5] = [
+    0x00222222, // Dark Gray
+    0x002d4a22, // Forest Green
+    0x00223355, // Deep Blue
+    0x00332244, // Muted Purple
+    0x00443322, // Brown/Orange
+];
+
+pub fn get_chain_color(visible_index: usize) -> u32 {
+    if visible_index == 0 {
+        CHAIN_PALETTE[0]
+    } else {
+        let cycle_idx = (visible_index - 1) % (CHAIN_PALETTE.len() - 1);
+        CHAIN_PALETTE[cycle_idx + 1]
+    }
+}
+
 static REGISTER_RESULT_CLASS: Once = Once::new();
 
 // Helper to apply rounded corners to the edit control
@@ -23,15 +46,15 @@ unsafe fn set_rounded_edit_region(h_edit: HWND, w: i32, h: i32) {
 
 pub fn create_result_window(
     target_rect: RECT,
-    win_type: WindowType,
+    _win_type: WindowType,
     context: RefineContext,
     model_id: String,
     provider: String,
     streaming_enabled: bool,
     start_editing: bool,
-    // NEW Params
     preset_prompt: String,
-    retrans_config: Option<RetranslationConfig>
+    _unused_retrans: Option<RetranslationConfig>,
+    custom_bg_color: u32,
 ) -> HWND {
     unsafe {
         let instance = GetModuleHandleW(None).unwrap();
@@ -51,58 +74,8 @@ pub fn create_result_window(
         let width = (target_rect.right - target_rect.left).abs();
         let height = (target_rect.bottom - target_rect.top).abs();
         
-        let (x, y, color) = match win_type {
-            WindowType::Primary => {
-                CURRENT_BG_COLOR = 0x00222222; 
-                (target_rect.left, target_rect.top, 0x00222222)
-            },
-            WindowType::SecondaryExplicit => {
-                CURRENT_BG_COLOR = 0x002d4a22; 
-                (target_rect.left, target_rect.top, 0x002d4a22)
-            },
-            WindowType::Secondary => {
-                let padding = 10;
-                let hmonitor = MonitorFromRect(&target_rect, MONITOR_DEFAULTTONEAREST);
-                let mut mi = MONITORINFO::default();
-                mi.cbSize = size_of::<MONITORINFO>() as u32;
-                GetMonitorInfoW(hmonitor, &mut mi);
-                let work_rect = mi.rcWork;
-
-                let pos_right_x = target_rect.right + padding;
-                let pos_left_x  = target_rect.left - width - padding;
-                let pos_bottom_y = target_rect.bottom + padding;
-                let pos_top_y    = target_rect.top - height - padding;
-
-                let space_right  = work_rect.right - pos_right_x;
-                let space_left   = (target_rect.left - padding) - work_rect.left;
-                let space_bottom = work_rect.bottom - pos_bottom_y;
-                let space_top    = (target_rect.top - padding) - work_rect.top;
-
-                let (mut best_x, mut best_y) = if space_right >= width {
-                    (pos_right_x, target_rect.top)
-                } else if space_bottom >= height {
-                    (target_rect.left, pos_bottom_y)
-                } else if space_left >= width {
-                    (pos_left_x, target_rect.top)
-                } else if space_top >= height {
-                    (target_rect.left, pos_top_y)
-                } else {
-                    let max_space = space_right.max(space_left).max(space_bottom).max(space_top);
-                    if max_space == space_right { (pos_right_x, target_rect.top) } 
-                    else if max_space == space_left { (pos_left_x, target_rect.top) } 
-                    else if max_space == space_bottom { (target_rect.left, pos_bottom_y) } 
-                    else { (target_rect.left, pos_top_y) }
-                };
-                
-                let safe_w = width.min(work_rect.right - work_rect.left);
-                let safe_h = height.min(work_rect.bottom - work_rect.top);
-                best_x = best_x.clamp(work_rect.left, work_rect.right - safe_w);
-                best_y = best_y.clamp(work_rect.top, work_rect.bottom - safe_h);
-
-                CURRENT_BG_COLOR = 0x002d4a22; 
-                (best_x, best_y, 0x002d4a22)
-            }
-        };
+        // WindowType logic essentially just sets color now, but we override it via custom_bg_color usually
+        let (x, y) = (target_rect.left, target_rect.top);
 
         // WS_CLIPCHILDREN prevents parent from drawing over child (Fixes Blinking)
         let hwnd = CreateWindowExW(
@@ -159,7 +132,7 @@ pub fn create_result_window(
                 model_id,
                 provider,
                 streaming_enabled,
-                bg_color: color,
+                bg_color: custom_bg_color,
                 linked_window: None,
                 physics,
                 interaction_mode: InteractionMode::None,
@@ -178,8 +151,8 @@ pub fn create_result_window(
                 bg_w: 0,
                 bg_h: 0,
                 edit_font: hfont,
-                preset_prompt, // Store for Type Mode logic
-                retrans_config, // Store for Retranslation triggering
+                preset_prompt, 
+                retrans_config: None, // Deprecated in favor of chain logic
             });
         }
 
