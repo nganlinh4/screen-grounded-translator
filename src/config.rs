@@ -313,10 +313,10 @@ impl Default for Config {
             is_upcoming: false,
         };
 
-        // 2.5. Extract text+Retranslate Preset
+        // 2.5. Translate (High accuracy) Preset
         let extract_retrans_preset = Preset {
             id: "preset_extract_retranslate".to_string(),
-            name: "Extract text+Retranslate".to_string(),
+            name: "Translate (High accuracy)".to_string(),
             prompt: "Extract all text from this image exactly as it appears. Output ONLY the text.".to_string(),
             prompt_mode: "fixed".to_string(),
             selected_language: "English".to_string(),
@@ -581,9 +581,9 @@ impl Default for Config {
             api_key: "".to_string(),
             gemini_api_key: "".to_string(),
             presets: vec![
-                trans_preset, trans_auto_paste_preset, trans_select_preset, // New Select
+                trans_preset, extract_retrans_preset, trans_auto_paste_preset, trans_select_preset, // New Select
                 trans_retrans_preset, trans_retrans_typing_preset, // New Typing
-                ocr_preset, extract_retrans_preset, 
+                ocr_preset, 
                 sum_preset, desc_preset, ask_preset, 
                 audio_preset, study_lang_preset, transcribe_retrans_preset, quicker_reply_preset, 
                 video_placeholder_preset
