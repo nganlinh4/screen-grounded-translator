@@ -423,18 +423,27 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             if id > 0 {
                 let preset_idx = ((id - 1) / 1000) as usize;
                 
-                // Determine context to decide if we should capture the window
-                let (preset_type, text_mode, is_audio_stopping) = {
+                // Determine context and fetch hotkey name
+                let (preset_type, text_mode, is_audio_stopping, hotkey_name) = {
                     if let Ok(app) = APP.lock() {
                         if preset_idx < app.config.presets.len() {
                             let p = &app.config.presets[preset_idx];
                             let p_type = p.preset_type.clone();
                             let t_mode = p.text_input_mode.clone();
                             let stopping = p_type == "audio" && overlay::is_recording_overlay_active();
-                            (p_type, t_mode, stopping)
-                        } else { ("image".to_string(), "select".to_string(), false) }
+                            
+                            // Find the specific hotkey name that triggered this
+                            let hk_idx = ((id - 1) % 1000) as usize;
+                            let hk_name = if hk_idx < p.hotkeys.len() {
+                                p.hotkeys[hk_idx].name.clone()
+                            } else {
+                                String::new()
+                            };
+
+                            (p_type, t_mode, stopping, hk_name)
+                        } else { ("image".to_string(), "select".to_string(), false, String::new()) }
                     } else {
-                        ("image".to_string(), "select".to_string(), false)
+                        ("image".to_string(), "select".to_string(), false, String::new())
                     }
                 };
 
@@ -484,11 +493,11 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                                 };
                                 
                                 std::thread::spawn(move || {
-                                    overlay::process::start_text_processing(String::new(), center_rect, config, preset);
+                                   overlay::process::start_text_processing(String::new(), center_rect, config, preset, hotkey_name);
                                 });
-                            }
-                        }
-                    }
+                                }
+                                }
+                                }
                 } else {
                     // Image Mode
                     if overlay::is_selection_overlay_active_and_dismiss() {

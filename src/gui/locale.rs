@@ -86,6 +86,10 @@ pub struct LocaleText {
      pub text_input_mode_label: &'static str,
      pub text_mode_select: &'static str,
      pub text_mode_type: &'static str,
+     pub text_input_title_default: &'static str,
+     pub text_input_footer_submit: &'static str,
+     pub text_input_footer_newline: &'static str,
+     pub text_input_footer_cancel: &'static str,
      }
 
 impl LocaleText {
@@ -178,6 +182,10 @@ impl LocaleText {
                 text_input_mode_label: "Cách hoạt động:",
                 text_mode_select: "Hotkey rồi bôi text",
                 text_mode_type: "Hotkey rồi gõ",
+                text_input_title_default: "Nhập văn bản cần xử lý:",
+                text_input_footer_submit: "Enter để Gửi",
+                text_input_footer_newline: "Shift+Enter xuống dòng",
+                text_input_footer_cancel: "để Hủy",
                 },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -266,6 +274,10 @@ impl LocaleText {
                 text_input_mode_label: "작동 방식:",
                 text_mode_select: "단축키 후 텍스트 선택",
                 text_mode_type: "단축키 후 입력",
+                text_input_title_default: "처리할 텍스트 입력:",
+                text_input_footer_submit: "Enter: 제출",
+                text_input_footer_newline: "Shift+Enter: 줄바꿈",
+                text_input_footer_cancel: "취소",
                 },
             _ => Self {
                  history_btn: "History",
@@ -354,6 +366,10 @@ impl LocaleText {
                 text_input_mode_label: "Operation Mode:",
                 text_mode_select: "Hotkey then Select Text",
                 text_mode_type: "Hotkey then Type",
+                text_input_title_default: "Enter text to process:",
+                text_input_footer_submit: "Enter to Submit",
+                text_input_footer_newline: "Shift+Enter for New Line",
+                text_input_footer_cancel: "to Cancel",
                 },
                 }
                 }

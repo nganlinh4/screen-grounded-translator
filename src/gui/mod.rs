@@ -1,4 +1,4 @@
-mod locale;
+pub mod locale;
 mod app;
 mod key_mapping;
 pub mod splash;

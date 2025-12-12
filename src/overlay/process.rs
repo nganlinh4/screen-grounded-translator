@@ -75,20 +75,22 @@ pub fn start_text_processing(
     initial_text_content: String,
     screen_rect: RECT,
     config: Config,
-    preset: Preset
+    preset: Preset,
+    hotkey_name: String
 ) {
     if preset.text_input_mode == "type" {
         let guide_text = if preset.prompt.is_empty() { 
-            "Enter text to process...".to_string() 
+            String::new()
         } else { 
-            format!("Enter text ({})", preset.name) 
+            format!("{}...", preset.name) 
         };
 
         let config_clone = config.clone();
         let preset_clone = preset.clone();
+        let ui_lang = config.ui_language.clone();
         
         // Show input window (Blocks thread until submit or cancel)
-        text_input::show(guide_text, move |user_text, input_hwnd| {
+        text_input::show(guide_text, ui_lang, hotkey_name, move |user_text, input_hwnd| {
             // Close input window immediately
             unsafe { PostMessageW(input_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
 
