@@ -29,6 +29,11 @@ A powerful Windows utility that captures any region of your screen **or records 
   - **Groq:** [Get a free key here](https://console.groq.com/keys) (Required for Llama, Whisper, & GPT-OSS models).
   - **Google Gemini:** [Get a free key here](https://aistudio.google.com/app/apikey) (Required for Gemini Vision & Audio models).
 
+### Build Prerequisites (if building from source)
+- **Rust Nightly:** [Install from rustup](https://rustup.rs/), then run `rustup default nightly`.
+- **Visual Studio Build Tools 2022:** [Download here](https://visualstudio.microsoft.com/downloads/) and install with "Desktop development with C++" workload.
+- **MinGW-w64 with windres:** [Download from here](https://github.com/niXman/mingw-builds-binaries/releases), extract to `C:\mingw-w64`, and add `C:\mingw-w64\mingw64\bin` to your system PATH.
+
 ## Installation
 
 ### Option 1: Download Release
