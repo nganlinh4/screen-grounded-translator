@@ -129,12 +129,13 @@ pub fn start_processing_pipeline(
     config: Config, 
     preset: Preset
 ) {
-    let mut png_data = Vec::new();
-    let _ = cropped_img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
-    let context = RefineContext::Image(png_data);
-
-    // If dynamic prompt mode, show window immediately for Block 0 (skip processing overlay)
+    // If dynamic prompt mode, handle separately (needs immediate window, not processing overlay)
     if preset.prompt_mode == "dynamic" && !preset.blocks.is_empty() {
+        // For dynamic mode, we still need to encode PNG first (user will type prompt)
+        let mut png_data = Vec::new();
+        let _ = cropped_img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
+        let context = RefineContext::Image(png_data);
+        
         let block0 = preset.blocks[0].clone();
         let model_id = block0.model.clone();
         let prov = crate::model_config::get_model_by_id(&model_id).map(|m| m.provider).unwrap_or("groq".to_string());
@@ -158,8 +159,47 @@ pub fn start_processing_pipeline(
         return;
     }
 
-    // Standard Pipeline
-    execute_chain_pipeline(String::new(), screen_rect, config, preset, context);
+    // STANDARD PIPELINE: Create processing window IMMEDIATELY, then encode PNG in background
+    // This eliminates the delay between selection and animation appearing
+    
+    // 1. Create Processing Window FIRST (instant, no delay)
+    let graphics_mode = config.graphics_mode.clone();
+    let processing_hwnd = unsafe { create_processing_window(screen_rect, graphics_mode) };
+    unsafe { SendMessageW(processing_hwnd, WM_TIMER, WPARAM(1), LPARAM(0)); }
+    
+    // 2. Spawn background thread to encode PNG and start chain execution
+    let conf_clone = config.clone();
+    let blocks = preset.blocks.clone();
+    
+    std::thread::spawn(move || {
+        // Heavy work: PNG encoding happens here, while animation plays
+        let mut png_data = Vec::new();
+        let _ = cropped_img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
+        let context = RefineContext::Image(png_data);
+        
+        // Start chain execution with the pre-created processing window
+        run_chain_step(
+            0, 
+            String::new(), 
+            screen_rect, 
+            blocks, 
+            conf_clone, 
+            Arc::new(Mutex::new(None)), 
+            context, 
+            false,
+            Some(processing_hwnd) // Pass the handle to be closed later
+        );
+    });
+    
+    // 3. Keep the Processing Window alive on this thread until it is destroyed by the worker
+    unsafe {
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).into() {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+            if !IsWindow(processing_hwnd).as_bool() { break; }
+        }
+    }
 }
 
 // --- CORE PIPELINE LOGIC ---

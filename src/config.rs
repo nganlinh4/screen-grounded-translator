@@ -357,7 +357,7 @@ impl Default for Config {
                 model: "text_accurate_kimi".to_string(),
                 prompt: "Translate to {language1}.".to_string(),
                 selected_language: "Vietnamese".to_string(),
-                streaming_enabled: true,
+                streaming_enabled: false,
                 show_overlay: true,
                 auto_copy: false,
                 ..Default::default()
