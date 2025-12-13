@@ -30,7 +30,7 @@ where
     if provider == "google" {
         // Gemini API
         if gemini_api_key.trim().is_empty() {
-            return Err(anyhow::anyhow!("NO_API_KEY"));
+            return Err(anyhow::anyhow!("NO_API_KEY:google"));
         }
 
         let method = if streaming_enabled { "streamGenerateContent" } else { "generateContent" };
@@ -117,7 +117,7 @@ where
     } else {
         // Groq API (default)
         if groq_api_key.trim().is_empty() {
-            return Err(anyhow::anyhow!("NO_API_KEY"));
+            return Err(anyhow::anyhow!("NO_API_KEY:groq"));
         }
 
         let payload = if streaming_enabled {

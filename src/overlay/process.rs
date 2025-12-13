@@ -462,7 +462,8 @@ fn run_chain_step(
                 txt
             },
             Err(e) => {
-                let err = format!("Error: {}", e);
+                let lang = config.ui_language.clone();
+                let err = crate::overlay::utils::get_error_message(&e.to_string(), &lang);
                 if let Some(h) = my_hwnd { update_window_text(h, &err); }
                 String::new()
             }

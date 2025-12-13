@@ -486,7 +486,11 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                       if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
                           state.is_refining = false;
                           if let Err(e) = result {
-                              let err_msg = format!("Error: {}", e);
+                              let lang = {
+                                  let app = crate::APP.lock().unwrap();
+                                  app.config.ui_language.clone()
+                              };
+                              let err_msg = crate::overlay::utils::get_error_message(&e.to_string(), &lang);
                               state.pending_text = Some(err_msg.clone());
                               state.full_text = err_msg;
                           }

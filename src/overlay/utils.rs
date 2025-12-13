@@ -163,24 +163,66 @@ pub fn force_focus_and_paste(hwnd_target: HWND) {
 }
 
 pub fn get_error_message(error: &str, lang: &str) -> String {
-    match error {
-        "NO_API_KEY" => {
-            match lang {
-                "vi" => "Bạn chưa nhập API key!".to_string(),
-                _ => "You haven't entered an API key!".to_string(),
+    // Parse NO_API_KEY:provider format
+    if error.starts_with("NO_API_KEY") {
+        let provider = if error.contains(':') {
+            let parts: Vec<&str> = error.split(':').collect();
+            if parts.len() > 1 {
+                match parts[1] {
+                    "groq" => "Groq",
+                    "google" => "Google Gemini",
+                    "openai" => "OpenAI",
+                    other => other,
+                }
+            } else {
+                "API"
             }
-        }
-        "INVALID_API_KEY" => {
-            match lang {
-                "vi" => "API key không hợp lệ!".to_string(),
-                _ => "Invalid API key!".to_string(),
+        } else {
+            "API"
+        };
+        
+        return match lang {
+            "vi" => format!("Bạn chưa nhập {} API key!", provider),
+            "ko" => format!("{} API 키를 입력하지 않았습니다!", provider),
+            "ja" => format!("{} APIキーが入力されていません!", provider),
+            "zh" => format!("您还没有输入 {} API key!", provider),
+            _ => format!("You haven't entered a {} API key!", provider),
+        };
+    }
+    
+    // Parse INVALID_API_KEY:provider format  
+    if error.starts_with("INVALID_API_KEY") {
+        let provider = if error.contains(':') {
+            let parts: Vec<&str> = error.split(':').collect();
+            if parts.len() > 1 {
+                match parts[1] {
+                    "groq" => "Groq",
+                    "google" => "Google Gemini",
+                    "openai" => "OpenAI",
+                    other => other,
+                }
+            } else {
+                "API"
             }
-        }
-        _ => {
-            match lang {
-                "vi" => format!("Lỗi: {}", error),
-                _ => format!("Error: {}", error),
-            }
-        }
+        } else {
+            "API"
+        };
+        
+        return match lang {
+            "vi" => format!("{} API key không hợp lệ!", provider),
+            "ko" => format!("{} API 키가 유효하지 않습니다!", provider),
+            "ja" => format!("{} APIキーが無効です!", provider),
+            "zh" => format!("{} API key 无效!", provider),
+            _ => format!("Invalid {} API key!", provider),
+        };
+    }
+    
+    // Fallback for other errors
+    match lang {
+        "vi" => format!("Lỗi: {}", error),
+        "ko" => format!("오류: {}", error),
+        "ja" => format!("エラー: {}", error),
+        "zh" => format!("错误: {}", error),
+        _ => format!("Error: {}", error),
     }
 }

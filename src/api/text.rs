@@ -29,7 +29,7 @@ where
     if provider == "google" {
         // --- GEMINI TEXT API ---
         if gemini_api_key.trim().is_empty() {
-            return Err(anyhow::anyhow!("NO_API_KEY"));
+            return Err(anyhow::anyhow!("NO_API_KEY:google"));
         }
 
         let method = if streaming_enabled { "streamGenerateContent" } else { "generateContent" };
@@ -107,7 +107,7 @@ where
     } else {
         // --- GROQ API (Default) ---
         if groq_api_key.trim().is_empty() {
-            return Err(anyhow::anyhow!("NO_API_KEY"));
+            return Err(anyhow::anyhow!("NO_API_KEY:groq"));
         }
 
         let payload = if streaming_enabled {
@@ -254,7 +254,7 @@ where
         let mut full_content = String::new();
 
         if p_provider == "google" {
-             if gemini_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_GEMINI_KEY")); }
+             if gemini_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_API_KEY:google")); }
              
              let method = if streaming_enabled { "streamGenerateContent" } else { "generateContent" };
              let url = if streaming_enabled {
@@ -307,7 +307,7 @@ where
                  }
              }
         } else {
-            if groq_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_API_KEY")); }
+            if groq_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_API_KEY:groq")); }
             
             let payload = serde_json::json!({
                 "model": p_model,
@@ -358,11 +358,11 @@ where
     match context {
         RefineContext::Image(img_bytes) => {
             if target_provider == "google" {
-                if gemini_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_GEMINI_KEY")); }
+                if gemini_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_API_KEY:google")); }
                 let img = image::load_from_memory(&img_bytes)?.to_rgba8();
                 vision_translate_image_streaming(groq_api_key, gemini_api_key, final_prompt, target_id_or_name, target_provider, img, streaming_enabled, false, on_chunk)
             } else {
-                if groq_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_API_KEY")); }
+                if groq_api_key.trim().is_empty() { return Err(anyhow::anyhow!("NO_API_KEY:groq")); }
                 let img = image::load_from_memory(&img_bytes)?.to_rgba8();
                 vision_translate_image_streaming(groq_api_key, gemini_api_key, final_prompt, target_id_or_name, target_provider, img, streaming_enabled, false, on_chunk)
             }

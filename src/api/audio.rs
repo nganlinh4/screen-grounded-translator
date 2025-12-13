@@ -21,7 +21,7 @@ where
     F: FnMut(&str),
 {
     if gemini_api_key.trim().is_empty() {
-        return Err(anyhow::anyhow!("NO_API_KEY"));
+        return Err(anyhow::anyhow!("NO_API_KEY:google"));
     }
 
     let b64_audio = general_purpose::STANDARD.encode(&wav_data);
@@ -351,13 +351,13 @@ pub fn record_audio_and_transcribe(
     
     let transcription_result = if provider == "groq" {
         if groq_api_key.trim().is_empty() {
-            Err(anyhow::anyhow!("NO_API_KEY"))
+            Err(anyhow::anyhow!("NO_API_KEY:groq"))
         } else {
             upload_audio_to_whisper(&groq_api_key, &model_name, wav_data)
         }
     } else if provider == "google" {
         if gemini_api_key.trim().is_empty() {
-            Err(anyhow::anyhow!("NO_API_KEY"))
+            Err(anyhow::anyhow!("NO_API_KEY:google"))
         } else {
             transcribe_audio_gemini(&gemini_api_key, final_prompt, model_name, wav_data, |_| {})
         }

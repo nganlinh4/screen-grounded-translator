@@ -81,7 +81,8 @@ pub fn paint_window(hwnd: HWND) {
              cached_bg_bm,
              is_refining,
              anim_offset,
-             history_count
+             history_count,
+             graphics_mode
          ) = {
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
@@ -163,10 +164,11 @@ pub fn paint_window(hwnd: HWND) {
                     state.bg_bitmap,
                     state.is_refining,
                     state.animation_offset,
-                    state.text_history.len()
+                    state.text_history.len(),
+                    state.graphics_mode.clone()
                 )
             } else {
-                (0, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, 0.0, 0)
+                (0, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, 0.0, 0, "standard".to_string())
             }
         };
 
@@ -284,50 +286,92 @@ pub fn paint_window(hwnd: HWND) {
 
             // 4.0 REFINEMENT GLOW
             if is_refining {
-                let bx = width as f32 / 2.0;
-                let by = height as f32 / 2.0;
-                let center_x = bx;
-                let center_y = by;
-                let time_rad = anim_offset.to_radians();
+                let is_minimal = graphics_mode == "minimal";
+                
+                if is_minimal {
+                    // MINIMAL MODE: Bouncing orange scan line (exactly like green laser but orange)
+                    // Simple, lightweight, no per-pixel calculation
+                    
+                    // Calculate scan line position (bounces up and down)
+                    // Use abs() because anim_offset can be negative
+                    let cycle = (anim_offset.abs() % 360.0) / 180.0; // 0.0 to 2.0
+                    let t = if cycle <= 1.0 { cycle } else { 2.0 - cycle }; // 0.0 to 1.0 (bounce)
+                    
+                    let margin = 3;
+                    let scan_range = height - (margin * 2);
+                    if scan_range > 0 {
+                        let scan_y = margin + ((t * scan_range as f32) as i32).clamp(0, scan_range - 1);
+                        
+                        // Draw 2px thick orange line
+                        for line_offset in 0..2 {
+                            let y = scan_y + line_offset;
+                            if y > 0 && y < height - 1 {
+                                for x in margin..(width - margin) {
+                                    let idx = (y * width + x) as usize;
+                                    if idx < raw_pixels.len() {
+                                        // Blend orange with background
+                                        let bg_px = raw_pixels[idx];
+                                        let bg_b = (bg_px & 0xFF) as f32;
+                                        let bg_g = ((bg_px >> 8) & 0xFF) as f32;
+                                        let bg_r = ((bg_px >> 16) & 0xFF) as f32;
+                                        
+                                        let intensity = 0.9; // Strong but not fully opaque
+                                        let out_r = (255.0 * intensity + bg_r * (1.0 - intensity)) as u32;
+                                        let out_g = (140.0 * intensity + bg_g * (1.0 - intensity)) as u32;
+                                        let out_b = (0.0 * intensity + bg_b * (1.0 - intensity)) as u32;
+                                        raw_pixels[idx] = (255 << 24) | (out_r << 16) | (out_g << 8) | out_b;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // STANDARD MODE: Rainbow edge glow (full per-pixel calculation)
+                    let bx = width as f32 / 2.0;
+                    let by = height as f32 / 2.0;
+                    let center_x = bx;
+                    let center_y = by;
+                    let time_rad = anim_offset.to_radians();
 
-                for y in 0..height {
-                    for x in 0..width {
-                        let idx = (y * width + x) as usize;
-                        let px = x as f32 - center_x;
-                        let py = y as f32 - center_y;
-                        let d = sd_rounded_box(px, py, bx, by, 12.0);
+                    for y in 0..height {
+                        for x in 0..width {
+                            let idx = (y * width + x) as usize;
+                            let px = x as f32 - center_x;
+                            let py = y as f32 - center_y;
+                            let d = sd_rounded_box(px, py, bx, by, 12.0);
 
-                        if d <= 0.0 {
-                             let dist = d.abs();
-                             if dist < 20.0 {
-                                 let angle = py.atan2(px);
-                                 let noise = (angle * 12.0 - time_rad * 2.0).sin() * 0.5;
-                                 let glow_width = 14.0;
-                                 let t = (dist / glow_width).clamp(0.0, 1.0);
-                                 let base_intensity = (1.0 - t).powi(3);
+                            if d <= 0.0 {
+                                 let dist = d.abs();
+                                 if dist < 20.0 {
+                                     let angle = py.atan2(px);
+                                     let noise = (angle * 12.0 - time_rad * 2.0).sin() * 0.5;
+                                     let glow_width = 14.0;
+                                     let t = (dist / glow_width).clamp(0.0, 1.0);
+                                     let base_intensity = (1.0 - t).powi(3);
 
-                                 if base_intensity > 0.01 {
-                                     let noise_mod = (1.0 + noise * 0.3).clamp(0.0, 2.0);
-                                     let final_intensity = (base_intensity * noise_mod).clamp(0.0, 1.0);
-                                     if final_intensity > 0.01 {
-                                         let deg = angle.to_degrees() + (anim_offset * 2.0);
-                                         let hue = (deg % 360.0 + 360.0) % 360.0;
-                                         let rgb = hsv_to_rgb(hue, 0.85, 1.0); 
-                                         let bg_px = raw_pixels[idx];
-                                         let bg_b = (bg_px & 0xFF) as f32;
-                                         let bg_g = ((bg_px >> 8) & 0xFF) as f32;
-                                         let bg_r = ((bg_px >> 16) & 0xFF) as f32;
-                                         let fg_r = ((rgb >> 16) & 0xFF) as f32;
-                                         let fg_g = ((rgb >> 8) & 0xFF) as f32;
-                                         let fg_b = (rgb & 0xFF) as f32;
-                                         
-                                         let out_r = (fg_r * final_intensity + bg_r * (1.0 - final_intensity)) as u32;
-                                         let out_g = (fg_g * final_intensity + bg_g * (1.0 - final_intensity)) as u32;
-                                         let out_b = (fg_b * final_intensity + bg_b * (1.0 - final_intensity)) as u32;
-                                         raw_pixels[idx] = (255 << 24) | (out_r << 16) | (out_g << 8) | out_b;
+                                     if base_intensity > 0.01 {
+                                         let noise_mod = (1.0 + noise * 0.3).clamp(0.0, 2.0);
+                                         let final_intensity = (base_intensity * noise_mod).clamp(0.0, 1.0);
+                                         if final_intensity > 0.01 {
+                                             let deg = angle.to_degrees() + (anim_offset * 2.0);
+                                             let hue = (deg % 360.0 + 360.0) % 360.0;
+                                             let rgb = hsv_to_rgb(hue, 0.85, 1.0); 
+                                             let bg_px = raw_pixels[idx];
+                                             let bg_b = (bg_px & 0xFF) as f32;
+                                             let bg_g = ((bg_px >> 8) & 0xFF) as f32;
+                                             let bg_r = ((bg_px >> 16) & 0xFF) as f32;
+                                             let fg_r = ((rgb >> 16) & 0xFF) as f32;
+                                             let fg_g = ((rgb >> 8) & 0xFF) as f32;
+                                             let fg_b = (rgb & 0xFF) as f32;
+                                             
+                                             let out_r = (fg_r * final_intensity + bg_r * (1.0 - final_intensity)) as u32;
+                                             let out_g = (fg_g * final_intensity + bg_g * (1.0 - final_intensity)) as u32;
+                                             let out_b = (fg_b * final_intensity + bg_b * (1.0 - final_intensity)) as u32;
+                                             raw_pixels[idx] = (255 << 24) | (out_r << 16) | (out_g << 8) | out_b;
+                                         }
                                      }
                                  }
-                             }
+                            }
                         }
                     }
                 }

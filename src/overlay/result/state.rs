@@ -160,6 +160,9 @@ pub struct WindowState {
     
     // EDIT FONT HANDLE (must be deleted to avoid GDI leak)
     pub edit_font: HFONT,
+    
+    // Graphics mode for refining animation (standard vs minimal)
+    pub graphics_mode: String,
 }
 
 // SAFETY: Raw pointers are not Send/Sync, but we only use them within the main thread

@@ -113,6 +113,12 @@ pub fn create_result_window(
         let mut physics = CursorPhysics::default();
         physics.initialized = true;
 
+        // Get graphics mode from config
+        let graphics_mode = {
+            let app = crate::APP.lock().unwrap();
+            app.config.graphics_mode.clone()
+        };
+
         {
             let mut states = WINDOW_STATES.lock().unwrap();
             states.insert(hwnd.0 as isize, WindowState {
@@ -153,6 +159,7 @@ pub fn create_result_window(
                 edit_font: hfont,
                 preset_prompt, 
                 retrans_config: None, // Deprecated in favor of chain logic
+                graphics_mode,
             });
         }
 
