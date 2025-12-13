@@ -439,13 +439,12 @@ fn run_chain_step(
             let (should_add_newline, should_paste, target_window) = {
                 let app = crate::APP.lock().unwrap();
                 let active_idx = app.config.active_preset_idx;
-                let add_nl = if active_idx < app.config.presets.len() {
-                    app.config.presets[active_idx].auto_paste_newline
+                if active_idx < app.config.presets.len() {
+                    let preset = &app.config.presets[active_idx];
+                    (preset.auto_paste_newline, preset.auto_paste, app.last_active_window)
                 } else {
-                    false
-                };
-                let paste = app.config.presets.iter().any(|p| p.auto_paste);
-                (add_nl, paste, app.last_active_window)
+                    (false, false, app.last_active_window)
+                }
             };
             
             // Append newline if setting is enabled
