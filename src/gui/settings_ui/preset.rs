@@ -295,7 +295,20 @@ pub fn render_preset_editor(
                         };
                         crate::gui::icons::draw_icon_static(ui, type_icon, None);
                         let title = if is_first {
-                            format!("{} ({})", text.step_input_label, block.block_type)
+                            // Localize block type name
+                            let localized_type = match (block.block_type.as_str(), config.ui_language.as_str()) {
+                                ("image", "vi") => "Ảnh",
+                                ("text", "vi") => "Văn bản",
+                                ("audio", "vi") => "Âm thanh",
+                                ("image", "ko") => "이미지",
+                                ("text", "ko") => "텍스트",
+                                ("audio", "ko") => "오디오",
+                                ("image", _) => "Image",
+                                ("text", _) => "Text",
+                                ("audio", _) => "Audio",
+                                _ => &block.block_type,
+                            };
+                            format!("{} ({})", text.step_input_label, localized_type)
                         } else {
                             format!("{} {}", text.step_process_label, i + 1)
                         };

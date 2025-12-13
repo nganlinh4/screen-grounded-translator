@@ -109,7 +109,7 @@ lazy_static::lazy_static! {
         ModelConfig::new(
             "gemini-pro",
             "google",
-            "Siêu chính xác, chậm",
+            "Siêu ch.xác, chậm",
             "초정밀, 느림",
             "Super Accurate, Slow",
             "gemini-robotics-er-1.5-preview",
@@ -187,7 +187,7 @@ lazy_static::lazy_static! {
         ModelConfig::new(
             "text_gemini_pro",
             "google",
-            "Siêu chính xác, chậm",
+            "Siêu ch.xác, chậm",
             "초정밀, 느림",
             "Super Accurate, Slow",
             "gemini-robotics-er-1.5-preview",
@@ -252,7 +252,7 @@ lazy_static::lazy_static! {
         ModelConfig::new(
             "gemini-audio-pro",
             "google",
-            "Siêu chính xác, chậm",
+            "Siêu ch.xác, chậm",
             "초정밀, 느림",
             "Super Accurate, Slow",
             "gemini-robotics-er-1.5-preview",
