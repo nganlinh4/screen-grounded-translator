@@ -12,6 +12,7 @@ use crate::APP;
 static mut TAG_HWND: HWND = HWND(0);
 static mut CURRENT_PRESET_IDX: usize = 0;
 static mut IS_SELECTING: bool = false;
+static mut IS_PROCESSING: bool = false; // Prevents re-entry during clipboard operations
 static mut ANIMATION_OFFSET: f32 = 0.0;
 static mut CURRENT_ALPHA: i32 = 0;
 
@@ -46,6 +47,7 @@ pub fn show_text_selection_tag(preset_idx: usize) {
 
         CURRENT_PRESET_IDX = preset_idx;
         IS_SELECTING = false;
+        IS_PROCESSING = false;
         ANIMATION_OFFSET = 0.0;
         CURRENT_ALPHA = 0;
         TAG_ABORT_SIGNAL.store(false, Ordering::SeqCst);
@@ -68,9 +70,13 @@ pub fn show_text_selection_tag(preset_idx: usize) {
             let _ = RegisterClassW(&wc);
         });
 
-        let hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT, class_name, w!("SGT Tag"), WS_POPUP, -1000, -1000, 200, 50, None, None, instance, None);
+        let hwnd = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE, 
+            class_name, w!("SGT Tag"), WS_POPUP, -1000, -1000, 200, 50, None, None, instance, None
+        );
         TAG_HWND = hwnd;
-        SetTimer(hwnd, 1, 16, None); ShowWindow(hwnd, SW_SHOW);
+        SetTimer(hwnd, 1, 16, None); 
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         let mut msg = MSG::default(); while GetMessageW(&mut msg, None, 0, 0).into() { TranslateMessage(&msg); DispatchMessageW(&msg); if msg.message == WM_QUIT { break; } }
         
         // Cleanup cache on exit
@@ -87,14 +93,18 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
             if TAG_ABORT_SIGNAL.load(Ordering::SeqCst) { DestroyWindow(hwnd); PostQuitMessage(0); return LRESULT(0); }
             let lbutton_down = (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0;
             if !IS_SELECTING && lbutton_down { IS_SELECTING = true; }
-            else if IS_SELECTING && !lbutton_down {
-                KillTimer(hwnd, 1);
+            else if IS_SELECTING && !lbutton_down && !IS_PROCESSING {
+                // Set processing flag to prevent re-entry
+                IS_PROCESSING = true;
+                
                 let preset_idx = CURRENT_PRESET_IDX;
+                let hwnd_copy = hwnd;
+                
                 std::thread::spawn(move || {
                     // Check abort before heavy lifting
                     if TAG_ABORT_SIGNAL.load(Ordering::Relaxed) { return; }
                     
-                    std::thread::sleep(std::time::Duration::from_millis(50)); // Reduced from 150ms
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                     
                     if OpenClipboard(HWND(0)).as_bool() { EmptyClipboard(); CloseClipboard(); }
 
@@ -104,7 +114,7 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
                     };
 
                     send_input_event(VK_CONTROL.0, KEYBD_EVENT_FLAGS(0)); 
-                    std::thread::sleep(std::time::Duration::from_millis(20)); // Reduced from 30ms
+                    std::thread::sleep(std::time::Duration::from_millis(20));
                     send_input_event(0x43, KEYBD_EVENT_FLAGS(0)); // 'C'
                     std::thread::sleep(std::time::Duration::from_millis(20));
                     send_input_event(0x43, KEYEVENTF_KEYUP);
@@ -112,9 +122,9 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
                     send_input_event(VK_CONTROL.0, KEYEVENTF_KEYUP);
                     
                     let mut clipboard_text = String::new();
-                    for _ in 0..10 { // Reduced from 15 iterations
+                    for _ in 0..10 {
                         if TAG_ABORT_SIGNAL.load(Ordering::Relaxed) { return; }
-                        std::thread::sleep(std::time::Duration::from_millis(25)); // Reduced from 100ms
+                        std::thread::sleep(std::time::Duration::from_millis(25));
                         if OpenClipboard(HWND(0)).as_bool() {
                             if let Ok(h_data) = GetClipboardData(13u32) {
                                 let h_global: HGLOBAL = std::mem::transmute(h_data);
@@ -132,6 +142,7 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
                     }
 
                     if !clipboard_text.trim().is_empty() && !TAG_ABORT_SIGNAL.load(Ordering::Relaxed) {
+                        // Text found - process it
                         let (config, preset, screen_w, screen_h) = {
                             let app = APP.lock().unwrap(); 
                             (
@@ -144,9 +155,17 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
 
                         let center_rect = RECT { left: (screen_w - 700) / 2, top: (screen_h - 300) / 2, right: (screen_w + 700) / 2, bottom: (screen_h + 300) / 2 };
                         super::process::start_text_processing(clipboard_text, center_rect, config, preset, String::new());
+                        
+                        // Now destroy the window
+                        PostMessageW(hwnd_copy, WM_CLOSE, WPARAM(0), LPARAM(0));
+                    } else {
+                        // No text selected - reset state to allow user to try again
+                        IS_SELECTING = false;
+                        IS_PROCESSING = false;
                     }
                 });
-                DestroyWindow(hwnd); PostQuitMessage(0); return LRESULT(0);
+                
+                return LRESULT(0);
             }
             let mut pt = POINT::default(); GetCursorPos(&mut pt);
             SetWindowPos(hwnd, HWND_TOPMOST, pt.x - 30, pt.y - 60, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);

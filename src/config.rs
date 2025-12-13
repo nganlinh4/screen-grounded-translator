@@ -223,6 +223,27 @@ impl Default for Config {
             }
         ];
 
+        // 3b. Select-Translate-Replace (Bôi-Dịch-Thay)
+        let mut p3b = Preset::default();
+        p3b.id = "preset_select_translate_replace".to_string();
+        p3b.name = "Select-Translate-Replace".to_string();
+        p3b.preset_type = "text".to_string();
+        p3b.text_input_mode = "select".to_string();
+        p3b.auto_paste = true; // Replace original text
+        p3b.auto_paste_newline = true; // Add newline after pasting
+        p3b.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Translate the following text to {language1}. Output ONLY the translation.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: false, // Background processing
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
+
         // 4. Chain: OCR -> Translate
         let mut p4 = Preset::default();
         p4.id = "preset_translate_retranslate".to_string();
@@ -529,7 +550,7 @@ impl Default for Config {
             api_key: "".to_string(),
             gemini_api_key: "".to_string(),
             presets: vec![
-                p1, p7, p2, p3, p4, p4b, p5, p6, p8, p9, p10, p11, p12, p13, p14, p15
+                p1, p7, p2, p3, p3b, p4, p4b, p5, p6, p8, p9, p10, p11, p12, p13, p14, p15
             ],
             active_preset_idx: 0,
             theme_mode: ThemeMode::System,
