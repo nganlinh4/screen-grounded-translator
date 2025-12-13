@@ -4,8 +4,8 @@ use crate::gui::locale::LocaleText;
 use crate::gui::icons::{Icon, icon_button, draw_icon_static, icon_button_sized};
 use super::ViewMode;
 
-/// Get localized preset name for default presets
-fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
+/// Get localized preset name for default presets (public for reuse in other modules)
+pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
     match (preset_id, lang) {
         // Vietnamese
         ("preset_translate", "vi") => "Dịch vùng".to_string(),

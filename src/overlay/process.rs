@@ -13,6 +13,7 @@ use super::utils::copy_to_clipboard;
 use super::result::{create_result_window, update_window_text, WindowType, link_windows, RefineContext, WINDOW_STATES, get_chain_color, layout::calculate_next_window_rect};
 use super::text_input;
 
+
 // --- PROCESSING WINDOW STATIC STATE ---
 static REGISTER_PROC_CLASS: Once = Once::new();
 const MAX_GLOW_BUFFER_DIM: i32 = 1280;
@@ -70,22 +71,23 @@ pub fn start_text_processing(
     screen_rect: RECT,
     config: Config,
     preset: Preset,
-    hotkey_name: String
+    localized_preset_name: String  // Already localized by caller
 ) {
     if preset.text_input_mode == "type" {
         // Use blocks[0].prompt instead of legacy preset.prompt
         let first_block_prompt = preset.blocks.first().map(|b| b.prompt.as_str()).unwrap_or("");
+        
         let guide_text = if first_block_prompt.is_empty() { 
             String::new()
         } else { 
-            format!("{}...", preset.name) 
+            format!("{}...", localized_preset_name) 
         };
 
         let config_shared = Arc::new(config.clone());
         let preset_shared = Arc::new(preset.clone());
         let ui_lang = config.ui_language.clone();
         
-        text_input::show(guide_text, ui_lang, hotkey_name, move |user_text, input_hwnd| {
+        text_input::show(guide_text, ui_lang, localized_preset_name, move |user_text, input_hwnd| {
             unsafe { PostMessageW(input_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
             
             // For Text Preset, Block 0 is the text input processing block

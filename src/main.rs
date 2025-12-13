@@ -27,7 +27,7 @@ use history::HistoryManager;
 
 // Window dimensions - Increased to accommodate two-column sidebar and longer text labels
 pub const WINDOW_WIDTH: f32 = 840.0;
-pub const WINDOW_HEIGHT: f32 = 500.0;
+pub const WINDOW_HEIGHT: f32 = 510.0;
 
 // Modifier Constants for Hook
 const MOD_ALT: u32 = 0x0001;
@@ -492,8 +492,14 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                                     bottom: (screen_h + 300) / 2,
                                 };
                                 
+                                // Get localized preset name for display
+                                let localized_name = gui::settings_ui::get_localized_preset_name(
+                                    &preset.id, 
+                                    &config.ui_language
+                                );
+                                
                                 std::thread::spawn(move || {
-                                   overlay::process::start_text_processing(String::new(), center_rect, config, preset, hotkey_name);
+                                   overlay::process::start_text_processing(String::new(), center_rect, config, preset, localized_name);
                                 });
                                 }
                                 }

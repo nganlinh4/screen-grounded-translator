@@ -5,6 +5,7 @@ mod preset;
 mod footer;
 
 pub use sidebar::render_sidebar;
+pub use sidebar::get_localized_preset_name;
 pub use global::render_global_settings;
 pub use history::render_history_panel;
 pub use preset::render_preset_editor;
