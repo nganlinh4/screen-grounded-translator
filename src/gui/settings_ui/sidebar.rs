@@ -20,12 +20,17 @@ pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
         ("preset_translate_select", "vi") => "Dịch (Bôi đen)".to_string(),
         ("preset_select_translate_replace", "vi") => "Bôi-Dịch-Thay".to_string(),
         ("preset_fix_grammar", "vi") => "Sửa ngữ pháp".to_string(),
+        ("preset_rephrase", "vi") => "Viết lại".to_string(),
+        ("preset_make_formal", "vi") => "Chuyên nghiệp hóa".to_string(),
+        ("preset_explain_code", "vi") => "Giải thích code".to_string(),
+        ("preset_extract_table", "vi") => "Trích bảng".to_string(),
         ("preset_trans_retrans_typing", "vi") => "Dịch+Dịch lại (Tự gõ)".to_string(),
         ("preset_transcribe", "vi") => "Lời nói thành văn".to_string(),
         ("preset_study_language", "vi") => "Học ngoại ngữ".to_string(),
         ("preset_transcribe_retranslate", "vi") => "Trả lời ng.nc.ngoài 1".to_string(),
         ("preset_quicker_foreigner_reply", "vi") => "Trả lời ng.nc.ngoài 2".to_string(),
         ("preset_video_summary_placeholder", "vi") => "Tóm tắt video (sắp có)".to_string(),
+        ("preset_realtime_audio_translate", "vi") => "Dịch cabin (sắp có)".to_string(),
         
         // Korean
         ("preset_translate", "ko") => "영역 번역".to_string(),
@@ -40,12 +45,17 @@ pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
         ("preset_translate_select", "ko") => "번역 (선택 텍스트)".to_string(),
         ("preset_select_translate_replace", "ko") => "선택-번역-교체".to_string(),
         ("preset_fix_grammar", "ko") => "문법 수정".to_string(),
+        ("preset_rephrase", "ko") => "다시 쓰기".to_string(),
+        ("preset_make_formal", "ko") => "공식적으로".to_string(),
+        ("preset_explain_code", "ko") => "코드 설명".to_string(),
+        ("preset_extract_table", "ko") => "표 추출".to_string(),
         ("preset_trans_retrans_typing", "ko") => "번역+재번역 (입력)".to_string(),
         ("preset_transcribe", "ko") => "음성 받아쓰기".to_string(),
         ("preset_study_language", "ko") => "언어 학습".to_string(),
         ("preset_transcribe_retranslate", "ko") => "빠른 외국인 답변 1".to_string(),
         ("preset_quicker_foreigner_reply", "ko") => "빠른 외국인 답변 2".to_string(),
         ("preset_video_summary_placeholder", "ko") => "비디오 요약 (예정)".to_string(),
+        ("preset_realtime_audio_translate", "ko") => "실시간 음성 번역 (예정)".to_string(),
         
         // English (default)
         ("preset_translate", _) => "Translate region".to_string(),
@@ -60,12 +70,17 @@ pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
         ("preset_translate_select", _) => "Trans (Select text)".to_string(),
         ("preset_select_translate_replace", _) => "Select-Translate-Replace".to_string(),
         ("preset_fix_grammar", _) => "Fix Grammar".to_string(),
+        ("preset_rephrase", _) => "Rephrase".to_string(),
+        ("preset_make_formal", _) => "Make Formal".to_string(),
+        ("preset_explain_code", _) => "Explain Code".to_string(),
+        ("preset_extract_table", _) => "Extract Table".to_string(),
         ("preset_trans_retrans_typing", _) => "Trans+Retrans (Typing)".to_string(),
         ("preset_transcribe", _) => "Transcribe speech".to_string(),
         ("preset_study_language", _) => "Study language".to_string(),
         ("preset_transcribe_retranslate", _) => "Quick 4NR reply 1".to_string(),
         ("preset_quicker_foreigner_reply", _) => "Quick 4NR reply 2".to_string(),
         ("preset_video_summary_placeholder", _) => "Summarize video (soon)".to_string(),
+        ("preset_realtime_audio_translate", _) => "Realtime Audio Translate (soon)".to_string(),
         
         // Fallback: return original ID without "preset_" prefix
         _ => preset_id.strip_prefix("preset_").unwrap_or(preset_id).replace('_', " "),
@@ -86,24 +101,25 @@ pub fn render_sidebar(
     let mut preset_idx_to_select: Option<usize> = None;
 
     // Split indices for presets
-    let mut img_indices = Vec::new();
-    let mut other_indices = Vec::new();
+    // Left column: Image + Video presets
+    // Right column: Text + Audio presets
+    let mut left_indices = Vec::new();
+    let mut right_indices = Vec::new();
 
     for (i, p) in config.presets.iter().enumerate() {
-        if p.preset_type == "image" {
-            img_indices.push(i);
+        if p.preset_type == "image" || p.preset_type == "video" {
+            left_indices.push(i);
         } else {
-            other_indices.push(i);
+            right_indices.push(i);
         }
     }
     
-    // Sort other indices: Text -> Audio -> Video -> Other
-    other_indices.sort_by_key(|&i| {
+    // Sort right column: Text -> Audio
+    right_indices.sort_by_key(|&i| {
         match config.presets[i].preset_type.as_str() {
             "text" => 0,
             "audio" => 1,
-            "video" => 2,
-            _ => 3,
+            _ => 2,
         }
     });
 
@@ -193,18 +209,18 @@ pub fn render_sidebar(
             ui.end_row();
 
             // === ROW 4+: Preset Items ===
-            let max_len = std::cmp::max(img_indices.len(), other_indices.len());
+            let max_len = std::cmp::max(left_indices.len(), right_indices.len());
 
             for i in 0..max_len {
-                // Column 1: Image Presets
-                if let Some(&idx) = img_indices.get(i) {
+                // Column 1: Image + Video Presets
+                if let Some(&idx) = left_indices.get(i) {
                     render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
                 } else {
                     ui.label("");
                 }
 
-                // Column 2: Text/Audio/Other Presets
-                if let Some(&idx) = other_indices.get(i) {
+                // Column 2: Text/Audio Presets
+                if let Some(&idx) = right_indices.get(i) {
                     render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
                 } else {
                     ui.label(""); 

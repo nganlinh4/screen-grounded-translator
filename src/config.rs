@@ -265,6 +265,85 @@ impl Default for Config {
             }
         ];
 
+        // 3d. Rephrase (Viết lại)
+        let mut p3d = Preset::default();
+        p3d.id = "preset_rephrase".to_string();
+        p3d.name = "Rephrase".to_string();
+        p3d.preset_type = "text".to_string();
+        p3d.text_input_mode = "select".to_string();
+        p3d.auto_paste = true;
+        p3d.auto_paste_newline = true;
+        p3d.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Rephrase the following text using different words while preserving the exact same meaning. Keep the same language. Output ONLY the rephrased text.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: false,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
+
+        // 3e. Make Formal (Chuyên nghiệp hóa)
+        let mut p3e = Preset::default();
+        p3e.id = "preset_make_formal".to_string();
+        p3e.name = "Make Formal".to_string();
+        p3e.preset_type = "text".to_string();
+        p3e.text_input_mode = "select".to_string();
+        p3e.auto_paste = true;
+        p3e.auto_paste_newline = true;
+        p3e.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Rewrite the following text in a more formal, professional tone suitable for business communication. Keep the same language and meaning. Output ONLY the formal version.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: false,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
+
+        // 3f. Explain Code (Giải thích code)
+        let mut p3f = Preset::default();
+        p3f.id = "preset_explain_code".to_string();
+        p3f.name = "Explain Code".to_string();
+        p3f.preset_type = "text".to_string();
+        p3f.text_input_mode = "select".to_string();
+        p3f.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Explain what this code does in {language1}. Be concise but thorough. Mention the purpose, key logic, and any important patterns or techniques used.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
+
+        // 3g. Extract Table (Trích bảng) - IMAGE preset
+        let mut p3g = Preset::default();
+        p3g.id = "preset_extract_table".to_string();
+        p3g.name = "Extract Table".to_string();
+        p3g.preset_type = "image".to_string();
+        p3g.blocks = vec![
+            ProcessingBlock {
+                block_type: "image".to_string(),
+                model: "maverick".to_string(),
+                prompt: "Extract all data from any tables, forms, or structured content in this image. Format the output as a markdown table. Output ONLY the table, no explanations.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: true,
+                auto_copy: true,
+                ..Default::default()
+            }
+        ];
+
         // 4. Chain: OCR -> Translate
         let mut p4 = Preset::default();
         p4.id = "preset_translate_retranslate".to_string();
@@ -567,11 +646,19 @@ impl Default for Config {
         p15.is_upcoming = true;
         p15.blocks = vec![];
 
+        // 16. Realtime Audio Translation (Dịch cabin) Placeholder
+        let mut p16 = Preset::default();
+        p16.id = "preset_realtime_audio_translate".to_string();
+        p16.name = "Realtime Audio Translate (upcoming)".to_string();
+        p16.preset_type = "audio".to_string();
+        p16.is_upcoming = true;
+        p16.blocks = vec![];
+
         Self {
             api_key: "".to_string(),
             gemini_api_key: "".to_string(),
             presets: vec![
-                p1, p7, p2, p3, p3b, p3c, p4, p4b, p5, p6, p8, p9, p10, p11, p12, p13, p14, p15
+                p1, p7, p2, p3, p3b, p3c, p3d, p3e, p3f, p3g, p4, p4b, p5, p6, p8, p9, p10, p11, p12, p13, p14, p15, p16
             ],
             active_preset_idx: 0,
             theme_mode: ThemeMode::System,

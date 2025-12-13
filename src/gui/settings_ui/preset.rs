@@ -120,10 +120,38 @@ pub fn render_preset_editor(
                     if ui.selectable_value(&mut preset.text_input_mode, "select".to_string(), text.text_mode_select).clicked() { changed = true; }
                     if ui.selectable_value(&mut preset.text_input_mode, "type".to_string(), text.text_mode_type).clicked() { changed = true; }
                 });
+        } else if preset.preset_type == "audio" {
+            // Audio: Cách hoạt động dropdown (same line as preset type)
+            let mode_label = match config.ui_language.as_str() {
+                "vi" => "Cách hoạt động:",
+                "ko" => "작동 방식:",
+                _ => "Operation Mode:",
+            };
+            ui.label(mode_label);
+            
+            let mode_record = match config.ui_language.as_str() {
+                "vi" => "Thu âm rồi xử lý",
+                "ko" => "녹음 후 처리",
+                _ => "Record then Process",
+            };
+            let mode_realtime = match config.ui_language.as_str() {
+                "vi" => "Xử lý thời gian thực (upcoming)",
+                "ko" => "실시간 처리 (예정)",
+                _ => "Realtime Processing (upcoming)",
+            };
+            
+            egui::ComboBox::from_id_source("audio_operation_mode_combo")
+                .selected_text(mode_record)
+                .show_ui(ui, |ui| {
+                    // Active option
+                    ui.selectable_label(true, mode_record);
+                    // Grayed out upcoming option
+                    ui.add_enabled(false, egui::SelectableLabel::new(false, mode_realtime));
+                });
         }
     });
 
-    // Audio-specific options on separate row (takes more space)
+    // Audio-specific options on separate row (audio source etc)
     if preset.preset_type == "audio" {
         ui.horizontal(|ui| {
             ui.label(text.audio_source_label);
