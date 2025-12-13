@@ -36,7 +36,7 @@ pub struct ProcessingBlock {
     pub block_type: String, // "image", "audio", "text"
     pub model: String,
     pub prompt: String,
-    pub selected_language: String, // Context var {language}
+    pub selected_language: String, // Context var {language1}
     #[serde(default)]
     pub language_vars: HashMap<String, String>, // Context vars {language1}, etc.
     pub streaming_enabled: bool,
@@ -56,7 +56,7 @@ impl Default for ProcessingBlock {
             id: format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()),
             block_type: "text".to_string(),
             model: "text_accurate_kimi".to_string(),
-            prompt: "Translate to {language}.".to_string(),
+            prompt: "Translate to {language1}.".to_string(),
             selected_language: "Vietnamese".to_string(),
             language_vars: HashMap::new(),
             streaming_enabled: true,
@@ -176,7 +176,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "image".to_string(),
                 model: "maverick".to_string(),
-                prompt: "Extract text from this image and translate it to {language}. Output ONLY the translation text directly.".to_string(),
+                prompt: "Extract text from this image and translate it to {language1}. Output ONLY the translation text directly.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: false,
                 show_overlay: true,
@@ -196,7 +196,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "image".to_string(),
                 model: "maverick".to_string(),
-                prompt: "Extract text from this image and translate it to {language}. Output ONLY the translation text directly.".to_string(),
+                prompt: "Extract text from this image and translate it to {language1}. Output ONLY the translation text directly.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: false,
                 show_overlay: false,
@@ -215,7 +215,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Translate the following text to {language}. Output ONLY the translation.".to_string(),
+                prompt: "Translate the following text to {language1}. Output ONLY the translation.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -233,7 +233,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "image".to_string(),
                 model: "maverick".to_string(),
-                prompt: "Extract text from this image and translate it to {language}. Output ONLY the translation text directly.".to_string(),
+                prompt: "Extract text from this image and translate it to {language1}. Output ONLY the translation text directly.".to_string(),
                 selected_language: "Korean".to_string(),
                 streaming_enabled: false,
                 show_overlay: true,
@@ -243,7 +243,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Translate to {language}.".to_string(),
+                prompt: "Translate to {language1}.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -262,7 +262,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Translate the following text to {language}. Output ONLY the translation.".to_string(),
+                prompt: "Translate the following text to {language1}. Output ONLY the translation.".to_string(),
                 selected_language: "Korean".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -272,7 +272,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Translate to {language}.".to_string(),
+                prompt: "Translate to {language1}.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -318,7 +318,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Translate to {language}.".to_string(),
+                prompt: "Translate to {language1}.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -336,7 +336,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "image".to_string(),
                 model: "scout".to_string(),
-                prompt: "Analyze this image and summarize its content in {language}. Only return the summary text, super concisely.".to_string(),
+                prompt: "Analyze this image and summarize its content in {language1}. Only return the summary text, super concisely.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -354,7 +354,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "image".to_string(),
                 model: "scout".to_string(),
-                prompt: "Describe this image in {language}.".to_string(),
+                prompt: "Describe this image in {language1}.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -422,7 +422,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Translate to {language}.".to_string(),
+                prompt: "Translate to {language1}.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -451,7 +451,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Translate to {language}.".to_string(),
+                prompt: "Translate to {language1}.".to_string(),
                 selected_language: "Korean".to_string(),
                 streaming_enabled: true,
                 show_overlay: true,
@@ -470,7 +470,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "audio".to_string(),
                 model: "gemini-audio".to_string(),
-                prompt: "Translate the audio to {language}. Only output the translated text.".to_string(),
+                prompt: "Translate the audio to {language1}. Only output the translated text.".to_string(),
                 selected_language: "Korean".to_string(),
                 streaming_enabled: false,
                 show_overlay: false,

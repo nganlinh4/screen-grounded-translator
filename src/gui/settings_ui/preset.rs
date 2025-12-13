@@ -4,6 +4,66 @@ use crate::gui::locale::LocaleText;
 use crate::gui::icons::{Icon, icon_button};
 use crate::model_config::{get_all_models, ModelType, get_model_by_id};
 
+/// Get localized preset name for default presets
+fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
+    match (preset_id, lang) {
+        // Vietnamese
+        ("preset_translate", "vi") => "Dịch ảnh".to_string(),
+        ("preset_translate_auto_paste", "vi") => "Dịch+Dán".to_string(),
+        ("preset_translate_select", "vi") => "Dịch bôi đen".to_string(),
+        ("preset_translate_retranslate", "vi") => "Dịch+Dịch lại".to_string(),
+        ("preset_trans_retrans_typing", "vi") => "Dịch+Dịch lại (gõ)".to_string(),
+        ("preset_ocr", "vi") => "Trích văn bản".to_string(),
+        ("preset_extract_retranslate", "vi") => "Trích+Dịch".to_string(),
+        ("preset_summarize", "vi") => "Tóm tắt ảnh".to_string(),
+        ("preset_desc", "vi") => "Mô tả ảnh".to_string(),
+        ("preset_ask_image", "vi") => "Hỏi về ảnh".to_string(),
+        ("preset_transcribe", "vi") => "Chép lời nói".to_string(),
+        ("preset_study_language", "vi") => "Học ngoại ngữ".to_string(),
+        ("preset_transcribe_retranslate", "vi") => "Chép+Dịch".to_string(),
+        ("preset_quicker_foreigner_reply", "vi") => "Dịch audio nhanh".to_string(),
+        ("preset_video_summary_placeholder", "vi") => "Tóm tắt video (sắp có)".to_string(),
+        
+        // Korean
+        ("preset_translate", "ko") => "이미지 번역".to_string(),
+        ("preset_translate_auto_paste", "ko") => "번역+붙여넣기".to_string(),
+        ("preset_translate_select", "ko") => "선택 번역".to_string(),
+        ("preset_translate_retranslate", "ko") => "번역+재번역".to_string(),
+        ("preset_trans_retrans_typing", "ko") => "번역+재번역 (입력)".to_string(),
+        ("preset_ocr", "ko") => "텍스트 추출".to_string(),
+        ("preset_extract_retranslate", "ko") => "추출+번역".to_string(),
+        ("preset_summarize", "ko") => "이미지 요약".to_string(),
+        ("preset_desc", "ko") => "이미지 설명".to_string(),
+        ("preset_ask_image", "ko") => "이미지 질문".to_string(),
+        ("preset_transcribe", "ko") => "음성 받아쓰기".to_string(),
+        ("preset_study_language", "ko") => "언어 학습".to_string(),
+        ("preset_transcribe_retranslate", "ko") => "받아쓰기+번역".to_string(),
+        ("preset_quicker_foreigner_reply", "ko") => "빠른 오디오 번역".to_string(),
+        ("preset_video_summary_placeholder", "ko") => "비디오 요약 (예정)".to_string(),
+        
+        // English (default)
+        ("preset_translate", _) => "Translate image".to_string(),
+        ("preset_translate_auto_paste", _) => "Translate+Paste".to_string(),
+        ("preset_translate_select", _) => "Translate selection".to_string(),
+        ("preset_translate_retranslate", _) => "Translate+Retranslate".to_string(),
+        ("preset_trans_retrans_typing", _) => "Trans+Retrans (type)".to_string(),
+        ("preset_ocr", _) => "Extract text (OCR)".to_string(),
+        ("preset_extract_retranslate", _) => "Extract+Translate".to_string(),
+        ("preset_summarize", _) => "Summarize image".to_string(),
+        ("preset_desc", _) => "Describe image".to_string(),
+        ("preset_ask_image", _) => "Ask about image".to_string(),
+        ("preset_transcribe", _) => "Transcribe speech".to_string(),
+        ("preset_study_language", _) => "Study language".to_string(),
+        ("preset_transcribe_retranslate", _) => "Transcribe+Translate".to_string(),
+        ("preset_quicker_foreigner_reply", _) => "Quick audio translate".to_string(),
+        ("preset_video_summary_placeholder", _) => "Summarize video (soon)".to_string(),
+        
+        // Fallback: return original ID without "preset_" prefix
+        _ => preset_id.strip_prefix("preset_").unwrap_or(preset_id).replace('_', " "),
+    }
+}
+
+
 pub fn render_preset_editor(
     ui: &mut egui::Ui,
     config: &mut Config,
@@ -22,12 +82,29 @@ pub fn render_preset_editor(
     // Constrain entire preset editor to a consistent width (matching history UI)
     ui.set_max_width(400.0);
 
+    // Check if this is a default preset (ID starts with "preset_")
+    let is_default_preset = preset.id.starts_with("preset_");
+    
+    // Get localized name for default presets
+    let display_name = if is_default_preset {
+        get_localized_preset_name(&preset.id, &config.ui_language)
+    } else {
+        preset.name.clone()
+    };
+
     // --- HEADER: Name & Main Type ---
     ui.add_space(5.0);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(text.preset_name_label).heading());
-        if ui.add(egui::TextEdit::singleline(&mut preset.name).font(egui::TextStyle::Heading)).changed() {
-            changed = true;
+        
+        if is_default_preset {
+            // Default presets: show localized name as read-only label
+            ui.label(egui::RichText::new(&display_name).heading());
+        } else {
+            // Custom presets: editable name
+            if ui.add(egui::TextEdit::singleline(&mut preset.name).font(egui::TextStyle::Heading)).changed() {
+                changed = true;
+            }
         }
     });
 
@@ -277,72 +354,76 @@ pub fn render_preset_editor(
                     
                     ui.add_space(4.0);
 
-                    // Prompt Editor
-                    ui.horizontal(|ui| {
-                        ui.label(text.prompt_label);
-                        // Helper for indexed language tags
-                        if ui.button(text.insert_lang_tag_btn).on_hover_text(text.insert_lang_tag_tooltip).clicked() {
-                            let mut max_num = 0;
-                            for k in 1..=10 {
-                                if block.prompt.contains(&format!("{{language{}}}", k)) {
-                                    max_num = k;
+                    // Prompt Editor - hidden for whisper audio models (they just transcribe, no prompt needed)
+                    let is_whisper_audio = block.block_type == "audio" && block.model.starts_with("whisper");
+                    
+                    if !is_whisper_audio {
+                        ui.horizontal(|ui| {
+                            ui.label(text.prompt_label);
+                            // Helper for indexed language tags
+                            if ui.button(text.insert_lang_tag_btn).on_hover_text(text.insert_lang_tag_tooltip).clicked() {
+                                let mut max_num = 0;
+                                for k in 1..=10 {
+                                    if block.prompt.contains(&format!("{{language{}}}", k)) {
+                                        max_num = k;
+                                    }
                                 }
+                                let next_num = max_num + 1;
+                                block.prompt.push_str(&format!(" {{language{}}} ", next_num));
+                                let key = format!("language{}", next_num);
+                                if !block.language_vars.contains_key(&key) {
+                                    block.language_vars.insert(key, "Vietnamese".to_string());
+                                }
+                                changed = true;
                             }
-                            let next_num = max_num + 1;
-                            block.prompt.push_str(&format!(" {{language{}}} ", next_num));
-                            let key = format!("language{}", next_num);
-                            if !block.language_vars.contains_key(&key) {
-                                block.language_vars.insert(key, "Vietnamese".to_string());
-                            }
+                        });
+                        if ui.add(egui::TextEdit::multiline(&mut block.prompt).desired_rows(2).desired_width(f32::INFINITY)).changed() {
                             changed = true;
                         }
-                    });
-                    if ui.add(egui::TextEdit::multiline(&mut block.prompt).desired_rows(2).desired_width(f32::INFINITY)).changed() {
-                        changed = true;
-                    }
 
-                    // NEW: Dynamic Dropdowns for {languageN} tags
-                    let mut detected_vars = Vec::new();
-                    for k in 1..=10 {
-                        let tag = format!("{{language{}}}", k);
-                        if block.prompt.contains(&tag) {
-                            detected_vars.push(k);
+                        // Dynamic Dropdowns for {languageN} tags
+                        let mut detected_vars = Vec::new();
+                        for k in 1..=10 {
+                            let tag = format!("{{language{}}}", k);
+                            if block.prompt.contains(&tag) {
+                                detected_vars.push(k);
+                            }
                         }
-                    }
 
-                    for num in detected_vars {
-                        let key = format!("language{}", num);
-                        if !block.language_vars.contains_key(&key) {
-                            block.language_vars.insert(key.clone(), "Vietnamese".to_string());
-                        }
-                        
-                        let label_text = match config.ui_language.as_str() {
-                            "vi" => format!("Ngôn ngữ {{language{}}}:", num),
-                            "ko" => format!("{{language{}}} 언어:", num),
-                            _ => format!("Language for {{language{}}}:", num),
-                        };
+                        for num in detected_vars {
+                            let key = format!("language{}", num);
+                            if !block.language_vars.contains_key(&key) {
+                                block.language_vars.insert(key.clone(), "Vietnamese".to_string());
+                            }
+                            
+                            let label_text = match config.ui_language.as_str() {
+                                "vi" => format!("Ngôn ngữ {{language{}}}:", num),
+                                "ko" => format!("{{language{}}} 언어:", num),
+                                _ => format!("Language for {{language{}}}:", num),
+                            };
 
-                        ui.horizontal(|ui| {
-                             ui.label(label_text);
-                             let current_val = block.language_vars.get(&key).cloned().unwrap_or_default();
-                             ui.menu_button(current_val, |ui| {
-                                 ui.style_mut().wrap = Some(false);
-                                 ui.set_min_width(150.0);
-                                 ui.add(egui::TextEdit::singleline(search_query).hint_text("Search..."));
-                                 let q = search_query.to_lowercase();
-                                 egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                                     for lang in get_all_languages().iter() {
-                                         if q.is_empty() || lang.to_lowercase().contains(&q) {
-                                             if ui.button(lang).clicked() {
-                                                 block.language_vars.insert(key.clone(), lang.clone());
-                                                 changed = true;
-                                                 ui.close_menu();
+                            ui.horizontal(|ui| {
+                                 ui.label(label_text);
+                                 let current_val = block.language_vars.get(&key).cloned().unwrap_or_default();
+                                 ui.menu_button(current_val, |ui| {
+                                     ui.style_mut().wrap = Some(false);
+                                     ui.set_min_width(150.0);
+                                     ui.add(egui::TextEdit::singleline(search_query).hint_text("Search..."));
+                                     let q = search_query.to_lowercase();
+                                     egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                                         for lang in get_all_languages().iter() {
+                                             if q.is_empty() || lang.to_lowercase().contains(&q) {
+                                                 if ui.button(lang).clicked() {
+                                                     block.language_vars.insert(key.clone(), lang.clone());
+                                                     changed = true;
+                                                     ui.close_menu();
+                                                 }
                                              }
                                          }
-                                     }
+                                     });
                                  });
-                             });
-                        });
+                            });
+                        }
                     }
 
                     // Bottom Row: Stream | Auto Copy (removed redundant Target Lang - use {languageN} tags instead)
@@ -384,7 +465,7 @@ pub fn render_preset_editor(
         preset.blocks.push(ProcessingBlock {
             block_type: "text".to_string(),
             model: "text_accurate_kimi".to_string(),
-            prompt: "Translate to {language}.".to_string(),
+            prompt: "Translate to {language1}.".to_string(),
             selected_language: "Vietnamese".to_string(),
             streaming_enabled: true,
             show_overlay: true,

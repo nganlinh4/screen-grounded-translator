@@ -4,6 +4,66 @@ use crate::gui::locale::LocaleText;
 use crate::gui::icons::{Icon, icon_button, draw_icon_static, icon_button_sized};
 use super::ViewMode;
 
+/// Get localized preset name for default presets
+fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
+    match (preset_id, lang) {
+        // Vietnamese
+        ("preset_translate", "vi") => "Dịch ảnh".to_string(),
+        ("preset_translate_auto_paste", "vi") => "Dịch+Dán".to_string(),
+        ("preset_translate_select", "vi") => "Dịch bôi đen".to_string(),
+        ("preset_translate_retranslate", "vi") => "Dịch+Dịch lại".to_string(),
+        ("preset_trans_retrans_typing", "vi") => "Dịch+Dịch lại (gõ)".to_string(),
+        ("preset_ocr", "vi") => "Trích văn bản".to_string(),
+        ("preset_extract_retranslate", "vi") => "Trích+Dịch".to_string(),
+        ("preset_summarize", "vi") => "Tóm tắt ảnh".to_string(),
+        ("preset_desc", "vi") => "Mô tả ảnh".to_string(),
+        ("preset_ask_image", "vi") => "Hỏi về ảnh".to_string(),
+        ("preset_transcribe", "vi") => "Chép lời nói".to_string(),
+        ("preset_study_language", "vi") => "Học ngoại ngữ".to_string(),
+        ("preset_transcribe_retranslate", "vi") => "Chép+Dịch".to_string(),
+        ("preset_quicker_foreigner_reply", "vi") => "Dịch audio nhanh".to_string(),
+        ("preset_video_summary_placeholder", "vi") => "Tóm tắt video (sắp có)".to_string(),
+        
+        // Korean
+        ("preset_translate", "ko") => "이미지 번역".to_string(),
+        ("preset_translate_auto_paste", "ko") => "번역+붙여넣기".to_string(),
+        ("preset_translate_select", "ko") => "선택 번역".to_string(),
+        ("preset_translate_retranslate", "ko") => "번역+재번역".to_string(),
+        ("preset_trans_retrans_typing", "ko") => "번역+재번역 (입력)".to_string(),
+        ("preset_ocr", "ko") => "텍스트 추출".to_string(),
+        ("preset_extract_retranslate", "ko") => "추출+번역".to_string(),
+        ("preset_summarize", "ko") => "이미지 요약".to_string(),
+        ("preset_desc", "ko") => "이미지 설명".to_string(),
+        ("preset_ask_image", "ko") => "이미지 질문".to_string(),
+        ("preset_transcribe", "ko") => "음성 받아쓰기".to_string(),
+        ("preset_study_language", "ko") => "언어 학습".to_string(),
+        ("preset_transcribe_retranslate", "ko") => "받아쓰기+번역".to_string(),
+        ("preset_quicker_foreigner_reply", "ko") => "빠른 오디오 번역".to_string(),
+        ("preset_video_summary_placeholder", "ko") => "비디오 요약 (예정)".to_string(),
+        
+        // English (default)
+        ("preset_translate", _) => "Translate image".to_string(),
+        ("preset_translate_auto_paste", _) => "Translate+Paste".to_string(),
+        ("preset_translate_select", _) => "Translate selection".to_string(),
+        ("preset_translate_retranslate", _) => "Translate+Retranslate".to_string(),
+        ("preset_trans_retrans_typing", _) => "Trans+Retrans (type)".to_string(),
+        ("preset_ocr", _) => "Extract text (OCR)".to_string(),
+        ("preset_extract_retranslate", _) => "Extract+Translate".to_string(),
+        ("preset_summarize", _) => "Summarize image".to_string(),
+        ("preset_desc", _) => "Describe image".to_string(),
+        ("preset_ask_image", _) => "Ask about image".to_string(),
+        ("preset_transcribe", _) => "Transcribe speech".to_string(),
+        ("preset_study_language", _) => "Study language".to_string(),
+        ("preset_transcribe_retranslate", _) => "Transcribe+Translate".to_string(),
+        ("preset_quicker_foreigner_reply", _) => "Quick audio translate".to_string(),
+        ("preset_video_summary_placeholder", _) => "Summarize video (soon)".to_string(),
+        
+        // Fallback: return original ID without "preset_" prefix
+        _ => preset_id.strip_prefix("preset_").unwrap_or(preset_id).replace('_', " "),
+    }
+}
+
+
 pub fn render_sidebar(
     ui: &mut egui::Ui,
     config: &mut Config,
@@ -128,14 +188,14 @@ pub fn render_sidebar(
             for i in 0..max_len {
                 // Column 1: Image Presets
                 if let Some(&idx) = img_indices.get(i) {
-                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete);
+                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &config.ui_language);
                 } else {
                     ui.label("");
                 }
 
                 // Column 2: Text/Audio/Other Presets
                 if let Some(&idx) = other_indices.get(i) {
-                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete);
+                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &config.ui_language);
                 } else {
                     ui.label(""); 
                 }
@@ -214,8 +274,16 @@ fn render_preset_item(
     current_view_mode: &ViewMode,
     preset_idx_to_select: &mut Option<usize>,
     preset_idx_to_delete: &mut Option<usize>,
+    lang: &str,
 ) {
     let preset = &presets[idx];
+    
+    // Get display name: localized for default presets, original for custom
+    let display_name = if preset.id.starts_with("preset_") {
+        get_localized_preset_name(&preset.id, lang)
+    } else {
+        preset.name.clone()
+    };
     
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -232,11 +300,11 @@ fn render_preset_item(
         if preset.is_upcoming {
             ui.add_enabled_ui(false, |ui| {
                 draw_icon_static(ui, icon_type, Some(14.0));
-                let _ = ui.selectable_label(is_selected, &preset.name);
+                let _ = ui.selectable_label(is_selected, &display_name);
             });
         } else {
             draw_icon_static(ui, icon_type, Some(14.0));
-            if ui.selectable_label(is_selected, &preset.name).clicked() {
+            if ui.selectable_label(is_selected, &display_name).clicked() {
                 *preset_idx_to_select = Some(idx);
             }
             // Delete button (Small X icon)
