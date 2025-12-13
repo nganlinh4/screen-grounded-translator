@@ -75,6 +75,7 @@ pub fn render_sidebar(
 ) -> bool {
     let mut changed = false;
     let mut preset_idx_to_delete = None;
+    let mut preset_idx_to_clone = None;
     let mut preset_to_add_type = None;
     let mut preset_idx_to_select: Option<usize> = None;
 
@@ -191,14 +192,14 @@ pub fn render_sidebar(
             for i in 0..max_len {
                 // Column 1: Image Presets
                 if let Some(&idx) = img_indices.get(i) {
-                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &config.ui_language);
+                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
                 } else {
                     ui.label("");
                 }
 
                 // Column 2: Text/Audio/Other Presets
                 if let Some(&idx) = other_indices.get(i) {
-                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &config.ui_language);
+                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
                 } else {
                     ui.label(""); 
                 }
@@ -216,6 +217,36 @@ pub fn render_sidebar(
     }
     if let Some(idx) = preset_idx_to_select {
         *view_mode = ViewMode::Preset(idx);
+    }
+
+    // Handle Clone
+    if let Some(idx) = preset_idx_to_clone {
+        let mut new_preset = config.presets[idx].clone();
+        
+        // Generate new ID
+        new_preset.id = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        
+        // Generate new Name
+        let base_name = if config.presets[idx].id.starts_with("preset_") {
+            get_localized_preset_name(&config.presets[idx].id, &config.ui_language)
+        } else {
+            new_preset.name.clone()
+        };
+        let mut new_name = format!("{} Copy", base_name);
+        
+        let mut counter = 1;
+        while config.presets.iter().any(|p| p.name == new_name) {
+            new_name = format!("{} Copy {}", base_name, counter);
+            counter += 1;
+        }
+        new_preset.name = new_name;
+        
+        // Clear hotkeys to avoid conflicts
+        new_preset.hotkeys.clear();
+        
+        config.presets.push(new_preset);
+        *view_mode = ViewMode::Preset(config.presets.len() - 1);
+        changed = true;
     }
 
     // Handle Add
@@ -277,6 +308,7 @@ fn render_preset_item(
     current_view_mode: &ViewMode,
     preset_idx_to_select: &mut Option<usize>,
     preset_idx_to_delete: &mut Option<usize>,
+    preset_idx_to_clone: &mut Option<usize>,
     lang: &str,
 ) {
     let preset = &presets[idx];
@@ -289,7 +321,7 @@ fn render_preset_item(
     };
     
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = 1.0;
         
         let is_selected = matches!(current_view_mode, ViewMode::Preset(i) if *i == idx);
         
@@ -310,6 +342,19 @@ fn render_preset_item(
             if ui.selectable_label(is_selected, &display_name).clicked() {
                 *preset_idx_to_select = Some(idx);
             }
+            
+            ui.spacing_mut().item_spacing.x = 0.0;
+            
+            // Copy Button
+            let copy_tooltip = match lang {
+                "vi" => "Nhân bản",
+                "ko" => "복제",
+                _ => "Duplicate",
+            };
+            if icon_button_sized(ui, Icon::CopySmall, 22.0).on_hover_text(copy_tooltip).clicked() {
+                *preset_idx_to_clone = Some(idx);
+            }
+
             // Delete button (Small X icon)
             if presets.len() > 1 {
                 if icon_button_sized(ui, Icon::Delete, 22.0).clicked() {

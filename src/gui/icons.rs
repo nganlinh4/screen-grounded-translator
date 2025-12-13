@@ -24,6 +24,7 @@ pub enum Icon {
     Refresh,
     Folder, // NEW: For "Open Media"
     Copy,   // NEW: For "Copy Text"
+    CopySmall, // NEW: Smaller copy icon for preset buttons
     Close,  // NEW: "X" for clearing search
     ChainArrow, // NEW: Arrow for chain links
     ChainArrowDown, // NEW: Vertical arrow for chain steps
@@ -419,6 +420,22 @@ fn paint_internal(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: 
             let front_rect = egui::Rect::from_center_size(center + egui::vec2(offset, offset), egui::vec2(w, h));
             painter.rect_filled(front_rect, 1.0 * scale, painter.ctx().style().visuals.panel_fill); // Mask
             painter.rect_stroke(front_rect, 1.0 * scale, stroke);
+        }
+
+        Icon::CopySmall => {
+            // Two overlapping rectangles - MINI SIZE for preset buttons
+            let w = 5.0 * scale;
+            let h = 6.5 * scale;
+            let offset = 1.2 * scale;
+
+            // Back rect (Top Left)
+            let back_rect = egui::Rect::from_center_size(center - egui::vec2(offset/2.0, offset/2.0), egui::vec2(w, h));
+            painter.rect_stroke(back_rect, 0.8 * scale, stroke);
+
+            // Front rect (Bottom Right) - Filled to cover back lines
+            let front_rect = egui::Rect::from_center_size(center + egui::vec2(offset, offset), egui::vec2(w, h));
+            painter.rect_filled(front_rect, 0.8 * scale, painter.ctx().style().visuals.panel_fill); // Mask
+            painter.rect_stroke(front_rect, 0.8 * scale, stroke);
         }
 
         Icon::Close => {
