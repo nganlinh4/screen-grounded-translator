@@ -270,6 +270,9 @@ fn run_chain_step(
         let parent_clone = parent_hwnd.clone();
         let (tx_hwnd, rx_hwnd) = std::sync::mpsc::channel();
         
+        // For image blocks, we defer showing the window until first data arrives
+        let is_image_block = block.block_type == "image";
+        
         std::thread::spawn(move || {
             let hwnd = create_result_window(
                 my_rect, 
@@ -290,7 +293,12 @@ fn run_chain_step(
                 }
             }
             
-            unsafe { ShowWindow(hwnd, SW_SHOW); }
+            // For image blocks: DON'T show window yet - keep it hidden
+            // It will be shown when first data arrives (in the streaming callback)
+            // For text blocks: show immediately with refining animation
+            if !is_image_block {
+                unsafe { ShowWindow(hwnd, SW_SHOW); }
+            }
             let _ = tx_hwnd.send(hwnd);
             
             unsafe { 
@@ -306,16 +314,24 @@ fn run_chain_step(
         my_hwnd = rx_hwnd.recv().ok();
         
         // Show loading state in the new window
+        // For TEXT blocks: use the refining rainbow edge animation
+        // For IMAGE blocks: keep using the gradient glow/laser processing window
         if !skip_execution && my_hwnd.is_some() {
-             let mut s = WINDOW_STATES.lock().unwrap();
-             if let Some(st) = s.get_mut(&(my_hwnd.unwrap().0 as isize)) { st.is_refining = true; }
+            if block.block_type != "image" {
+                // Text block: use rainbow edge refining animation
+                let mut s = WINDOW_STATES.lock().unwrap();
+                if let Some(st) = s.get_mut(&(my_hwnd.unwrap().0 as isize)) { st.is_refining = true; }
+            }
         }
 
-        // CRITICAL: We have a visible window now, so we can close the old "Processing..." overlay
-        if let Some(h) = processing_indicator_hwnd {
-            unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
-            // Consumed. Don't pass it to next steps.
-            processing_indicator_hwnd = None;
+        // CRITICAL: Close the old "Processing..." overlay ONLY for text blocks
+        // For image blocks, we want to keep the beautiful gradient glow animation alive
+        if block.block_type != "image" {
+            if let Some(h) = processing_indicator_hwnd {
+                unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                // Consumed. Don't pass it to next steps.
+                processing_indicator_hwnd = None;
+            }
         }
     } else {
         // HIDDEN BLOCK:
@@ -337,6 +353,12 @@ fn run_chain_step(
         let accumulated = Arc::new(Mutex::new(String::new()));
         let acc_clone = accumulated.clone();
         
+        // For image blocks: track if window has been shown and share processing_hwnd
+        let window_shown = Arc::new(Mutex::new(block.block_type != "image")); // true for text, false for image
+        let window_shown_clone = window_shown.clone();
+        let processing_hwnd_shared = Arc::new(Mutex::new(processing_indicator_hwnd));
+        let processing_hwnd_clone = processing_hwnd_shared.clone();
+        
         let res = if block_idx == 0 && matches!(context, RefineContext::Image(_)) {
             // Image Block
             if let RefineContext::Image(img_data) = context.clone() {
@@ -347,6 +369,19 @@ fn run_chain_step(
                     |chunk| {
                         let mut t = acc_clone.lock().unwrap(); t.push_str(chunk);
                         if let Some(h) = my_hwnd { 
+                            // On first chunk for image blocks: show window and close processing indicator
+                            {
+                                let mut shown = window_shown_clone.lock().unwrap();
+                                if !*shown {
+                                    *shown = true;
+                                    unsafe { ShowWindow(h, SW_SHOW); }
+                                    // Close processing indicator
+                                    let mut proc_hwnd = processing_hwnd_clone.lock().unwrap();
+                                    if let Some(ph) = proc_hwnd.take() {
+                                        unsafe { PostMessageW(ph, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                                    }
+                                }
+                            }
                             {
                                 let mut s = WINDOW_STATES.lock().unwrap();
                                 if let Some(st) = s.get_mut(&(h.0 as isize)) { st.is_refining = false; }
