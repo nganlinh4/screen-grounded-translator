@@ -508,6 +508,11 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
         WM_DESTROY => {
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.remove(&(hwnd.0 as isize)) {
+                // Signal cancellation to stop any ongoing chain processing
+                if let Some(ref token) = state.cancellation_token {
+                    token.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                
                 if state.content_bitmap.0 != 0 {
                     DeleteObject(state.content_bitmap);
                 }

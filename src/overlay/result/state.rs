@@ -1,6 +1,6 @@
 use windows::Win32::Foundation::*;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc, atomic::{AtomicBool, Ordering}};
 use windows::Win32::Graphics::Gdi::{HBITMAP, HFONT};
 
 // --- DYNAMIC PARTICLES ---
@@ -163,6 +163,19 @@ pub struct WindowState {
     
     // Graphics mode for refining animation (standard vs minimal)
     pub graphics_mode: String,
+    
+    // Cancellation token - set to true when window is destroyed to stop ongoing chains
+    pub cancellation_token: Option<Arc<AtomicBool>>,
+}
+
+/// Check if a cancellation token is set (chain should stop)
+pub fn is_cancelled(token: &Option<Arc<AtomicBool>>) -> bool {
+    token.as_ref().map(|t| t.load(Ordering::Relaxed)).unwrap_or(false)
+}
+
+/// Create a new cancellation token
+pub fn new_cancellation_token() -> Arc<AtomicBool> {
+    Arc::new(AtomicBool::new(false))
 }
 
 // SAFETY: Raw pointers are not Send/Sync, but we only use them within the main thread

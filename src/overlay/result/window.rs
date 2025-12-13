@@ -160,6 +160,7 @@ pub fn create_result_window(
                 preset_prompt, 
                 retrans_config: None, // Deprecated in favor of chain logic
                 graphics_mode,
+                cancellation_token: None,
             });
         }
 

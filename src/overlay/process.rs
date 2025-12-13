@@ -3,7 +3,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::core::*;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, Once, atomic::{AtomicBool, Ordering}};
 use std::collections::HashMap;
 use image::{ImageBuffer, Rgba};
 
@@ -119,7 +119,8 @@ pub fn show_audio_result(
         Arc::new(Mutex::new(None)),
         RefineContext::None,
         true, // skip_execution: audio already done, just display and chain forward
-        None
+        None,
+        Arc::new(AtomicBool::new(false)) // New chains start with cancellation = false
     );
 }
 
@@ -187,7 +188,8 @@ pub fn start_processing_pipeline(
             Arc::new(Mutex::new(None)), 
             context, 
             false,
-            Some(processing_hwnd) // Pass the handle to be closed later
+            Some(processing_hwnd), // Pass the handle to be closed later
+            Arc::new(AtomicBool::new(false)) // New chains start with cancellation = false
         );
     });
     
@@ -232,7 +234,8 @@ fn execute_chain_pipeline(
             Arc::new(Mutex::new(None)), 
             context, 
             false,
-            Some(processing_hwnd) // Pass the handle to be closed later
+            Some(processing_hwnd), // Pass the handle to be closed later
+            Arc::new(AtomicBool::new(false)) // New chains start with cancellation = false
         );
     });
     
@@ -258,7 +261,16 @@ fn run_chain_step(
     context: RefineContext, // Passed to Block 0 (Image context)
     skip_execution: bool,   // If true, we just display result
     mut processing_indicator_hwnd: Option<HWND>, // Handle to the "Processing..." overlay
+    cancel_token: Arc<AtomicBool>, // Cancellation flag - if true, stop processing
 ) {
+    // Check if cancelled before starting
+    if cancel_token.load(Ordering::Relaxed) {
+        if let Some(h) = processing_indicator_hwnd {
+            unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+        }
+        return;
+    }
+    
     if block_idx >= blocks.len() { 
         // End of chain. If processing overlay is still active (e.g., all blocks were hidden), close it now.
         if let Some(h) = processing_indicator_hwnd {
@@ -352,6 +364,14 @@ fn run_chain_step(
         });
         
         my_hwnd = rx_hwnd.recv().ok();
+        
+        // Associate cancellation token with this window so destruction stops the chain
+        if let Some(h) = my_hwnd {
+            let mut s = WINDOW_STATES.lock().unwrap();
+            if let Some(st) = s.get_mut(&(h.0 as isize)) { 
+                st.cancellation_token = Some(cancel_token.clone()); 
+            }
+        }
         
         // Show loading state in the new window
         // For TEXT blocks: use the refining rainbow edge animation
@@ -506,6 +526,14 @@ fn run_chain_step(
     }
 
     // 6. Chain Next Step
+    // Check cancellation before continuing
+    if cancel_token.load(Ordering::Relaxed) {
+        if let Some(h) = processing_indicator_hwnd {
+            unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+        }
+        return;
+    }
+    
     if !result_text.trim().is_empty() {
         let next_parent = if my_hwnd.is_some() {
             Arc::new(Mutex::new(my_hwnd))
@@ -529,7 +557,8 @@ fn run_chain_step(
             next_parent, 
             RefineContext::None,
             false,
-            processing_indicator_hwnd // Pass it along (might be None or Some)
+            processing_indicator_hwnd, // Pass it along (might be None or Some)
+            cancel_token // Pass the same token through the chain
         );
     } else {
         // Chain stopped unexpectedly (empty result or error)
