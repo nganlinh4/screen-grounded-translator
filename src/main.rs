@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use history::HistoryManager;
 
 // Window dimensions - Increased to accommodate two-column sidebar and longer text labels
-pub const WINDOW_WIDTH: f32 = 815.0;
+pub const WINDOW_WIDTH: f32 = 820.0;
 pub const WINDOW_HEIGHT: f32 = 500.0;
 
 // Modifier Constants for Hook

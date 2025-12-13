@@ -311,8 +311,8 @@ impl Default for Config {
                 prompt: "Extract all text from this image exactly as it appears. Output ONLY the text.".to_string(),
                 selected_language: "English".to_string(),
                 streaming_enabled: false,
-                show_overlay: true,
-                auto_copy: true,
+                show_overlay: false,
+                auto_copy: false,
                 ..Default::default()
             },
             ProcessingBlock {

@@ -19,6 +19,9 @@ pub fn render_preset_editor(
     let mut preset = config.presets[preset_idx].clone();
     let mut changed = false;
 
+    // Constrain entire preset editor to a consistent width (matching history UI)
+    ui.set_max_width(400.0);
+
     // --- HEADER: Name & Main Type ---
     ui.add_space(5.0);
     ui.horizontal(|ui| {
@@ -28,7 +31,7 @@ pub fn render_preset_editor(
         }
     });
 
-    // Preset Type Selector (Changes the type of the FIRST block)
+    // Preset Type Selector + Operation Mode on same line
     ui.horizontal(|ui| {
         ui.label(text.preset_type_label);
         let selected_text = match preset.preset_type.as_str() {
@@ -42,7 +45,6 @@ pub fn render_preset_editor(
             .selected_text(selected_text)
             .show_ui(ui, |ui| {
                 if ui.selectable_value(&mut preset.preset_type, "image".to_string(), text.preset_type_image).clicked() {
-                    // Update first block type
                     if let Some(first) = preset.blocks.first_mut() {
                         first.block_type = "image".to_string();
                         first.model = "maverick".to_string();
@@ -67,33 +69,19 @@ pub fn render_preset_editor(
                     let _ = ui.selectable_value(&mut preset.preset_type, "video".to_string(), text.preset_type_video);
                 });
             });
-    });
 
-    ui.separator();
+        ui.add_space(10.0);
 
-    // --- GLOBAL SETTINGS (Hotkeys & Input Methods) ---
-    // These apply to the preset activation, not specific blocks
-    
-    // Input Method Config (Dynamic based on type)
-    if preset.preset_type == "image" {
-        ui.horizontal(|ui| {
-            ui.label(text.prompt_mode_label); // "Operation Mode"
+        // Operation Mode on same line (if applicable)
+        if preset.preset_type == "image" {
+            ui.label(text.prompt_mode_label);
             egui::ComboBox::from_id_source("prompt_mode_combo")
                 .selected_text(if preset.prompt_mode == "dynamic" { text.prompt_mode_dynamic } else { text.prompt_mode_fixed })
                 .show_ui(ui, |ui| {
                     if ui.selectable_value(&mut preset.prompt_mode, "fixed".to_string(), text.prompt_mode_fixed).clicked() { changed = true; }
                     if ui.selectable_value(&mut preset.prompt_mode, "dynamic".to_string(), text.prompt_mode_dynamic).clicked() { changed = true; }
                 });
-        });
-    } else if preset.preset_type == "audio" {
-        ui.horizontal(|ui| {
-            ui.label(text.audio_source_label);
-            if ui.radio_value(&mut preset.audio_source, "mic".to_string(), text.audio_src_mic).clicked() { changed = true; }
-            if ui.radio_value(&mut preset.audio_source, "device".to_string(), text.audio_src_device).clicked() { changed = true; }
-            if ui.checkbox(&mut preset.hide_recording_ui, text.hide_recording_ui_label).clicked() { changed = true; }
-        });
-    } else if preset.preset_type == "text" {
-        ui.horizontal(|ui| {
+        } else if preset.preset_type == "text" {
             ui.label(text.text_input_mode_label);
             egui::ComboBox::from_id_source("text_input_mode_combo")
                 .selected_text(if preset.text_input_mode == "type" { text.text_mode_type } else { text.text_mode_select })
@@ -101,8 +89,20 @@ pub fn render_preset_editor(
                     if ui.selectable_value(&mut preset.text_input_mode, "select".to_string(), text.text_mode_select).clicked() { changed = true; }
                     if ui.selectable_value(&mut preset.text_input_mode, "type".to_string(), text.text_mode_type).clicked() { changed = true; }
                 });
+        }
+    });
+
+    // Audio-specific options on separate row (takes more space)
+    if preset.preset_type == "audio" {
+        ui.horizontal(|ui| {
+            ui.label(text.audio_source_label);
+            if ui.radio_value(&mut preset.audio_source, "mic".to_string(), text.audio_src_mic).clicked() { changed = true; }
+            if ui.radio_value(&mut preset.audio_source, "device".to_string(), text.audio_src_device).clicked() { changed = true; }
+            if ui.checkbox(&mut preset.hide_recording_ui, text.hide_recording_ui_label).clicked() { changed = true; }
         });
     }
+
+    ui.separator();
 
     // Determine visibility conditions
     let all_overlays_hidden = preset.blocks.iter().all(|b| !b.show_overlay);
@@ -128,8 +128,6 @@ pub fn render_preset_editor(
     }
 
     ui.add_space(10.0);
-    ui.separator();
-    ui.add_space(5.0);
 
     // Hotkeys
     ui.horizontal(|ui| {
@@ -158,7 +156,34 @@ pub fn render_preset_editor(
     ui.add_space(5.0);
 
     // --- PROCESSING CHAIN UI ---
-    ui.label(egui::RichText::new("Processing Chain").heading());
+    // Header with title, chain visualization, and Add button
+    let mut add_new_block = false;
+    
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(text.processing_chain_title).heading());
+        ui.add_space(10.0);
+        
+        // Draw chain visualization: icon -> icon -> icon ...
+        for (i, block) in preset.blocks.iter().enumerate() {
+            let type_icon = match block.block_type.as_str() {
+                "image" => Icon::Image,
+                "audio" => Icon::Microphone,
+                _ => Icon::Text,
+            };
+            crate::gui::icons::draw_icon_static(ui, type_icon, Some(14.0));
+            
+            if i < preset.blocks.len() - 1 {
+                crate::gui::icons::draw_icon_static(ui, Icon::ChainArrow, Some(14.0));
+            }
+        }
+        
+        ui.add_space(5.0);
+        
+        // "+ Action" button inline with header
+        if ui.small_button(text.add_step_btn).clicked() {
+            add_new_block = true;
+        }
+    });
     
     let mut block_to_remove = None;
     let mut block_auto_copy_idx = None;
@@ -169,15 +194,20 @@ pub fn render_preset_editor(
     }
 
     let block_count = preset.blocks.len();
-    egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-        for (i, block) in preset.blocks.iter_mut().enumerate() {
-            let is_first = i == 0;
+    
+    // Use Frame pattern from history UI for proper fixed height
+    egui::Frame::none().show(ui, |ui| {
+        ui.set_height(280.0);
+        
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for (i, block) in preset.blocks.iter_mut().enumerate() {
+                let is_first = i == 0;
             
             ui.push_id(format!("block_{}", i), |ui| {
                 ui.group(|ui| {
-                    // BLOCK HEADER: Type | Visibility | Delete
+                    // BLOCK HEADER: Type | Model | Visibility | Delete
                     ui.horizontal(|ui| {
-                        // 1. Label
+                        // 1. Type icon and Label
                         let type_icon = match block.block_type.as_str() {
                             "image" => Icon::Image,
                             "audio" => Icon::Microphone,
@@ -185,37 +215,16 @@ pub fn render_preset_editor(
                         };
                         crate::gui::icons::draw_icon_static(ui, type_icon, None);
                         let title = if is_first {
-                            format!("Step 1: Input ({})", block.block_type)
+                            format!("{} ({})", text.step_input_label, block.block_type)
                         } else {
-                            format!("Step {}: Process/Refine", i + 1)
+                            format!("{} {}", text.step_process_label, i + 1)
                         };
                         ui.label(egui::RichText::new(title).strong());
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // 3. Delete (Only if not first)
-                            if !is_first {
-                                if icon_button(ui, Icon::Close).on_hover_text("Remove Step").clicked() {
-                                    block_to_remove = Some(i);
-                                }
-                            }
-                            
-                            // 2. Visibility Toggle
-                            let vis_icon = if block.show_overlay { Icon::EyeOpen } else { Icon::EyeClosed };
-                            let hover_text = if block.show_overlay { "Overlay Visible" } else { "Background Processing (Hidden)" };
-                            if icon_button(ui, vis_icon).on_hover_text(hover_text).clicked() {
-                                block.show_overlay = !block.show_overlay;
-                                changed = true;
-                            }
-                        });
-                    });
-                    
-                    ui.add_space(4.0);
-
-                    // BLOCK BODY: Model | Prompt | Settings
-                    
-                    // Model Selector
-                    ui.horizontal(|ui| {
-                        ui.label("Model:");
+                        
+                        ui.add_space(5.0);
+                        
+                        // 2. Model Selector (compact, adapt to content)
+                        ui.label(text.model_label);
                         let model_def = get_model_by_id(&block.model);
                         let name = model_def.as_ref()
                             .map(|m| match config.ui_language.as_str() {
@@ -228,7 +237,6 @@ pub fn render_preset_editor(
                         
                         egui::ComboBox::from_id_source(format!("model_{}", i))
                             .selected_text(name)
-                            .width(250.0)
                             .show_ui(ui, |ui| {
                                 let filter_type = match block.block_type.as_str() {
                                     "image" => ModelType::Vision,
@@ -249,13 +257,31 @@ pub fn render_preset_editor(
                                     }
                                 }
                             });
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if !is_first {
+                                if icon_button(ui, Icon::Close).on_hover_text(text.remove_step_tooltip).clicked() {
+                                    block_to_remove = Some(i);
+                                }
+                            }
+                            
+                            // 3. Visibility Toggle
+                            let vis_icon = if block.show_overlay { Icon::EyeOpen } else { Icon::EyeClosed };
+                            let hover_text = if block.show_overlay { text.overlay_visible_tooltip } else { text.overlay_hidden_tooltip };
+                            if icon_button(ui, vis_icon).on_hover_text(hover_text).clicked() {
+                                block.show_overlay = !block.show_overlay;
+                                changed = true;
+                            }
+                        });
                     });
+                    
+                    ui.add_space(4.0);
 
                     // Prompt Editor
                     ui.horizontal(|ui| {
-                        ui.label("Prompt:");
+                        ui.label(text.prompt_label);
                         // Helper for indexed language tags
-                        if ui.button("+ {lang}").on_hover_text("Insert {languageN} Tag").clicked() {
+                        if ui.button(text.insert_lang_tag_btn).on_hover_text(text.insert_lang_tag_tooltip).clicked() {
                             let mut max_num = 0;
                             for k in 1..=10 {
                                 if block.prompt.contains(&format!("{{language{}}}", k)) {
@@ -319,41 +345,19 @@ pub fn render_preset_editor(
                         });
                     }
 
-                    // Bottom Row: Language | Stream | Copy
+                    // Bottom Row: Stream | Auto Copy (removed redundant Target Lang - use {languageN} tags instead)
                     ui.horizontal(|ui| {
-                        // Language Selector
-                        ui.label("Target Lang:");
-                        let lang_label = block.selected_language.clone();
-                        ui.menu_button(lang_label, |ui| {
-                            ui.style_mut().wrap = Some(false);
-                            ui.set_min_width(150.0);
-                            ui.add(egui::TextEdit::singleline(search_query).hint_text("Search..."));
-                            let q = search_query.to_lowercase();
-                            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                                for lang in get_all_languages().iter() {
-                                    if q.is_empty() || lang.to_lowercase().contains(&q) {
-                                        if ui.button(lang).clicked() {
-                                            block.selected_language = lang.clone();
-                                            changed = true;
-                                            ui.close_menu();
-                                        }
-                                    }
-                                }
-                            });
-                        });
-
-                        ui.separator();
-
-                        // Streaming Toggle
-                        if ui.checkbox(&mut block.streaming_enabled, "Stream").on_hover_text("Stream text output").clicked() {
-                            changed = true;
+                        // Streaming Toggle - only visible if overlay is shown
+                        if block.show_overlay {
+                            if ui.checkbox(&mut block.streaming_enabled, text.stream_checkbox).on_hover_text(text.stream_tooltip).clicked() {
+                                changed = true;
+                            }
+                            ui.separator();
                         }
-
-                        ui.separator();
 
                         // Auto Copy (Radio behavior managed manually)
                         let mut is_copy = Some(i) == block_auto_copy_idx;
-                        if ui.checkbox(&mut is_copy, "Auto Copy").on_hover_text("Copy this result to clipboard").clicked() {
+                        if ui.checkbox(&mut is_copy, text.auto_copy_label).on_hover_text(text.auto_copy_tooltip).clicked() {
                             if is_copy {
                                 block_auto_copy_idx = Some(i);
                             } else if block_auto_copy_idx == Some(i) {
@@ -365,19 +369,18 @@ pub fn render_preset_editor(
                 });
             });
             
-            // Visual Arrow to next step
+            // Visual Arrow to next step (using hand-drawn icon)
             if i < block_count - 1 {
-                ui.centered_and_justified(|ui| {
-                    ui.label(egui::RichText::new("⬇").size(16.0).strong());
+                ui.vertical_centered(|ui| {
+                    crate::gui::icons::draw_icon_static(ui, Icon::ChainArrowDown, Some(16.0));
                 });
             }
         }
+        });
     });
 
-    ui.add_space(10.0);
-    
-    // "Add Step" Button
-    if ui.button(egui::RichText::new("+ Add Processing Step").strong()).clicked() {
+    // Handle add new block
+    if add_new_block {
         preset.blocks.push(ProcessingBlock {
             block_type: "text".to_string(),
             model: "text_accurate_kimi".to_string(),
@@ -391,16 +394,17 @@ pub fn render_preset_editor(
         changed = true;
     }
 
+    // Handle block deletion (must be outside 'if changed' to work)
+    if let Some(idx) = block_to_remove {
+        preset.blocks.remove(idx);
+        changed = true;
+    }
+
     // Apply Logic Updates (Radio Button Sync & Auto Paste)
     if changed {
         // Enforce Auto Copy exclusivity
         for (i, block) in preset.blocks.iter_mut().enumerate() {
             block.auto_copy = Some(i) == block_auto_copy_idx;
-        }
-        
-        // Handle deletions
-        if let Some(idx) = block_to_remove {
-            preset.blocks.remove(idx);
         }
 
         config.presets[preset_idx] = preset;

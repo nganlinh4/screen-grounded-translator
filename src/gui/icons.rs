@@ -25,6 +25,8 @@ pub enum Icon {
     Folder, // NEW: For "Open Media"
     Copy,   // NEW: For "Copy Text"
     Close,  // NEW: "X" for clearing search
+    ChainArrow, // NEW: Arrow for chain links
+    ChainArrowDown, // NEW: Vertical arrow for chain steps
 }
 
 /// Main entry point: Draw a clickable icon button (default size 24.0)
@@ -429,6 +431,36 @@ fn paint_internal(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: 
             
             painter.line_segment([p1, p2], stroke);
             painter.line_segment([p3, p4], stroke);
+        }
+
+        Icon::ChainArrow => {
+            // Horizontal right arrow (->) for chain links in header
+            let arrow_len = 6.0 * scale;
+            let head_sz = 3.0 * scale;
+            
+            // Shaft
+            let start = center - egui::vec2(arrow_len, 0.0);
+            let end = center + egui::vec2(arrow_len, 0.0);
+            painter.line_segment([start, end], stroke);
+            
+            // Arrowhead
+            painter.line_segment([end, end - egui::vec2(head_sz, head_sz)], stroke);
+            painter.line_segment([end, end - egui::vec2(head_sz, -head_sz)], stroke);
+        }
+
+        Icon::ChainArrowDown => {
+            // Vertical down arrow for chain steps
+            let arrow_len = 5.0 * scale;
+            let head_sz = 3.0 * scale;
+            
+            // Shaft
+            let start = center - egui::vec2(0.0, arrow_len);
+            let end = center + egui::vec2(0.0, arrow_len);
+            painter.line_segment([start, end], stroke);
+            
+            // Arrowhead
+            painter.line_segment([end, end - egui::vec2(head_sz, head_sz)], stroke);
+            painter.line_segment([end, end - egui::vec2(-head_sz, head_sz)], stroke);
         }
     }
 }
