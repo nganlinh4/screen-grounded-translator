@@ -42,6 +42,18 @@ pub fn render_preset_editor(
         if is_default_preset {
             // Default presets: show localized name as read-only label
             ui.label(egui::RichText::new(&display_name).heading());
+            
+            // Restore Button (Right aligned)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(text.restore_preset_btn).on_hover_text(text.restore_preset_tooltip).clicked() {
+                     let default_config = Config::default();
+                     if let Some(default_p) = default_config.presets.iter().find(|p| p.id == preset.id) {
+                         // Restore to default (reset content to factory state)
+                         preset = default_p.clone();
+                         changed = true;
+                     }
+                }
+            });
         } else {
             // Custom presets: editable name
             if ui.add(egui::TextEdit::singleline(&mut preset.name).font(egui::TextStyle::Heading)).changed() {

@@ -111,6 +111,8 @@ pub struct LocaleText {
      pub tips_title: &'static str,
      pub tips_list: Vec<&'static str>,
      pub tips_click_hint: &'static str,
+     pub restore_preset_btn: &'static str,
+     pub restore_preset_tooltip: &'static str,
      }
 
 impl LocaleText {
@@ -237,6 +239,8 @@ impl LocaleText {
                    "Bạn không thể đổi tên các Cấu hình có sẵn nhưng tạo Cấu hình mới thì đổi được bình thường nha!",
                    "Thư viện lịch sử kết quả có cơ chế tự dọn kết quả cũ khi vượt Giới hạn lưu nên bạn khỏi lo nha!",
                 ],
+                restore_preset_btn: "Khôi phục",
+                restore_preset_tooltip: "Đặt lại cài đặt về mặc định",
                 },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -359,6 +363,8 @@ impl LocaleText {
                    "기본 프리셋 이름은 변경할 수 없지만, 새로 만든 프리셋은 변경 가능합니다!",
                    "히스토리는 저장 한도를 초과하면 오래된 항목부터 자동으로 삭제됩니다.",
                 ],
+                restore_preset_btn: "복원",
+                restore_preset_tooltip: "기본 설정으로 초기화",
                 },
                 _ => Self {
                  history_btn: "History",
@@ -481,6 +487,8 @@ impl LocaleText {
                    "You cannot rename default presets, but custom presets can be renamed freely!",
                    "The History library automatically cleans up old items when the limit is reached.",
                 ],
+                restore_preset_btn: "Restore",
+                restore_preset_tooltip: "Reset preset to default settings",
                 },
                 }
                 }
