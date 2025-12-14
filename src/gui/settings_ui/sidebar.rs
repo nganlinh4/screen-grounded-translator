@@ -68,7 +68,7 @@ pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
         ("preset_desc", _) => "Describe image".to_string(),
         ("preset_ask_image", _) => "Ask about image".to_string(),
         ("preset_translate_select", _) => "Trans (Select text)".to_string(),
-        ("preset_select_translate_replace", _) => "Select-Translate-Replace".to_string(),
+        ("preset_select_translate_replace", _) => "Select-Trans-Replace".to_string(),
         ("preset_fix_grammar", _) => "Fix Grammar".to_string(),
         ("preset_rephrase", _) => "Rephrase".to_string(),
         ("preset_make_formal", _) => "Make Formal".to_string(),

@@ -223,10 +223,10 @@ impl Default for Config {
             }
         ];
 
-        // 3b. Select-Translate-Replace (Bôi-Dịch-Thay)
+        // 3b. Select-Trans-Replace (Bôi-Dịch-Thay)
         let mut p3b = Preset::default();
         p3b.id = "preset_select_translate_replace".to_string();
-        p3b.name = "Select-Translate-Replace".to_string();
+        p3b.name = "Select-Trans-Replace".to_string();
         p3b.preset_type = "text".to_string();
         p3b.text_input_mode = "select".to_string();
         p3b.auto_paste = true; // Replace original text
