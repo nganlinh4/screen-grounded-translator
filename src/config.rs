@@ -453,6 +453,25 @@ impl Default for Config {
             }
         ];
 
+        // 5b. Internet Search (Tìm kiếm internet)
+        let mut p5b = Preset::default();
+        p5b.id = "preset_internet_search".to_string();
+        p5b.name = "Internet Search".to_string();
+        p5b.preset_type = "text".to_string();
+        p5b.text_input_mode = "type".to_string();
+        p5b.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "compound".to_string(),
+                prompt: "Search the internet for information about the following query and provide a comprehensive summary. Include key facts, recent developments, and relevant details with clickable links to sources if possible. Format the output as markdown creatively. Only OUTPUT the markdown, no file indicator or triple backticks.".to_string(),
+                streaming_enabled: true,
+                render_mode: "markdown".to_string(),
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
+
         // 6. OCR Preset
         let mut p6 = Preset::default();
         p6.id = "preset_ocr".to_string();
@@ -677,7 +696,7 @@ impl Default for Config {
             api_key: "".to_string(),
             gemini_api_key: "".to_string(),
             presets: vec![
-                p1, p7, p2, p3, p3b, p3c, p3d, p3e, p3f, p3g, p4, p4b, p5, p6, p8, p9, p10, p11, p12, p13, p14, p15, p16
+                p1, p7, p2, p3, p3b, p3c, p3d, p3e, p3f, p3g, p4, p4b, p5, p5b, p6, p8, p9, p10, p11, p12, p13, p14, p15, p16
             ],
             active_preset_idx: 0,
             theme_mode: ThemeMode::System,

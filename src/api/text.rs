@@ -124,7 +124,7 @@ where
                     { "role": "user", "content": prompt }
                 ],
                 "temperature": 1,
-                "max_completion_tokens": 2048,
+                "max_completion_tokens": 8192,
                 "stream": false,
                 "compound_custom": {
                     "tools": {
@@ -491,7 +491,7 @@ where
                         { "role": "user", "content": final_prompt }
                     ],
                     "temperature": 1,
-                    "max_completion_tokens": 2048,
+                    "max_completion_tokens": 8192,
                     "stream": false,
                     "compound_custom": {
                         "tools": {

@@ -133,7 +133,7 @@ where
                     }
                 ],
                 "temperature": 0.1,
-                "max_completion_tokens": 1024,
+                "max_completion_tokens": 8192,
                 "stream": true
             })
         } else {
@@ -149,7 +149,7 @@ where
                     }
                 ],
                 "temperature": 0.1,
-                "max_completion_tokens": 1024,
+                "max_completion_tokens": 8192,
                 "stream": false
             });
             
