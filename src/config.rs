@@ -329,9 +329,10 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Explain what this code does in {language1}. Be concise but thorough. Mention the purpose, key logic, and any important patterns or techniques used.".to_string(),
+                prompt: "Explain what this code does in {language1}. Be concise but thorough. Mention the purpose, key logic, and any important patterns or techniques used. Format the output as a markdown. Only OUTPUT the markdown, no file indicator or triple backticks.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
+                render_mode: "markdown".to_string(),
                 show_overlay: true,
                 auto_copy: false,
                 ..Default::default()
@@ -350,6 +351,7 @@ impl Default for Config {
                 prompt: "Extract all data from any tables, forms, or structured content in this image. Format the output as a markdown table. Output ONLY the table, no explanations.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: false,
+                render_mode: "markdown".to_string(),
                 show_overlay: true,
                 auto_copy: true,
                 ..Default::default()
@@ -506,10 +508,11 @@ impl Default for Config {
         p8.blocks = vec![
             ProcessingBlock {
                 block_type: "image".to_string(),
-                model: "scout".to_string(),
-                prompt: "Analyze this image and summarize its content in {language1}. Only return the summary text, super concisely.".to_string(),
+                model: "maverick".to_string(),
+                prompt: "Analyze this image and summarize its content in {language1}. Only return the summary text, super concisely. Format the output as a markdown. Only OUTPUT the markdown, no file indicator or triple backticks.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
+                render_mode: "markdown".to_string(),
                 show_overlay: true,
                 auto_copy: false,
                 ..Default::default()
@@ -524,10 +527,11 @@ impl Default for Config {
         p9.blocks = vec![
             ProcessingBlock {
                 block_type: "image".to_string(),
-                model: "scout".to_string(),
-                prompt: "Describe this image in {language1}.".to_string(),
+                model: "maverick".to_string(),
+                prompt: "Describe this image in {language1}. Format the output as a markdown. Only OUTPUT the markdown, no file indicator or triple backticks.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
+                render_mode: "markdown".to_string(),
                 show_overlay: true,
                 auto_copy: false,
                 ..Default::default()
@@ -547,6 +551,7 @@ impl Default for Config {
                 prompt: "".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
+                render_mode: "markdown".to_string(),
                 show_overlay: true,
                 auto_copy: false,
                 ..Default::default()

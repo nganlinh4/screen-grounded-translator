@@ -381,7 +381,13 @@ fn run_chain_step(
         let m_id = model_id.clone();
         let prov = provider.clone();
         let prompt_c = final_prompt.clone();
-        let stream_en = block.streaming_enabled;
+        // CRITICAL: Override streaming to false if render_mode is markdown
+        // Markdown + streaming doesn't work properly (causes missing content)
+        let stream_en = if block.render_mode == "markdown" {
+            false
+        } else {
+            block.streaming_enabled
+        };
         let render_md = block.render_mode.clone();
         
         let parent_clone = parent_hwnd.clone();
@@ -476,6 +482,14 @@ fn run_chain_step(
         // Use JSON format for single-block image extraction (helps with structured output)
         let use_json = block_idx == 0 && blocks.len() == 1 && blocks[0].block_type == "image"; 
         
+        // CRITICAL: Override streaming to false if render_mode is markdown
+        // Markdown + streaming doesn't work properly (causes missing content)
+        let actual_streaming_enabled = if block.render_mode == "markdown" {
+            false
+        } else {
+            block.streaming_enabled
+        };
+        
         let accumulated = Arc::new(Mutex::new(String::new()));
         let acc_clone = accumulated.clone();
         
@@ -491,7 +505,7 @@ fn run_chain_step(
                 let img = image::load_from_memory(&img_data).expect("Failed to load png").to_rgba8();
                 translate_image_streaming(
                     &groq_key, &gemini_key, final_prompt, model_full_name, provider, img, 
-                    block.streaming_enabled, use_json, 
+                    actual_streaming_enabled, use_json, 
                     |chunk| {
                         let mut t = acc_clone.lock().unwrap(); t.push_str(chunk);
                         if let Some(h) = my_hwnd { 
@@ -523,7 +537,7 @@ fn run_chain_step(
             // Text Block
             translate_text_streaming(
                 &groq_key, &gemini_key, input_text, final_prompt, // CHANGED: Pass final_prompt instead of selected_language
-                model_full_name, provider, block.streaming_enabled, false,
+                model_full_name, provider, actual_streaming_enabled, false,
                 |chunk| {
                     let mut t = acc_clone.lock().unwrap(); t.push_str(chunk);
                     if let Some(h) = my_hwnd { 

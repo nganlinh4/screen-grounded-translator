@@ -392,21 +392,21 @@ impl SnarlViewer<ChainNode> for ChainViewer {
                             }
                             
                             if *show_overlay {
-                                // Render Mode Dropdown (Normal, Stream, Markdown, Markdown Stream)
+                                // Render Mode Dropdown (Normal, Stream, Markdown)
                                 let current_mode_label = match (render_mode.as_str(), *streaming_enabled) {
-                                    ("markdown", true) => match self.ui_language.as_str() { "vi" => "Đẹp (Stream)", "ko" => "MarkD (Strm)", _ => "MarkD (Strm)" },
-                                    ("markdown", false) => match self.ui_language.as_str() { "vi" => "Đẹp", "ko" => "마크다운", _ => "Markdown" },
+                                    ("markdown", _) => match self.ui_language.as_str() { "vi" => "Đẹp", "ko" => "마크다운", _ => "Markdown" },
                                     (_, true) => match self.ui_language.as_str() { "vi" => "Stream", "ko" => "스트림", _ => "Stream" },
                                     (_, false) => match self.ui_language.as_str() { "vi" => "Thường", "ko" => "일반", _ => "Normal" },
                                 };
 
                                 egui::ComboBox::from_id_salt(format!("render_mode_{:?}", node_id))
                                     .selected_text(current_mode_label)
+                                    .width(0.0)
                                     .show_ui(ui, |ui| {
-                                        let (lbl_norm, lbl_stm, lbl_md, lbl_mds) = match self.ui_language.as_str() {
-                                            "vi" => ("Thường", "Stream", "Đẹp", "Đẹp (Stream)"),
-                                            "ko" => ("일반", "스트림", "마크다운", "MarkD (Strm)"), 
-                                            _ => ("Normal", "Stream", "Markdown", "MarkD (Strm)"),
+                                        let (lbl_norm, lbl_stm, lbl_md) = match self.ui_language.as_str() {
+                                            "vi" => ("Thường", "Stream", "Đẹp"),
+                                            "ko" => ("일반", "스트림", "마크다운"), 
+                                            _ => ("Normal", "Stream", "Markdown"),
                                         };
 
                                         if ui.selectable_label(render_mode == "plain" && !*streaming_enabled, lbl_norm).clicked() {
@@ -419,14 +419,9 @@ impl SnarlViewer<ChainNode> for ChainViewer {
                                             *streaming_enabled = true;
                                             self.changed = true;
                                         }
-                                        if ui.selectable_label(render_mode == "markdown" && !*streaming_enabled, lbl_md).clicked() {
+                                        if ui.selectable_label(render_mode == "markdown", lbl_md).clicked() {
                                             *render_mode = "markdown".to_string();
                                             *streaming_enabled = false;
-                                            self.changed = true;
-                                        }
-                                        if ui.selectable_label(render_mode == "markdown" && *streaming_enabled, lbl_mds).clicked() {
-                                            *render_mode = "markdown".to_string();
-                                            *streaming_enabled = true;
                                             self.changed = true;
                                         }
                                     });
@@ -504,21 +499,21 @@ impl SnarlViewer<ChainNode> for ChainViewer {
                             }
                             
                             if *show_overlay {
-                                // Render Mode Dropdown (Normal, Stream, Markdown, Markdown Stream)
+                                // Render Mode Dropdown (Normal, Stream, Markdown)
                                 let current_mode_label = match (render_mode.as_str(), *streaming_enabled) {
-                                    ("markdown", true) => match self.ui_language.as_str() { "vi" => "Đẹp (Stream)", "ko" => "MarkD (Strm)", _ => "MarkD (Strm)" },
-                                    ("markdown", false) => match self.ui_language.as_str() { "vi" => "Đẹp", "ko" => "마크다운", _ => "Markdown" },
+                                    ("markdown", _) => match self.ui_language.as_str() { "vi" => "Đẹp", "ko" => "마크다운", _ => "Markdown" },
                                     (_, true) => match self.ui_language.as_str() { "vi" => "Stream", "ko" => "스트림", _ => "Stream" },
                                     (_, false) => match self.ui_language.as_str() { "vi" => "Thường", "ko" => "일반", _ => "Normal" },
                                 };
 
                                 egui::ComboBox::from_id_salt(format!("render_mode_{:?}", node_id))
                                     .selected_text(current_mode_label)
+                                    .width(0.0)
                                     .show_ui(ui, |ui| {
-                                        let (lbl_norm, lbl_stm, lbl_md, lbl_mds) = match self.ui_language.as_str() {
-                                            "vi" => ("Thường", "Stream", "Đẹp", "Đẹp (Stream)"),
-                                            "ko" => ("일반", "스트림", "마크다운", "MarkD (Strm)"), 
-                                            _ => ("Normal", "Stream", "Markdown", "MarkD (Strm)"),
+                                        let (lbl_norm, lbl_stm, lbl_md) = match self.ui_language.as_str() {
+                                            "vi" => ("Thường", "Stream", "Đẹp"),
+                                            "ko" => ("일반", "스트림", "마크다운"), 
+                                            _ => ("Normal", "Stream", "Markdown"),
                                         };
 
                                         if ui.selectable_label(render_mode == "plain" && !*streaming_enabled, lbl_norm).clicked() {
@@ -531,14 +526,9 @@ impl SnarlViewer<ChainNode> for ChainViewer {
                                             *streaming_enabled = true;
                                             self.changed = true;
                                         }
-                                        if ui.selectable_label(render_mode == "markdown" && !*streaming_enabled, lbl_md).clicked() {
+                                        if ui.selectable_label(render_mode == "markdown", lbl_md).clicked() {
                                             *render_mode = "markdown".to_string();
                                             *streaming_enabled = false;
-                                            self.changed = true;
-                                        }
-                                        if ui.selectable_label(render_mode == "markdown" && *streaming_enabled, lbl_mds).clicked() {
-                                            *render_mode = "markdown".to_string();
-                                            *streaming_enabled = true;
                                             self.changed = true;
                                         }
                                     });
