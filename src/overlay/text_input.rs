@@ -134,6 +134,7 @@ pub fn show(
 
         SetFocus(h_edit);
         ShowWindow(hwnd, SW_SHOW);
+        SetForegroundWindow(hwnd); // Ensure focus stealing for both keyboard and mouse hotkeys
         UpdateWindow(hwnd);
         
         // Start Fade Timer (16ms = ~60fps)
