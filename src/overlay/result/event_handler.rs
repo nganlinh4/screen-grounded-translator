@@ -378,6 +378,9 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         let h = 40; 
                         SetWindowPos(h_edit, HWND_TOP, 10, 10, w, h, SWP_SHOWWINDOW);
                         set_rounded_edit_region(h_edit, w, h);
+                        
+                        // FIX: Activate window so Edit control can receive focus immediately
+                        SetForegroundWindow(hwnd);
                         SetFocus(h_edit);
                     } else {
                         ShowWindow(h_edit, SW_HIDE);

@@ -182,6 +182,10 @@ pub fn create_result_window(
             let edit_h = 40;
             SetWindowPos(h_edit, HWND_TOP, 10, 10, edit_w, edit_h, SWP_SHOWWINDOW);
             set_rounded_edit_region(h_edit, edit_w, edit_h);
+            
+            // FIX: Activate window so Edit control can receive focus immediately
+            // WS_EX_NOACTIVATE prevents click-activation, so we must force it here.
+            SetForegroundWindow(hwnd);
             SetFocus(h_edit);
         }
         
