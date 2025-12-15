@@ -45,6 +45,24 @@ pub fn cancel_input() {
     }
 }
 
+/// Get the edit control HWND of the active text input window
+/// Returns the child edit control where text should be pasted
+pub fn get_input_edit_hwnd() -> Option<HWND> {
+    unsafe {
+        if INPUT_HWND.0 != 0 && IsWindow(INPUT_HWND).as_bool() {
+            // Find the edit control child (HMENU 101)
+            let edit_hwnd = GetDlgItem(INPUT_HWND, 101);
+            if edit_hwnd.0 != 0 && IsWindow(edit_hwnd).as_bool() {
+                Some(edit_hwnd)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
 pub fn show(
     prompt_guide: String,
     ui_language: String,

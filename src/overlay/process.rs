@@ -584,9 +584,26 @@ fn run_chain_step(
             copy_to_clipboard(&final_text, HWND(0));
             
             if should_paste {
-                 if let Some(target) = target_window {
-                     crate::overlay::utils::force_focus_and_paste(target);
-                 }
+                // Check if text input window is active - if so, paste into it instead
+                if let Some(edit_hwnd) = text_input::get_input_edit_hwnd() {
+                    // Paste into the text input edit control
+                    unsafe {
+                        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, GetParent};
+                        use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+                        
+                        // Ensure the text input window has focus
+                        SetForegroundWindow(GetParent(edit_hwnd));
+                        SetFocus(edit_hwnd);
+                        
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        
+                        // Send Ctrl+V to the edit control
+                        crate::overlay::utils::force_focus_and_paste(edit_hwnd);
+                    }
+                } else if let Some(target) = target_window {
+                    // Normal paste to last active window
+                    crate::overlay::utils::force_focus_and_paste(target);
+                }
             }
         });
     }
