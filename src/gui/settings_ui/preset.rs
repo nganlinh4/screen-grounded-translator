@@ -22,7 +22,7 @@ pub fn render_preset_editor(
     let mut changed = false;
 
     // Constrain entire preset editor to a consistent width (matching history UI)
-    ui.set_max_width(450.0);
+    ui.set_max_width(475.0);
 
     // Check if this is a default preset (ID starts with "preset_")
     let is_default_preset = preset.id.starts_with("preset_");

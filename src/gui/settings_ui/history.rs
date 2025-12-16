@@ -13,10 +13,10 @@ pub fn render_history_panel(
 ) -> bool {
     let mut changed = false;
     
-    // FIX: Limit width to 450px for the entire history header UI
+    // FIX: Limit width to 475px for the entire history header UI
     // This prevents the search, slider, and buttons from stretching too wide
     ui.vertical(|ui| {
-        ui.set_max_width(450.0);
+        ui.set_max_width(475.0);
         
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -75,9 +75,9 @@ pub fn render_history_panel(
             ui.set_height(370.0);
             
             egui::ScrollArea::vertical().show(ui, |ui| {
-                // FIX: Limit width to 450px to prevent items from stretching too wide
+                // FIX: Limit width to 475px to prevent items from stretching too wide
                 // This improves readability on large monitors while maintaining the layout
-                ui.set_max_width(450.0);
+                ui.set_max_width(475.0);
                 
                 let mut id_to_delete = None;
                 
