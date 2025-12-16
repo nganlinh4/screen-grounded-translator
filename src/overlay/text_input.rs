@@ -273,14 +273,19 @@ pub fn show(
         let x = (screen_w - win_w) / 2;
         let y = (screen_h - win_h) / 2;
 
+        // NOTE: WS_EX_TOOLWINDOW was removed because it prevents Vietnamese IMEs 
+        // (EVkey, Unikey) from activating. Tool windows are treated specially by Windows
+        // and some IMEs don't associate with them. Using WS_EX_APPWINDOW ensures
+        // the window is treated as a normal application window for IME purposes.
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+            WS_EX_TOPMOST | WS_EX_APPWINDOW | WS_EX_LAYERED,
             class_name,
             w!("Text Input"),
             WS_POPUP,
             x, y, win_w, win_h,
             None, None, instance, None
         );
+
         INPUT_HWND = hwnd;
 
         // Start invisible for fade-in
