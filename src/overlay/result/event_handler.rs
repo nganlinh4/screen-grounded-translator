@@ -772,11 +772,14 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                       if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
                           state.is_refining = false;
                           if let Err(e) = result {
-                              let lang = {
+                              let (lang, model_full_name) = {
                                   let app = crate::APP.lock().unwrap();
-                                  app.config.ui_language.clone()
+                                  let full_name = crate::model_config::get_model_by_id(&model_id)
+                                      .map(|m| m.full_name)
+                                      .unwrap_or_else(|| model_id.clone());
+                                  (app.config.ui_language.clone(), full_name)
                               };
-                              let err_msg = crate::overlay::utils::get_error_message(&e.to_string(), &lang);
+                              let err_msg = crate::overlay::utils::get_error_message(&e.to_string(), &lang, Some(&model_full_name));
                               state.pending_text = Some(err_msg.clone());
                               state.full_text = err_msg;
                           }

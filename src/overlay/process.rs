@@ -497,6 +497,9 @@ fn run_chain_step(
         let accumulated = Arc::new(Mutex::new(String::new()));
         let acc_clone = accumulated.clone();
         
+        // Clone model name for use in error handling (original gets moved to API functions)
+        let model_name_for_error = model_full_name.clone();
+        
         // For image blocks: track if window has been shown and share processing_hwnd
         let window_shown = Arc::new(Mutex::new(block.block_type != "image")); // true for text, false for image
         let window_shown_clone = window_shown.clone();
@@ -577,7 +580,7 @@ fn run_chain_step(
             },
             Err(e) => {
                 let lang = config.ui_language.clone();
-                let err = crate::overlay::utils::get_error_message(&e.to_string(), &lang);
+                let err = crate::overlay::utils::get_error_message(&e.to_string(), &lang, Some(&model_name_for_error));
                 if let Some(h) = my_hwnd { update_window_text(h, &err); }
                 String::new()
             }
