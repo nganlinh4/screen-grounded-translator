@@ -29,6 +29,7 @@ struct WheelButton {
     preset_idx: usize,
     label: String,
     is_dismiss: bool,
+    color_idx: usize,  // For unique button colors
 }
 
 /// Calculate spiral positions using snake algorithm
@@ -162,6 +163,7 @@ pub fn show_preset_wheel(
             preset_idx: usize::MAX,
             label: dismiss_label.to_string(),
             is_dismiss: true,
+            color_idx: 0,
         });
         
         // Create preset buttons
@@ -182,6 +184,7 @@ pub fn show_preset_wheel(
                 preset_idx: *preset_idx,
                 label,
                 is_dismiss: false,
+                color_idx: i,  // Unique color per preset
             });
         }
         
@@ -371,7 +374,7 @@ unsafe fn paint_wheel_window(hwnd: HWND, width: i32, height: i32) {
     // Draw buttons
     for (i, btn) in WHEEL_BUTTONS.iter().enumerate() {
         let is_hovered = i as i32 == HOVERED_BUTTON;
-        draw_button(mem_dc, pixels, width, &btn.rect, &btn.label, btn.is_dismiss, is_hovered);
+        draw_button(mem_dc, pixels, width, &btn.rect, &btn.label, btn.is_dismiss, is_hovered, btn.color_idx);
     }
     
     // Update layered window
@@ -389,24 +392,62 @@ unsafe fn paint_wheel_window(hwnd: HWND, width: i32, height: i32) {
     ReleaseDC(None, screen_dc);
 }
 
-unsafe fn draw_button(dc: CreatedHDC, pixels: &mut [u32], stride: i32, rect: &RECT, label: &str, is_dismiss: bool, is_hovered: bool) {
+unsafe fn draw_button(dc: CreatedHDC, pixels: &mut [u32], stride: i32, rect: &RECT, label: &str, is_dismiss: bool, is_hovered: bool, color_idx: usize) {
+    // Beautiful color palette for presets (unhovered state)
+    // Each preset gets a unique, aesthetically pleasing dark color
+    const PRESET_COLORS: [u32; 12] = [
+        0xDD1E3A5F,  // Deep Blue
+        0xDD2D4A22,  // Forest Green
+        0xDD4A2C2C,  // Wine Red
+        0xDD3D2B4A,  // Royal Purple
+        0xDD4A3B22,  // Warm Brown
+        0xDD1A4040,  // Teal
+        0xDD3B2244,  // Plum
+        0xDD2B3D4A,  // Steel Blue
+        0xDD3D3D22,  // Olive
+        0xDD4A2244,  // Magenta Dark
+        0xDD224440,  // Dark Cyan
+        0xDD44332B,  // Sienna
+    ];
+    
+    // Hover colors - brighter, more saturated versions
+    const HOVER_COLORS: [u32; 12] = [
+        0xFF3366CC,  // Bright Blue
+        0xFF4CAF50,  // Green
+        0xFFE53935,  // Red
+        0xFF7E57C2,  // Purple
+        0xFFFF8F00,  // Amber
+        0xFF00ACC1,  // Cyan
+        0xFFAB47BC,  // Violet
+        0xFF42A5F5,  // Light Blue
+        0xFF9CCC65,  // Light Green
+        0xFFEC407A,  // Pink
+        0xFF26C6DA,  // Turquoise
+        0xFFFF7043,  // Deep Orange
+    ];
+    
     let (bg_color, text_color) = if is_dismiss {
         if is_hovered {
-            (0xFF442244, 0xFFFFFFFF) // Dark purple hover
+            (0xFF442244u32, 0xFFFFFFFFu32) // Dark purple hover
         } else {
-            (0xDD333333, 0xFFCCCCCC) // Dark gray
+            (0xDD333333u32, 0xFFCCCCCCu32) // Dark gray
         }
     } else {
+        let idx = color_idx % PRESET_COLORS.len();
         if is_hovered {
-            (0xFF2563EB, 0xFFFFFFFF) // Blue hover
+            (HOVER_COLORS[idx], 0xFFFFFFFFu32)
         } else {
-            (0xDD1F2937, 0xFFE5E7EB) // Gray-900
+            (PRESET_COLORS[idx], 0xFFE8E8E8u32)
         }
     };
     
-    let corner_radius = 6;
+    let corner_radius = 8.0f32;  // Slightly larger radius for smoother look
+    let feather = 1.5f32;        // Anti-aliasing feather width
     
-    // Draw rounded rectangle background
+    let w = (rect.right - rect.left) as f32;
+    let h = (rect.bottom - rect.top) as f32;
+    
+    // Draw rounded rectangle background with proper SDF anti-aliasing
     for y in rect.top..rect.bottom {
         for x in rect.left..rect.right {
             if x < 0 || y < 0 || x >= stride || y >= (pixels.len() as i32 / stride) { continue; }
@@ -414,36 +455,36 @@ unsafe fn draw_button(dc: CreatedHDC, pixels: &mut [u32], stride: i32, rect: &RE
             let idx = (y * stride + x) as usize;
             if idx >= pixels.len() { continue; }
             
-            // Check if inside rounded rectangle
-            let dx = (x - rect.left).min(rect.right - 1 - x);
-            let dy = (y - rect.top).min(rect.bottom - 1 - y);
+            // Calculate local coords relative to rect
+            let lx = (x - rect.left) as f32;
+            let ly = (y - rect.top) as f32;
             
-            let in_corner = dx < corner_radius && dy < corner_radius;
-            let corner_dist = if in_corner {
-                let cx = corner_radius - dx;
-                let cy = corner_radius - dy;
-                ((cx * cx + cy * cy) as f32).sqrt()
+            // Signed distance to rounded rectangle
+            // For each corner, calculate distance to the corner circle
+            let dist = rounded_rect_sdf(lx, ly, w, h, corner_radius);
+            
+            // Anti-aliasing: smooth transition at edges
+            let alpha_mult = if dist < -feather {
+                1.0  // Fully inside
+            } else if dist > feather {
+                0.0  // Fully outside
             } else {
-                0.0
+                // Smooth hermite interpolation for AA
+                let t = (dist + feather) / (2.0 * feather);
+                1.0 - t * t * (3.0 - 2.0 * t)  // smoothstep
             };
             
-            if in_corner && corner_dist > corner_radius as f32 {
-                continue; // Outside rounded corner
-            }
+            if alpha_mult <= 0.0 { continue; }
             
-            // Apply anti-aliasing at corners
-            let alpha_mult = if in_corner && corner_dist > (corner_radius - 1) as f32 {
-                1.0 - (corner_dist - (corner_radius - 1) as f32)
-            } else {
-                1.0
-            };
+            let base_alpha = ((bg_color >> 24) & 0xFF) as f32 / 255.0;
+            let final_alpha = (base_alpha * alpha_mult * 255.0) as u32;
             
-            let a = ((bg_color >> 24) as f32 * alpha_mult) as u32;
-            let r = ((bg_color >> 16) & 0xFF) * a / 255;
-            let g = ((bg_color >> 8) & 0xFF) * a / 255;
-            let b = (bg_color & 0xFF) * a / 255;
+            // Premultiplied alpha
+            let r = (((bg_color >> 16) & 0xFF) * final_alpha / 255) as u32;
+            let g = (((bg_color >> 8) & 0xFF) * final_alpha / 255) as u32;
+            let b = ((bg_color & 0xFF) * final_alpha / 255) as u32;
             
-            pixels[idx] = (a << 24) | (r << 16) | (g << 8) | b;
+            pixels[idx] = (final_alpha << 24) | (r << 16) | (g << 8) | b;
         }
     }
     
@@ -462,7 +503,7 @@ unsafe fn draw_button(dc: CreatedHDC, pixels: &mut [u32], stride: i32, rect: &RE
     let mut text_w = to_wstring(label);
     DrawTextW(dc, &mut text_w, &mut text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     
-    // Fix text alpha by finding white pixels and making them opaque
+    // Fix text alpha by finding bright pixels and making them opaque
     GdiFlush();
     for y in rect.top.max(0)..rect.bottom.min(pixels.len() as i32 / stride) {
         for x in rect.left.max(0)..rect.right.min(stride) {
@@ -485,6 +526,29 @@ unsafe fn draw_button(dc: CreatedHDC, pixels: &mut [u32], stride: i32, rect: &RE
     
     SelectObject(dc, old_font);
     let _ = DeleteObject(font);
+}
+
+/// Signed Distance Field for rounded rectangle
+/// Returns negative distance if inside, positive if outside
+fn rounded_rect_sdf(x: f32, y: f32, w: f32, h: f32, r: f32) -> f32 {
+    // Transform to first quadrant (symmetry)
+    let px = (x - w / 2.0).abs();
+    let py = (y - h / 2.0).abs();
+    
+    // Half-size minus radius
+    let hx = w / 2.0 - r;
+    let hy = h / 2.0 - r;
+    
+    // Distance to corner region
+    let dx = (px - hx).max(0.0);
+    let dy = (py - hy).max(0.0);
+    
+    // Outside corner: euclidean distance to corner circle minus radius
+    // Inside: max of distances to edges
+    let outside_dist = (dx * dx + dy * dy).sqrt() - r;
+    let inside_dist = (px - hx).max(py - hy).min(0.0);
+    
+    outside_dist.max(inside_dist)
 }
 
 /// Check if preset wheel is currently showing
