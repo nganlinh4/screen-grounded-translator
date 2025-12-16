@@ -125,6 +125,9 @@ pub struct LocaleText {
      pub search_synthesizing: &'static str,    // "SYNTHESIZING INFO..." / "ĐANG TỔNG HỢP THÔNG TIN..."
      pub search_analyzed_sources: &'static str, // "Analyzed {} sources" / "Đã phân tích {} nguồn"
      pub search_processing: &'static str,      // "Processing and summarizing results..." / "Đang xử lý và tóm tắt kết quả..."
+     // --- MASTER PRESET UI ---
+     pub controller_checkbox_label: &'static str, // "Bộ điều khiển" / "Controller" / "컨트롤러"
+     pub preset_wheel_dismiss: &'static str,     // "Hủy" / "Dismiss" / "취소"
      }
 
 impl LocaleText {
@@ -272,6 +275,9 @@ impl LocaleText {
                 search_synthesizing: "⚡ ĐANG TỔNG HỢP THÔNG TIN...",
                 search_analyzed_sources: "📊 Đã phân tích {} nguồn",
                 search_processing: "🧠 Đang xử lý và tóm tắt kết quả...",
+                // --- MASTER PRESET UI VI ---
+                controller_checkbox_label: "Bộ điều khiển",
+                preset_wheel_dismiss: "Hủy",
                 },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -415,6 +421,9 @@ impl LocaleText {
                    search_synthesizing: "⚡ 정보 종합 중...",
                    search_analyzed_sources: "📊 {} 소스 분석 완료",
                    search_processing: "🧠 결과 처리 및 요약 중...",
+                   // --- MASTER PRESET UI KO ---
+                   controller_checkbox_label: "컨트롤러",
+                   preset_wheel_dismiss: "취소",
                    },
                 _ => Self {
                  history_btn: "History",
@@ -558,6 +567,9 @@ impl LocaleText {
                    search_synthesizing: "⚡ SYNTHESIZING INFO...",
                    search_analyzed_sources: "📊 Analyzed {} sources",
                    search_processing: "🧠 Processing and summarizing results...",
+                   // --- MASTER PRESET UI EN ---
+                   controller_checkbox_label: "Controller",
+                   preset_wheel_dismiss: "Dismiss",
                    },
                 }
                 }

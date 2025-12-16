@@ -121,6 +121,16 @@ pub struct Preset {
 
     #[serde(default)]
     pub is_upcoming: bool,
+
+    // --- MASTER Preset Fields ---
+    // If true, this preset is a MASTER preset that shows the preset wheel for selection
+    #[serde(default)]
+    pub is_master: bool,
+    
+    // Controller UI mode: when enabled, hides advanced UI elements (nodegraph, paste controls, etc.)
+    // Default: true for MASTER presets, false for regular presets
+    #[serde(default)]
+    pub show_controller_ui: bool,
 }
 
 fn default_preset_type() -> String { "image".to_string() }
@@ -160,6 +170,8 @@ impl Default for Preset {
             text_input_mode: "select".to_string(),
             continuous_input: false,
             is_upcoming: false,
+            is_master: false,
+            show_controller_ui: false,
         }
     }
 }
@@ -803,10 +815,63 @@ impl Default for Config {
         p16.is_upcoming = true;
         p16.blocks = vec![];
 
+        // === MASTER PRESETS ===
+        // These presets show a preset wheel for the user to choose which preset to use
+
+        // 17. Image MASTER (Ảnh MASTER)
+        let mut pm1 = Preset::default();
+        pm1.id = "preset_image_master".to_string();
+        pm1.name = "Image MASTER".to_string();
+        pm1.preset_type = "image".to_string();
+        pm1.is_master = true;
+        pm1.show_controller_ui = true;
+        pm1.blocks = vec![]; // MASTER presets don't have their own blocks
+
+        // 18. Text-Select MASTER (Bôi MASTER)
+        let mut pm2 = Preset::default();
+        pm2.id = "preset_text_select_master".to_string();
+        pm2.name = "Text-Select MASTER".to_string();
+        pm2.preset_type = "text".to_string();
+        pm2.text_input_mode = "select".to_string();
+        pm2.is_master = true;
+        pm2.show_controller_ui = true;
+        pm2.blocks = vec![];
+
+        // 19. Text-Type MASTER (Gõ MASTER)
+        let mut pm3 = Preset::default();
+        pm3.id = "preset_text_type_master".to_string();
+        pm3.name = "Text-Type MASTER".to_string();
+        pm3.preset_type = "text".to_string();
+        pm3.text_input_mode = "type".to_string();
+        pm3.is_master = true;
+        pm3.show_controller_ui = true;
+        pm3.blocks = vec![];
+
+        // 20. Mic MASTER (Mic MASTER)
+        let mut pm4 = Preset::default();
+        pm4.id = "preset_audio_mic_master".to_string();
+        pm4.name = "Mic MASTER".to_string();
+        pm4.preset_type = "audio".to_string();
+        pm4.audio_source = "mic".to_string();
+        pm4.is_master = true;
+        pm4.show_controller_ui = true;
+        pm4.blocks = vec![];
+
+        // 21. Device Audio MASTER (Tiếng MASTER)
+        let mut pm5 = Preset::default();
+        pm5.id = "preset_audio_device_master".to_string();
+        pm5.name = "Device Audio MASTER".to_string();
+        pm5.preset_type = "audio".to_string();
+        pm5.audio_source = "device".to_string();
+        pm5.is_master = true;
+        pm5.show_controller_ui = true;
+        pm5.blocks = vec![];
+
         Self {
             api_key: "".to_string(),
             gemini_api_key: "".to_string(),
             presets: vec![
+                pm1, pm2, pm3, pm4, pm5, // MASTER presets first
                 p1, p7, p2, p3, p3b, p3c, p3d, p3e, p3f, p3g, p4, p4b, p5, p5b, p6, p8, p9, p10, p11, p12, p13, p14, p14b, p14c, p15, p16
             ],
             active_preset_idx: 0,

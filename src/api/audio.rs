@@ -303,9 +303,37 @@ pub fn record_audio_and_transcribe(
         writer.finalize().expect("Failed to finalize WAV");
     }
     let wav_data = wav_cursor.into_inner();
+
+    // For MASTER presets, show the wheel BEFORE transcription to get the actual preset
+    let working_preset = if preset.is_master {
+        // Get cursor position for wheel center (use center of screen)
+        let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+        let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+        let cursor_pos = POINT { x: screen_w / 2, y: screen_h / 2 };
+        
+        // Show preset wheel - filter by audio source
+        let audio_mode = Some(preset.audio_source.as_str());
+        let selected = crate::overlay::preset_wheel::show_preset_wheel("audio", audio_mode, cursor_pos);
+        
+        if let Some(idx) = selected {
+            // Get the selected preset from config
+            let app = crate::APP.lock().unwrap();
+            app.config.presets[idx].clone()
+        } else {
+            // User dismissed wheel - close overlay and cancel
+            unsafe {
+                if IsWindow(overlay_hwnd).as_bool() {
+                    PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+            }
+            return;
+        }
+    } else {
+        preset.clone()
+    };
     
     // Get audio block (Block 0) - use new block-based structure
-    let audio_block = match preset.blocks.first() {
+    let audio_block = match working_preset.blocks.first() {
         Some(b) => b.clone(),
         None => {
             eprintln!("Error: Audio preset has no blocks configured");
@@ -387,11 +415,12 @@ pub fn record_audio_and_transcribe(
                 app.history.save_audio(wav_data_for_history, transcription_text.clone());
             }
             
+            // Use working_preset (already resolved by wheel for MASTER presets)
             let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
             let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
             
             // Use block count to determine layout - multiple blocks means multi-window layout
-            let has_multiple_blocks = preset.blocks.len() > 1;
+            let has_multiple_blocks = working_preset.blocks.len() > 1;
             let (rect, retranslate_rect) = if has_multiple_blocks {
                 let w = 600;
                 let h = 300;
@@ -413,7 +442,7 @@ pub fn record_audio_and_transcribe(
             };
 
             // Pass overlay_hwnd to chain processing - it will be kept alive until first visible block
-            crate::overlay::process::show_audio_result(preset, transcription_text, rect, retranslate_rect, overlay_hwnd);
+            crate::overlay::process::show_audio_result(working_preset, transcription_text, rect, retranslate_rect, overlay_hwnd);
         },
         Err(e) => {
             eprintln!("Transcription error: {}", e);

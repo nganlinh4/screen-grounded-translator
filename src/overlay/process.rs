@@ -126,15 +126,79 @@ pub fn start_text_processing(
         let config_shared = Arc::new(config.clone());
         let preset_shared = Arc::new(preset.clone());
         let ui_lang = config.ui_language.clone();
-        let continuous_mode = preset.continuous_input;
+        // For MASTER presets: always keep window open initially (continuous_mode=true)
+        // We'll decide whether to close based on the SELECTED preset after wheel selection
+        let continuous_mode = if preset.is_master { true } else { preset.continuous_input };
         
         // For continuous mode: store the previous chain's cancellation token so we can close old windows
         let last_cancel_token: Arc<Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>> = 
             Arc::new(Mutex::new(None));
         let last_cancel_token_clone = last_cancel_token.clone();
         
+        // Check if this is a MASTER preset
+        let is_master = preset.is_master;
+        
+        // CRITICAL: For MASTER presets, store the selected preset index after first wheel selection.
+        // Subsequent Enter presses will use this stored preset directly (no wheel).
+        // The text input window "transfers" to the selected preset.
+        let selected_preset_idx: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
+        let selected_preset_idx_clone = selected_preset_idx.clone();
+        
         text_input::show(guide_text, ui_lang, cancel_hotkey_name, continuous_mode, move |user_text, input_hwnd| {
-            let is_continuous = (*preset_shared).continuous_input;
+            // Check if we already selected a preset from the wheel (subsequent submissions)
+            let already_selected = selected_preset_idx_clone.lock().unwrap().clone();
+            
+            let (final_preset, final_config, is_continuous) = if let Some(preset_idx) = already_selected {
+                // Already selected from wheel previously - use that preset directly (no wheel)
+                let app = crate::APP.lock().unwrap();
+                let p = app.config.presets[preset_idx].clone();
+                let c = app.config.clone();
+                let continuous = p.continuous_input;
+                (p, c, continuous)
+            } else if is_master {
+                // First time MASTER preset - show the preset wheel
+                let mut cursor_pos = POINT::default();
+                unsafe { GetCursorPos(&mut cursor_pos); }
+                
+                // Show preset wheel - this blocks until user makes selection
+                let selected = super::preset_wheel::show_preset_wheel("text", Some("type"), cursor_pos);
+                
+                if let Some(idx) = selected {
+                    // Store the selected preset index for subsequent submissions
+                    *selected_preset_idx_clone.lock().unwrap() = Some(idx);
+                    
+                    // Refocus the text input window and editor after wheel closes
+                    text_input::refocus_editor();
+                    
+                    // Get the selected preset from config
+                    let app = crate::APP.lock().unwrap();
+                    let p = app.config.presets[idx].clone();
+                    let c = app.config.clone();
+                    let continuous = p.continuous_input;
+
+                    // Update UI header with the new preset's name
+                    let localized_name = crate::gui::settings_ui::get_localized_preset_name(&p.id, &c.ui_language);
+                    // Find first hotkey name for this preset if available
+                    let hk_name = p.hotkeys.first().map(|h| h.name.clone()).unwrap_or_default();
+                    
+                    let new_guide_text = if !hk_name.is_empty() {
+                        format!("{} [{}]", localized_name, hk_name)
+                    } else {
+                        localized_name
+                    };
+                    text_input::update_ui_text(new_guide_text);
+
+                    (p, c, continuous)
+                } else {
+                    // User dismissed wheel - refocus and allow retry
+                    text_input::refocus_editor();
+                    return;
+                }
+            } else {
+                // Normal non-MASTER preset
+                let is_continuous = (*preset_shared).continuous_input;
+                ((*preset_shared).clone(), (*config_shared).clone(), is_continuous)
+            };
             
             if !is_continuous {
                 // Normal mode: close input window
@@ -169,8 +233,8 @@ pub fn start_text_processing(
             };
             
             // Start processing and track the new cancellation token for continuous mode
-            let config_clone = (*config_shared).clone();
-            let preset_clone = (*preset_shared).clone();
+            let config_clone = final_config;
+            let preset_clone = final_preset;
             let last_token_update = last_cancel_token_clone.clone();
             
             std::thread::spawn(move || {

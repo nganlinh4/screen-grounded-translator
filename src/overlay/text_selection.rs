@@ -142,16 +142,47 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
                     }
 
                     if !clipboard_text.trim().is_empty() && !TAG_ABORT_SIGNAL.load(Ordering::Relaxed) {
-                        // Text found - process it
-                        let (config, preset, screen_w, screen_h) = {
+                        // Text found - check if this is a MASTER preset
+                        let (is_master, original_preset_type) = {
+                            let app = APP.lock().unwrap();
+                            let p = &app.config.presets[preset_idx];
+                            (p.is_master, p.text_input_mode.clone())
+                        };
+                        
+                        let final_preset_idx = if is_master {
+                            // Get cursor position for wheel center
+                            let mut cursor_pos = POINT { x: 0, y: 0 };
+                            GetCursorPos(&mut cursor_pos);
+                            
+                            // Show preset wheel on main thread
+                            let selected = super::preset_wheel::show_preset_wheel("text", Some("select"), cursor_pos);
+                            
+                            if let Some(idx) = selected {
+                                idx
+                            } else {
+                                // User dismissed wheel - cancel operation
+                                PostMessageW(hwnd_copy, WM_CLOSE, WPARAM(0), LPARAM(0));
+                                return;
+                            }
+                        } else {
+                            preset_idx
+                        };
+                        
+                        // Process with the selected preset
+                        let (config, mut preset, screen_w, screen_h) = {
                             let app = APP.lock().unwrap(); 
                             (
                                 app.config.clone(),
-                                app.config.presets[preset_idx].clone(),
+                                app.config.presets[final_preset_idx].clone(),
                                 GetSystemMetrics(SM_CXSCREEN),
                                 GetSystemMetrics(SM_CYSCREEN)
                             )
                         }; 
+
+                        // CRITICAL FIX: Force text_input_mode to "select" so the text is processed
+                        // directly, not re-opened in a text input modal.
+                        // This is the key fix for "Bôi MASTER" - we already have the text!
+                        preset.text_input_mode = "select".to_string();
 
                         let center_rect = RECT { left: (screen_w - 700) / 2, top: (screen_h - 300) / 2, right: (screen_w + 700) / 2, bottom: (screen_h + 300) / 2 };
                         super::process::start_text_processing(clipboard_text, center_rect, config, preset, String::new(), String::new());

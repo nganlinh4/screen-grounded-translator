@@ -199,6 +199,9 @@ fn main() -> eframe::Result<()> {
         run_hotkey_listener();
     });
 
+    // Warmup text input window (hidden startup)
+    overlay::text_input::warmup();
+
     // --- TRAY MENU SETUP ---
     let tray_menu = Menu::new();
     let settings_i = MenuItem::with_id("1002", "Settings", true, None);

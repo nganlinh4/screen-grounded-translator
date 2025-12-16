@@ -43,6 +43,11 @@ pub fn render_preset_editor(
             // Default presets: show localized name as read-only label
             ui.label(egui::RichText::new(&display_name).heading());
             
+            // Controller checkbox (Bộ điều khiển) - between title and restore button
+            if ui.checkbox(&mut preset.show_controller_ui, text.controller_checkbox_label).clicked() {
+                changed = true;
+            }
+            
             // Restore Button (Right aligned)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(text.restore_preset_btn).on_hover_text(text.restore_preset_tooltip).clicked() {
@@ -58,6 +63,11 @@ pub fn render_preset_editor(
         } else {
             // Custom presets: editable name
             if ui.add(egui::TextEdit::singleline(&mut preset.name).font(egui::TextStyle::Heading)).changed() {
+                changed = true;
+            }
+            
+            // Controller checkbox (Bộ điều khiển) - also for custom presets
+            if ui.checkbox(&mut preset.show_controller_ui, text.controller_checkbox_label).clicked() {
                 changed = true;
             }
         }
@@ -105,15 +115,23 @@ pub fn render_preset_editor(
         ui.add_space(10.0);
 
         // Operation Mode on same line (if applicable)
+        // When show_controller_ui is enabled:
+        // - Image: Hide Phương thức selector
+        // - Text: Keep Phương thức visible, but hide Nhập liên tục
+        // - Audio: Hide Phương thức selector
         if preset.preset_type == "image" {
-            ui.label(text.prompt_mode_label);
-            egui::ComboBox::from_id_source("prompt_mode_combo")
-                .selected_text(if preset.prompt_mode == "dynamic" { text.prompt_mode_dynamic } else { text.prompt_mode_fixed })
-                .show_ui(ui, |ui| {
-                    if ui.selectable_value(&mut preset.prompt_mode, "fixed".to_string(), text.prompt_mode_fixed).clicked() { changed = true; }
-                    if ui.selectable_value(&mut preset.prompt_mode, "dynamic".to_string(), text.prompt_mode_dynamic).clicked() { changed = true; }
-                });
+            // Hide prompt mode selector when controller UI is enabled
+            if !preset.show_controller_ui {
+                ui.label(text.prompt_mode_label);
+                egui::ComboBox::from_id_source("prompt_mode_combo")
+                    .selected_text(if preset.prompt_mode == "dynamic" { text.prompt_mode_dynamic } else { text.prompt_mode_fixed })
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_value(&mut preset.prompt_mode, "fixed".to_string(), text.prompt_mode_fixed).clicked() { changed = true; }
+                        if ui.selectable_value(&mut preset.prompt_mode, "dynamic".to_string(), text.prompt_mode_dynamic).clicked() { changed = true; }
+                    });
+            }
         } else if preset.preset_type == "text" {
+            // Text: keep Phương thức visible always
             ui.label(text.text_input_mode_label);
             egui::ComboBox::from_id_source("text_input_mode_combo")
                 .selected_text(if preset.text_input_mode == "type" { text.text_mode_type } else { text.text_mode_select })
@@ -122,43 +140,47 @@ pub fn render_preset_editor(
                     if ui.selectable_value(&mut preset.text_input_mode, "type".to_string(), text.text_mode_type).clicked() { changed = true; }
                 });
             
-            // Show "Continuous Input" checkbox only when typing mode is selected
-            if preset.text_input_mode == "type" {
+            // Show "Continuous Input" checkbox only when typing mode is selected AND controller UI is off
+            if preset.text_input_mode == "type" && !preset.show_controller_ui {
                 if ui.checkbox(&mut preset.continuous_input, text.continuous_input_label).clicked() { changed = true; }
             }
         } else if preset.preset_type == "audio" {
-            // Audio: Cách hoạt động dropdown (same line as preset type)
-            let mode_label = match config.ui_language.as_str() {
-                "vi" => "Phương thức:",
-                "ko" => "작동 방식:",
-                _ => "Mode:",
-            };
-            ui.label(mode_label);
-            
-            let mode_record = match config.ui_language.as_str() {
-                "vi" => "Thu âm rồi xử lý",
-                "ko" => "녹음 후 처리",
-                _ => "Record then Process",
-            };
-            let mode_realtime = match config.ui_language.as_str() {
-                "vi" => "Xử lý thời gian thực (upcoming)",
-                "ko" => "실시간 처리 (예정)",
-                _ => "Realtime Processing (upcoming)",
-            };
-            
-            egui::ComboBox::from_id_source("audio_operation_mode_combo")
-                .selected_text(mode_record)
-                .show_ui(ui, |ui| {
-                    // Active option
-                    ui.selectable_label(true, mode_record);
-                    // Grayed out upcoming option
-                    ui.add_enabled(false, egui::SelectableLabel::new(false, mode_realtime));
-                });
+            // Hide audio mode selector when controller UI is enabled
+            if !preset.show_controller_ui {
+                // Audio: Cách hoạt động dropdown (same line as preset type)
+                let mode_label = match config.ui_language.as_str() {
+                    "vi" => "Phương thức:",
+                    "ko" => "작동 방식:",
+                    _ => "Mode:",
+                };
+                ui.label(mode_label);
+                
+                let mode_record = match config.ui_language.as_str() {
+                    "vi" => "Thu âm rồi xử lý",
+                    "ko" => "녹음 후 처리",
+                    _ => "Record then Process",
+                };
+                let mode_realtime = match config.ui_language.as_str() {
+                    "vi" => "Xử lý thời gian thực (upcoming)",
+                    "ko" => "실시간 처리 (예정)",
+                    _ => "Realtime Processing (upcoming)",
+                };
+                
+                egui::ComboBox::from_id_source("audio_operation_mode_combo")
+                    .selected_text(mode_record)
+                    .show_ui(ui, |ui| {
+                        // Active option
+                        ui.selectable_label(true, mode_record);
+                        // Grayed out upcoming option
+                        ui.add_enabled(false, egui::SelectableLabel::new(false, mode_realtime));
+                    });
+            }
         }
     });
 
     // Audio-specific options on separate row (audio source etc)
-    if preset.preset_type == "audio" {
+    // Hide when controller UI is enabled
+    if preset.preset_type == "audio" && !preset.show_controller_ui {
         ui.horizontal(|ui| {
             ui.label(text.audio_source_label);
             if ui.radio_value(&mut preset.audio_source, "mic".to_string(), text.audio_src_mic).clicked() { changed = true; }
@@ -172,15 +194,15 @@ pub fn render_preset_editor(
     // Determine visibility conditions
     let has_any_auto_copy = preset.blocks.iter().any(|b| b.auto_copy);
     
-    // Show auto-paste control whenever any block has auto_copy enabled
-    if has_any_auto_copy {
+    // Show auto-paste control whenever any block has auto_copy enabled AND controller UI is off
+    if has_any_auto_copy && !preset.show_controller_ui {
         ui.horizontal(|ui| {
             if ui.checkbox(&mut preset.auto_paste, text.auto_paste_label).clicked() { changed = true; }
             
             // Auto Newline: visible when any block has auto_copy
             if ui.checkbox(&mut preset.auto_paste_newline, text.auto_paste_newline_label).clicked() { changed = true; }
         });
-    } else {
+    } else if !has_any_auto_copy {
         // No auto_copy means auto_paste must be off
         if preset.auto_paste {
             preset.auto_paste = false;
@@ -190,7 +212,7 @@ pub fn render_preset_editor(
 
     ui.add_space(10.0);
 
-    // Hotkeys
+    // Hotkeys - always visible, even when controller UI is enabled
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(text.hotkeys_section).strong());
         if *recording_hotkey_for_preset == Some(preset_idx) {
@@ -213,14 +235,17 @@ pub fn render_preset_editor(
     }
 
     // --- PROCESSING CHAIN UI ---
-    ui.push_id("node_graph_area", |ui| {
-        egui::Frame::none().fill(ui.visuals().extreme_bg_color).inner_margin(4.0).show(ui, |ui| {
-            ui.set_min_height(325.0); // Allocate space for the graph
-            if render_node_graph(ui, snarl, &config.ui_language, &preset.prompt_mode) {
-                changed = true;
-            }
+    // Hide nodegraph when controller UI is enabled
+    if !preset.show_controller_ui {
+        ui.push_id("node_graph_area", |ui| {
+            egui::Frame::none().fill(ui.visuals().extreme_bg_color).inner_margin(4.0).show(ui, |ui| {
+                ui.set_min_height(325.0); // Allocate space for the graph
+                if render_node_graph(ui, snarl, &config.ui_language, &preset.prompt_mode) {
+                    changed = true;
+                }
+            });
         });
-    });
+    }
 
 
     // Apply Logic Updates (Radio Button Sync & Auto Paste)

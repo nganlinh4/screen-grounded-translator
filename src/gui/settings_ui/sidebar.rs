@@ -5,8 +5,8 @@ use crate::gui::icons::{Icon, icon_button, draw_icon_static, icon_button_sized};
 use super::ViewMode;
 
 /// Get localized preset name for default presets (public for reuse in other modules)
-pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
-    match (preset_id, lang) {
+pub fn get_localized_preset_name(preset_id: &str, lang_code: &str) -> String {
+    match (preset_id, lang_code) {
         // Vietnamese
         ("preset_translate", "vi") => "Dịch vùng".to_string(),
         ("preset_extract_retranslate", "vi") => "Dịch vùng (CHUẨN)".to_string(),
@@ -34,6 +34,12 @@ pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
         ("preset_omniscient_god", "vi") => "Thần Trí tuệ".to_string(),
         ("preset_video_summary_placeholder", "vi") => "Tóm tắt video (sắp có)".to_string(),
         ("preset_realtime_audio_translate", "vi") => "Dịch cabin (sắp có)".to_string(),
+        // MASTER presets - Vietnamese
+        ("preset_image_master", "vi") => "Ảnh MASTER".to_string(),
+        ("preset_text_select_master", "vi") => "Bôi MASTER".to_string(),
+        ("preset_text_type_master", "vi") => "Gõ MASTER".to_string(),
+        ("preset_audio_mic_master", "vi") => "Mic MASTER".to_string(),
+        ("preset_audio_device_master", "vi") => "Tiếng MASTER".to_string(),
         
         // Korean
         ("preset_translate", "ko") => "영역 번역".to_string(),
@@ -62,6 +68,12 @@ pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
         ("preset_omniscient_god", "ko") => "전지전능한 신".to_string(),
         ("preset_video_summary_placeholder", "ko") => "비디오 요약 (예정)".to_string(),
         ("preset_realtime_audio_translate", "ko") => "실시간 음성 번역 (예정)".to_string(),
+        // MASTER presets - Korean
+        ("preset_image_master", "ko") => "이미지 마스터".to_string(),
+        ("preset_text_select_master", "ko") => "선택 마스터".to_string(),
+        ("preset_text_type_master", "ko") => "입력 마스터".to_string(),
+        ("preset_audio_mic_master", "ko") => "마이크 마스터".to_string(),
+        ("preset_audio_device_master", "ko") => "디바이스 마스터".to_string(),
         
         // English (default)
         ("preset_translate", _) => "Translate region".to_string(),
@@ -90,6 +102,12 @@ pub fn get_localized_preset_name(preset_id: &str, lang: &str) -> String {
         ("preset_omniscient_god", _) => "Omniscient God".to_string(),
         ("preset_video_summary_placeholder", _) => "Summarize video (soon)".to_string(),
         ("preset_realtime_audio_translate", _) => "Realtime Audio Trans (soon)".to_string(),
+        // MASTER presets - English (default)
+        ("preset_image_master", _) => "Image MASTER".to_string(),
+        ("preset_text_select_master", _) => "Select MASTER".to_string(),
+        ("preset_text_type_master", _) => "Type MASTER".to_string(),
+        ("preset_audio_mic_master", _) => "Mic MASTER".to_string(),
+        ("preset_audio_device_master", _) => "Device MASTER".to_string(),
         
         // Fallback: return original ID without "preset_" prefix
         _ => preset_id.strip_prefix("preset_").unwrap_or(preset_id).replace('_', " "),

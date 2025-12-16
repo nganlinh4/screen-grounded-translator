@@ -203,25 +203,59 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                 let height = (rect.bottom - rect.top).abs();
 
                 if width > 10 && height > 10 {
-                    // 1. EXTRACT CROP (New Logic)
-                    let (cropped_img, config, preset) = {
+                    // Check if this is a MASTER preset
+                    let is_master = {
                         let guard = APP.lock().unwrap();
-                        // Access the handle
-                        let capture = guard.screenshot_handle.as_ref().expect("Screenshot handle missing");
-                        let config_clone = guard.config.clone();
-                        let preset_clone = guard.config.presets[CURRENT_PRESET_IDX].clone();
-
-                        // Extract pixels NOW (The slow part happens here, AFTER user finishes drawing)
-                        let img = extract_crop_from_hbitmap(capture, rect);
-                        
-                        (img, config_clone, preset_clone)
+                        guard.config.presets.get(CURRENT_PRESET_IDX)
+                            .map(|p| p.is_master)
+                            .unwrap_or(false)
                     };
+                    
+                    // For MASTER presets, show the preset wheel first
+                    let final_preset_idx = if is_master {
+                        // Get cursor position for wheel center
+                        let mut cursor_pos = POINT::default();
+                        GetCursorPos(&mut cursor_pos);
+                        
+                        // Hide selection overlay temporarily while showing wheel
+                        SetLayeredWindowAttributes(hwnd, COLORREF(0), 60, LWA_ALPHA);
+                        
+                        // Show preset wheel - this blocks until user makes selection
+                        let selected = super::preset_wheel::show_preset_wheel("image", None, cursor_pos);
+                        
+                        if let Some(idx) = selected {
+                            Some(idx)
+                        } else {
+                            // User dismissed wheel - cancel operation
+                            IS_FADING_OUT = true;
+                            SetTimer(hwnd, FADE_TIMER_ID, 16, None);
+                            return LRESULT(0);
+                        }
+                    } else {
+                        Some(CURRENT_PRESET_IDX)
+                    };
+                    
+                    if let Some(preset_idx) = final_preset_idx {
+                        // 1. EXTRACT CROP (New Logic)
+                        let (cropped_img, config, preset) = {
+                            let guard = APP.lock().unwrap();
+                            // Access the handle
+                            let capture = guard.screenshot_handle.as_ref().expect("Screenshot handle missing");
+                            let config_clone = guard.config.clone();
+                            let preset_clone = guard.config.presets[preset_idx].clone();
 
-                    // 2. TRIGGER PROCESSING
-                    std::thread::spawn(move || {
-                        // Pass the rect for result window positioning
-                        start_processing_pipeline(cropped_img, rect, config, preset);
-                    });
+                            // Extract pixels NOW (The slow part happens here, AFTER user finishes drawing)
+                            let img = extract_crop_from_hbitmap(capture, rect);
+                            
+                            (img, config_clone, preset_clone)
+                        };
+
+                        // 2. TRIGGER PROCESSING
+                        std::thread::spawn(move || {
+                            // Pass the rect for result window positioning
+                            start_processing_pipeline(cropped_img, rect, config, preset);
+                        });
+                    }
 
                     // 3. START FADE OUT
                     IS_FADING_OUT = true;
