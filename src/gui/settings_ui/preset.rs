@@ -1,5 +1,5 @@
 use eframe::egui;
-use crate::config::Config;
+use crate::config::{Config, ProcessingBlock};
 use crate::gui::locale::LocaleText;
 use super::get_localized_preset_name;
 use egui_snarl::Snarl;
@@ -45,6 +45,11 @@ pub fn render_preset_editor(
             
             // Controller checkbox (Bộ điều khiển) - between title and restore button
             if ui.checkbox(&mut preset.show_controller_ui, text.controller_checkbox_label).clicked() {
+                // When unticking controller UI, restore a default block if blocks are empty
+                if !preset.show_controller_ui && preset.blocks.is_empty() {
+                    preset.blocks.push(create_default_block_for_type(&preset.preset_type));
+                    *snarl = blocks_to_snarl(&preset.blocks, &preset.block_connections);
+                }
                 changed = true;
             }
             
@@ -68,6 +73,11 @@ pub fn render_preset_editor(
             
             // Controller checkbox (Bộ điều khiển) - also for custom presets
             if ui.checkbox(&mut preset.show_controller_ui, text.controller_checkbox_label).clicked() {
+                // When unticking controller UI, restore a default block if blocks are empty
+                if !preset.show_controller_ui && preset.blocks.is_empty() {
+                    preset.blocks.push(create_default_block_for_type(&preset.preset_type));
+                    *snarl = blocks_to_snarl(&preset.blocks, &preset.block_connections);
+                }
                 changed = true;
             }
         }
@@ -245,6 +255,44 @@ pub fn render_preset_editor(
                 }
             });
         });
+    } else {
+        // Controller UI mode - show helpful description
+        ui.add_space(20.0);
+        egui::Frame::none()
+            .fill(ui.visuals().extreme_bg_color)
+            .inner_margin(20.0)
+            .corner_radius(8.0)
+            .show(ui, |ui| {
+                ui.set_min_height(280.0);
+                
+                // Title
+                let title = match config.ui_language.as_str() {
+                    "vi" => "🎮 Chế độ Bộ điều khiển",
+                    "ko" => "🎮 컨트롤러 모드",
+                    _ => "🎮 Controller Mode",
+                };
+                ui.label(egui::RichText::new(title).heading().color(egui::Color32::from_rgb(100, 180, 255)));
+                
+                ui.add_space(12.0);
+                
+                // Main Description
+                let desc = match config.ui_language.as_str() {
+                    "vi" => "Đây là một cấu hình MASTER. Khi kích hoạt, một bánh xe chọn cấu hình sẽ xuất hiện để bạn chọn cấu hình thực tế muốn sử dụng.",
+                    "ko" => "이것은 MASTER 프리셋입니다. 활성화하면 프리셋 휠이 나타나 실제로 사용할 프리셋을 선택할 수 있습니다.",
+                    _ => "This is a MASTER preset. When activated, a preset selection wheel will appear letting you choose which preset to actually use.",
+                };
+                ui.label(egui::RichText::new(desc).color(egui::Color32::from_gray(180)));
+                
+                ui.add_space(12.0);
+                
+                // Benefit line with tip styling
+                let benefit = match config.ui_language.as_str() {
+                    "vi" => "💡 Điều này cho phép bạn gán một phím tắt duy nhất để truy cập nhanh nhiều cấu hình khác nhau.",
+                    "ko" => "💡 이를 통해 하나의 단축키로 여러 프리셋에 빠르게 접근할 수 있습니다.",
+                    _ => "💡 This allows you to assign a single hotkey for quick access to multiple different presets.",
+                };
+                ui.label(egui::RichText::new(benefit).italics().color(egui::Color32::from_rgb(180, 180, 120)));
+            });
     }
 
 
@@ -256,4 +304,35 @@ pub fn render_preset_editor(
     }
 
     changed
+}
+
+/// Creates a default processing block based on preset type
+fn create_default_block_for_type(preset_type: &str) -> ProcessingBlock {
+    match preset_type {
+        "audio" => ProcessingBlock {
+            block_type: "audio".to_string(),
+            model: "whisper-accurate".to_string(),
+            prompt: "Transcribe this audio.".to_string(),
+            selected_language: "Vietnamese".to_string(),
+            auto_copy: true,
+            ..Default::default()
+        },
+        "text" => ProcessingBlock {
+            block_type: "text".to_string(),
+            model: "text_accurate_kimi".to_string(),
+            prompt: "Process this text.".to_string(),
+            selected_language: "Vietnamese".to_string(),
+            auto_copy: true,
+            ..Default::default()
+        },
+        _ => ProcessingBlock {
+            block_type: "image".to_string(),
+            model: "maverick".to_string(),
+            prompt: "Extract text from this image.".to_string(),
+            selected_language: "Vietnamese".to_string(),
+            show_overlay: true,
+            auto_copy: true,
+            ..Default::default()
+        },
+    }
 }
