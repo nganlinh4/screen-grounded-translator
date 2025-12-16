@@ -462,7 +462,7 @@ impl Default for Config {
         p5b.blocks = vec![
             ProcessingBlock {
                 block_type: "text".to_string(),
-                model: "compound".to_string(),
+                model: "compound-mini".to_string(),
                 prompt: "Search the internet for information about the following query and provide a comprehensive summary. Include key facts, recent developments, and relevant details with clickable links to sources if possible. Format the output as markdown creatively. Only OUTPUT the markdown, no file indicator or triple backticks.".to_string(),
                 streaming_enabled: true,
                 render_mode: "markdown".to_string(),
