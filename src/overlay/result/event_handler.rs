@@ -327,11 +327,19 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             // Check if cursor is actually outside the window (not just moved to a child window like WebView)
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-                // Just clear button states (timer handles main hover/resize logic)
+                // Clear button states
                 state.on_copy_btn = false;
+                state.on_edit_btn = false;
                 state.on_undo_btn = false;
                 state.on_markdown_btn = false;
-                state.current_resize_edge = ResizeEdge::None; 
+                state.current_resize_edge = ResizeEdge::None;
+                
+                // For plain text mode, also clear hover state here 
+                // (markdown mode uses Timer 2 for this since WebView steals focus)
+                if !state.is_markdown_mode {
+                    state.is_hovered = false;
+                }
+                
                 InvalidateRect(hwnd, None, false);
             }
             LRESULT(0)
@@ -468,6 +476,17 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                             markdown_view::hide_markdown_webview(hwnd);
                             // Stop hover polling timer
                             KillTimer(hwnd, 2);
+                            
+                            // Re-establish TrackMouseEvent for plain text mode
+                            // This is needed because Timer 2 was handling hover state,
+                            // but now we need WM_MOUSELEAVE to fire again
+                            let mut tme = TRACKMOUSEEVENT { 
+                                cbSize: size_of::<TRACKMOUSEEVENT>() as u32, 
+                                dwFlags: TME_LEAVE, 
+                                hwndTrack: hwnd, 
+                                dwHoverTime: 0 
+                            };
+                            TrackMouseEvent(&mut tme);
                         }
                         InvalidateRect(hwnd, None, false);
                     }
