@@ -722,7 +722,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "image".to_string(),
                 model: "maverick".to_string(),
-                prompt: "Extract all text from this image exactly as it appears, if there is no text, try to guess and describe the image. Output ONLY the text.".to_string(),
+                prompt: "Extract and describe all text, claims, statements, and information visible in this image.".to_string(),
                 selected_language: "English".to_string(),
                 streaming_enabled: false,
                 show_overlay: true,
