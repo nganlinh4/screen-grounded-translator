@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 // --- CONFIGURATION ---
 const ANIMATION_DURATION: f32 = 8.5;
 const START_TRANSITION: f32 = 3.0; 
-const EXIT_DURATION: f32 = 0.6; 
+const EXIT_DURATION: f32 = 1.6;  // Extended for majestic slow-motion reveal 
 
 // --- PALETTE ---
 const C_VOID: Color32 = Color32::from_rgb(5, 5, 10);
@@ -339,7 +339,7 @@ impl SplashScreen {
             if dt > EXIT_DURATION {
                 return SplashStatus::Finished;
             }
-            warp_progress = (dt / EXIT_DURATION).powi(5); 
+            warp_progress = (dt / EXIT_DURATION).clamp(0.0, 1.0); // Linear global progress, curves applied per-voxel 
         }
 
         ctx.request_repaint();
@@ -415,9 +415,31 @@ impl SplashScreen {
                 let mut target_base = v.target_pos;
                 
                 if warp_progress > 0.0 {
-                    let radial = Vec3::new(v.pos.x, v.pos.y, 0.0).normalize();
-                    target_base = target_base.add(radial.mul(warp_progress * 500.0));
-                    target_base = target_base.rotate_z(warp_progress * 0.5);
+                    // "One by One" Departure:
+                    // Stagger start times across the first 75% of the animation.
+                    // Each particle moves for only the remaining 25% (0.4s) effectively.
+                    let start_threshold = v.noise_factor * 0.75; 
+                    let move_duration = 0.25;
+                    
+                    // Normalize progress to this particle's specific window
+                    let local_linear = ((warp_progress - start_threshold) / move_duration).clamp(0.0, 1.0);
+                    
+                    // Cubic ease-in for explosive departure
+                    let local_eased = local_linear * local_linear * local_linear;
+                    
+                    if local_eased > 0.0 {
+                        let radial = Vec3::new(v.pos.x, v.pos.y, 0.0).normalize();
+                        
+                        // Swirl/Curl
+                        let curl_angle = local_eased * (v.noise_factor - 0.5) * 6.0;
+                        let swirl_vec = radial.rotate_z(curl_angle);
+                        
+                        // Distance scaling - fast exit
+                        let dist_mult = 1200.0; 
+                        
+                        target_base = target_base.add(swirl_vec.mul(local_eased * dist_mult));
+                        target_base.z += local_eased * (v.noise_factor - 0.5) * 800.0;
+                    }
                 }
 
                 let pos = helix_pos.lerp(target_base, progress);
@@ -452,18 +474,23 @@ impl SplashScreen {
             }
         }
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::none())
-            .show(ctx, |ui| {
-                self.render(ui, t_abs, warp_progress);
-            });
-
         SplashStatus::Ongoing
     }
 
-    fn render(&self, ui: &mut egui::Ui, t: f32, warp_prog: f32) {
-        let rect = ui.max_rect();
-        let painter = ui.painter().with_clip_rect(rect);
+    pub fn paint(&self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let t = (now - self.start_time) as f32;
+        
+        let mut warp_prog = 0.0;
+        if let Some(exit_start) = self.exit_start_time {
+             let dt = (now - exit_start) as f32;
+             warp_prog = (dt / EXIT_DURATION).powi(5);
+        }
+
+        let rect = ctx.screen_rect();
+        // Use a Foreground layer to paint ON TOP of the main UI
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("splash_overlay")));
+        
         let center = rect.center();
         let _center_vec = Vec2::new(center.x, center.y);
         
@@ -471,32 +498,35 @@ impl SplashScreen {
         let master_alpha = alpha.clamp(0.0, 1.0);
 
         // 1. Background
+        // Startup: Fade from Solid Black (Night) or White (Day) to Target Color
+        // This ensures the Main UI underneath is hidden start-up.
         let mut bg_color = if self.is_dark { C_VOID } else { C_SKY_DAY_TOP };
         if t < 1.0 {
-            let bg_alpha = (t * t).clamp(0.0, 1.0); 
-            bg_color = bg_color.linear_multiply(bg_alpha);
+            let t_fade = (t * t).clamp(0.0, 1.0);
+            let start_col = if self.is_dark { Color32::BLACK } else { Color32::WHITE };
+            // Lerp r,g,b
+            bg_color = Color32::from_rgb(
+                lerp(start_col.r() as f32, bg_color.r() as f32, t_fade) as u8,
+                lerp(start_col.g() as f32, bg_color.g() as f32, t_fade) as u8,
+                lerp(start_col.b() as f32, bg_color.b() as f32, t_fade) as u8,
+            );
         }
+
+        // Exit: Fast fade out of background SKY only (reveals App UI)
+        let sky_exit_fade = (1.0 - warp_prog * 4.0).clamp(0.0, 1.0);
         
         if self.is_dark {
-             painter.rect_filled(rect, 0.0, bg_color);
+             painter.rect_filled(rect, 0.0, bg_color.linear_multiply(sky_exit_fade));
         } else {
-             // Gradient Sky
-             let mesh = egui::Mesh::with_texture(Default::default());
-             // Manual gradient since painter.rect_filled is solid
-             // Actually, simplest is to draw a rect with UV or just vertex colors.
-             // We'll use vertical gradient
-             let mut mesh = egui::Mesh::default();
-             mesh.add_colored_rect(rect, C_SKY_DAY_TOP);
+             // Gradient Sky taking exit fade into account
+             let c_top = C_SKY_DAY_TOP.linear_multiply(sky_exit_fade);
+             let c_bot = C_SKY_DAY_BOT.linear_multiply(sky_exit_fade);
              
-             // Let's just use solid for simplicity or basic gradient logic if needed.
-             // painter.rect_filled doesn't support gradient. 
-             // We simulate gradient by drawing multiple rects or using mesh.
-             // Using mesh for correct gradient:
              let mut mesh = egui::Mesh::default();
-             mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_top(), uv: Pos2::ZERO, color: C_SKY_DAY_TOP });
-             mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_top(), uv: Pos2::ZERO, color: C_SKY_DAY_TOP });
-             mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_bottom(), uv: Pos2::ZERO, color: C_SKY_DAY_BOT });
-             mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_bottom(), uv: Pos2::ZERO, color: C_SKY_DAY_BOT });
+             mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_top(), uv: Pos2::ZERO, color: c_top });
+             mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_top(), uv: Pos2::ZERO, color: c_top });
+             mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_bottom(), uv: Pos2::ZERO, color: c_bot });
+             mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_bottom(), uv: Pos2::ZERO, color: c_bot });
              mesh.add_triangle(0, 1, 2);
              mesh.add_triangle(0, 2, 3);
              painter.add(mesh);
@@ -509,18 +539,25 @@ impl SplashScreen {
         let star_offset = self.mouse_influence * -10.0;
         let star_time = t * 2.0;
 
-        for star in &self.stars {
+        for (i, star) in self.stars.iter().enumerate() {
             let sx = rect.left() + (star.pos.x * rect.width()) + star_offset.x;
             let sy = rect.top() + (star.pos.y * rect.height()) + star_offset.y;
             
+            // Random Fade Calculation (Decoupled from Sky)
+            let rnd = ((i as f32 * 1.618).fract() + (star.pos.x * 10.0).fract()).fract();
+            let start = rnd * 0.7; // Spread starts over 0.0 - 0.7
+            let dur = 0.2;
+            let local_fade = if warp_prog > 0.0 {
+                 let p = ((warp_prog - start) / dur).clamp(0.0, 1.0);
+                 1.0 - p
+            } else { 1.0 };
+
             // Twinkle
             let twinkle = (star.phase + star_time).sin() * 0.3 + 0.7;
-            let star_alpha = (star.brightness * twinkle * master_alpha * (1.0 - warp_prog)).clamp(0.0, 1.0);
+            let star_alpha = (star.brightness * twinkle * master_alpha * local_fade).clamp(0.0, 1.0);
             
             if star_alpha > 0.1 {
                 let size = star.size * (1.0 - warp_prog);
-                // In Day mode, maybe faint sparkles or hidden?
-                // Let's just hide stars in Day mode or make them very subtle (birds?).
                 if self.is_dark {
                     painter.circle_filled(
                         Pos2::new(sx, sy), 
@@ -528,7 +565,6 @@ impl SplashScreen {
                         C_WHITE.linear_multiply(star_alpha)
                     );
                 } else {
-                    // Maybe faint white sparkles?
                     let day_star_alpha = star_alpha * 0.3;
                      painter.circle_filled(
                         Pos2::new(sx, sy), 
@@ -540,10 +576,13 @@ impl SplashScreen {
         }
 
         // --- LAYER 1.5: GOD RAYS (DAY MODE) ---
-        if !self.is_dark && master_alpha > 0.1 {
+        if !self.is_dark && master_alpha > 0.1 && warp_prog < 0.9 {
             let sun_pos = center + Vec2::new(0.0, -40.0 * (1.0-warp_prog));
             let ray_count = 12;
             let ray_rot = t * 0.1;
+            
+            // Fade rays out smoothly
+            let ray_fade = (1.0 - warp_prog * 2.5).clamp(0.0, 1.0);
             
             for i in 0..ray_count {
                 let angle = (i as f32 / ray_count as f32) * PI * 2.0 + ray_rot;
@@ -572,7 +611,7 @@ impl SplashScreen {
         let moon_parallax = self.mouse_influence * -30.0;
         let moon_base_pos = center + Vec2::new(0.0, -40.0) + moon_parallax;
         let moon_rad = 140.0;
-        let moon_alpha = master_alpha * (1.0 - warp_prog);
+        let moon_alpha = master_alpha * (1.0 - warp_prog * 3.0).clamp(0.0, 1.0); // Simple fast fade for main body
 
         if moon_alpha > 0.01 {
             if self.is_dark {
@@ -719,11 +758,20 @@ impl SplashScreen {
         // --- LAYER 3: VOLUMETRIC DARK CLOUDS (BLACK SILHOUETTE) ---
         let cloud_parallax = self.mouse_influence * -15.0;
 
-        for cloud in &self.clouds {
+        for (i, cloud) in self.clouds.iter().enumerate() {
             let c_x = center.x + cloud.pos.x + cloud_parallax.x;
             let c_y = center.y + cloud.pos.y + cloud_parallax.y;
             
-            let cloud_alpha = cloud.opacity * master_alpha * (1.0 - warp_prog);
+            // Random Fade (Decoupled)
+            let rnd = (i as f32 * 0.73).fract();
+            let start = rnd * 0.6; // Spread over 0.0 - 0.6
+            let dur = 0.3;
+            let local_fade = if warp_prog > 0.0 {
+                 let p = ((warp_prog - start) / dur).clamp(0.0, 1.0);
+                 1.0 - p
+            } else { 1.0 };
+            
+            let cloud_alpha = cloud.opacity * master_alpha * local_fade;
             
             if cloud_alpha > 0.01 {
                 // Pass 1: Dark Core (Deep black shadow)
@@ -743,24 +791,12 @@ impl SplashScreen {
                         core_col
                     );
                 }
-
+                
                 // Pass 2: Main Body (Slightly lighter black/purple)
                 for (offset, puff_r_mult) in &cloud.puffs {
                     let p_pos = Pos2::new(c_x, c_y) + (*offset * cloud.scale);
-                    let radius = 30.0 * cloud.scale * puff_r_mult;
-
-//                    let edge_col = if self.is_dark {
-//                         C_CLOUD_EDGE.linear_multiply(cloud_alpha * 0.3)
-//                    } else {
-//                         C_CLOUD_SHADOW.linear_multiply(cloud_alpha * 0.1) // Softer shadows for white clouds
-//                    };
-//
-//                    // Subtle highlight on top-left edge
-//                    painter.circle_filled(
-//                        p_pos - Vec2::new(3.0, 3.0), 
-//                        radius * 0.9,
-//                        edge_col
-//                    );
+                    
+                    // Commented out highlight pass - removed
                 }
             }
         }
@@ -769,11 +805,22 @@ impl SplashScreen {
         let render_t = t.min(ANIMATION_DURATION + 5.0);
         let cam_y = 150.0 + (render_t * 30.0) + (warp_prog * 10000.0);
         let horizon = center.y + 120.0;
-        let grid_fade = 1.0 - warp_prog;
+        let grid_fade = if warp_prog > 0.0 { 1.0 } else { 1.0 }; // Handled by local_fade now
 
         if grid_fade > 0.0 {
             // Horizontal lines
             for i in 0..16 {
+                // Random Grid Line Fade
+                let rnd = ((i as f32 * 0.9).sin() * 0.5 + 0.5);
+                let start = rnd * 0.5;
+                let dur = 0.25;
+                let local_fade = if warp_prog > 0.0 {
+                     let p = ((warp_prog - start) / dur).clamp(0.0, 1.0);
+                     1.0 - p
+                } else { 1.0 };
+                
+                if local_fade <= 0.0 { continue; }
+
                 let z_dist = 1.0 + (i as f32 * 0.5) - ((cam_y * 0.05) % 0.5);
                 let perspective = 250.0 / (z_dist - warp_prog * 0.8).max(0.1);
                 let y = horizon + perspective * 0.6;
@@ -784,8 +831,8 @@ impl SplashScreen {
                 let x1 = center.x - w;
                 let x2 = center.x + w;
                 
-                // Distance fade
-                let alpha_grid = (1.0 - (y - horizon) / (rect.bottom() - horizon)).powf(0.5) * master_alpha * 0.5 * grid_fade;
+                // Distance fade + Random Line Fade
+                let alpha_grid = (1.0 - (y - horizon) / (rect.bottom() - horizon)).powf(0.5) * master_alpha * 0.5 * local_fade;
                 
                 let (grid_col, thickness) = if self.is_dark {
                     (C_MAGENTA, 1.5)
@@ -856,8 +903,14 @@ impl SplashScreen {
             }
 
             if warp_prog > 0.0 {
-                alpha_local *= 1.0 - warp_prog; 
-                // base_col = C_CYAN; // Removed to preserve theme colors during exit
+                // Exact match of physics timing
+                let start_threshold = v.noise_factor * 0.75; 
+                let move_duration = 0.25;
+                let local_linear = ((warp_prog - start_threshold) / move_duration).clamp(0.0, 1.0);
+                
+                // Fade out halfway through its flight
+                let fade = (local_linear * 1.5).clamp(0.0, 1.0);
+                alpha_local *= 1.0 - fade;
             }
             
             let final_col = base_col.linear_multiply(alpha_local);

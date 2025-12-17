@@ -451,12 +451,15 @@ impl eframe::App for SettingsApp {
         }
 
         // Splash Update
+        // Splash Update
         if let Some(splash) = &mut self.splash {
             match splash.update(ctx) {
-                crate::gui::splash::SplashStatus::Ongoing => { return; }
+                crate::gui::splash::SplashStatus::Ongoing => { 
+                    // Do NOT return here. Continue to render main UI underneath.
+                }
                 crate::gui::splash::SplashStatus::Finished => {
                     self.splash = None;
-                    self.fade_in_start = Some(ctx.input(|i| i.time));
+                    // self.fade_in_start = Some(ctx.input(|i| i.time)); // Disable separate fade-in, as splash dissolves naturally
                 }
             }
         }
@@ -778,6 +781,12 @@ impl eframe::App for SettingsApp {
                 });
             });
         });
+
+        // --- RENDER SPLASH OVERLAY ---
+        // Rendered LAST to be on top of everything, while Main UI rendered underneath.
+        if let Some(splash) = &self.splash {
+            splash.paint(ctx);
+        }
     }
     
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
