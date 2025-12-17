@@ -73,7 +73,7 @@ pub fn get_localized_preset_name(preset_id: &str, lang_code: &str) -> String {
         ("preset_text_select_master", "ko") => "선택 마스터".to_string(),
         ("preset_text_type_master", "ko") => "입력 마스터".to_string(),
         ("preset_audio_mic_master", "ko") => "마이크 마스터".to_string(),
-        ("preset_audio_device_master", "ko") => "디바이스 마스터".to_string(),
+        ("preset_audio_device_master", "ko") => "사운드 마스터".to_string(),
         
         // English (default)
         ("preset_translate", _) => "Translate region".to_string(),
@@ -107,7 +107,7 @@ pub fn get_localized_preset_name(preset_id: &str, lang_code: &str) -> String {
         ("preset_text_select_master", _) => "Select MASTER".to_string(),
         ("preset_text_type_master", _) => "Type MASTER".to_string(),
         ("preset_audio_mic_master", _) => "Mic MASTER".to_string(),
-        ("preset_audio_device_master", _) => "Device MASTER".to_string(),
+        ("preset_audio_device_master", _) => "Sound MASTER".to_string(),
         
         // Fallback: return original ID without "preset_" prefix
         _ => preset_id.strip_prefix("preset_").unwrap_or(preset_id).replace('_', " "),
@@ -127,25 +127,28 @@ pub fn render_sidebar(
     let mut preset_to_add_type = None;
     let mut preset_idx_to_select: Option<usize> = None;
 
-    // Split indices for presets
-    // Left column: Image + Video presets
-    // Right column: Text + Audio presets
-    let mut left_indices = Vec::new();
-    let mut right_indices = Vec::new();
+    // Split indices for presets into 3 columns
+    // Column 1: Image presets
+    // Column 2: Text presets  
+    // Column 3: Audio + Video presets
+    let mut image_indices = Vec::new();
+    let mut text_indices = Vec::new();
+    let mut audio_video_indices = Vec::new();
 
     for (i, p) in config.presets.iter().enumerate() {
-        if p.preset_type == "image" || p.preset_type == "video" {
-            left_indices.push(i);
-        } else {
-            right_indices.push(i);
+        match p.preset_type.as_str() {
+            "image" => image_indices.push(i),
+            "text" => text_indices.push(i),
+            "audio" | "video" => audio_video_indices.push(i),
+            _ => image_indices.push(i), // fallback to image
         }
     }
     
-    // Sort right column: Text -> Audio
-    right_indices.sort_by_key(|&i| {
+    // Sort audio_video column: Audio first, then Video
+    audio_video_indices.sort_by_key(|&i| {
         match config.presets[i].preset_type.as_str() {
-            "text" => 0,
-            "audio" => 1,
+            "audio" => 0,
+            "video" => 1,
             _ => 2,
         }
     });
@@ -158,7 +161,7 @@ pub fn render_sidebar(
     // === UNIFIED GRID: Header + Presets in ONE grid for perfect alignment ===
     egui::Grid::new("sidebar_unified_grid")
         .striped(false)
-        .spacing(egui::vec2(10.0, 6.0))
+        .spacing(egui::vec2(8.0, 6.0))
         .min_row_height(24.0) // Ensure consistent row heights
         .show(ui, |ui| {
             // === ROW 1: Theme/Lang/History | Global Settings ===
@@ -206,7 +209,10 @@ pub fn render_sidebar(
                 }
             });
 
-            // Column 2: Global Settings (Right Aligned with Center vertical alignment)
+            // Column 2: empty spacer for middle column alignment
+            ui.label("");
+
+            // Column 3: Global Settings (Right Aligned with Center vertical alignment)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let is_global = matches!(current_view_mode, ViewMode::Global);
@@ -217,40 +223,53 @@ pub fn render_sidebar(
             });
             ui.end_row();
 
-            // === ROW 3: Presets Title | Add Buttons ===
+            // === ROW 2: Presets Title | Add Buttons ===
             ui.label(egui::RichText::new(text.presets_section).strong());
-
+            ui.label(""); // empty for middle column
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.style_mut().spacing.item_spacing.x = 4.0;
                 // Buttons in reverse order for right_to_left
                 if ui.button(text.add_audio_preset_btn).clicked() {
                     preset_to_add_type = Some("audio");
                 }
-                if ui.button(text.add_image_preset_btn).clicked() {
-                    preset_to_add_type = Some("image");
-                }
                 if ui.button(text.add_text_preset_btn).clicked() {
                     preset_to_add_type = Some("text");
+                }
+                if ui.button(text.add_image_preset_btn).clicked() {
+                    preset_to_add_type = Some("image");
                 }
             });
             ui.end_row();
 
-            // === ROW 4+: Preset Items ===
-            let max_len = std::cmp::max(left_indices.len(), right_indices.len());
+            // === ROW 3: Column Headers ===
+            ui.label(egui::RichText::new("📷 Image").small().weak());
+            ui.label(egui::RichText::new("📝 Text").small().weak());
+            ui.label(egui::RichText::new("🎤 Audio/Video").small().weak());
+            ui.end_row();
+
+            // === ROW 4+: Preset Items in 3 columns ===
+            let max_len = *[image_indices.len(), text_indices.len(), audio_video_indices.len()].iter().max().unwrap_or(&0);
 
             for i in 0..max_len {
-                // Column 1: Image + Video Presets
-                if let Some(&idx) = left_indices.get(i) {
+                // Column 1: Image Presets
+                if let Some(&idx) = image_indices.get(i) {
                     render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
                 } else {
                     ui.label("");
                 }
 
-                // Column 2: Text/Audio Presets
-                if let Some(&idx) = right_indices.get(i) {
+                // Column 2: Text Presets
+                if let Some(&idx) = text_indices.get(i) {
                     render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
                 } else {
-                    ui.label(""); 
+                    ui.label("");
+                }
+
+                // Column 3: Audio + Video Presets
+                if let Some(&idx) = audio_video_indices.get(i) {
+                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
+                } else {
+                    ui.label("");
                 }
                 
                 ui.end_row();

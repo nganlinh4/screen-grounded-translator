@@ -871,8 +871,12 @@ impl Default for Config {
             api_key: "".to_string(),
             gemini_api_key: "".to_string(),
             presets: vec![
-                pm1, pm2, pm3, pm4, pm5, // MASTER presets first
-                p1, p7, p2, p3, p3b, p3c, p3d, p3e, p3f, p3g, p4, p4b, p5, p5b, p6, p8, p9, p10, p11, p12, p13, p14, p14b, p14c, p15, p16
+                // Column 1: Image presets
+                p1, p7, p2, p3g, p4, p4b, p6, p8, p9, p10, p14b, p14c, pm1,
+                // Column 2: Text presets
+                p3, p3b, p3c, p3d, p3e, p3f, p5, p5b, pm2, pm3,
+                // Column 3: Audio + Video presets
+                p11, p12, p13, p14, p15, p16, pm4, pm5,
             ],
             active_preset_idx: 0,
             theme_mode: ThemeMode::System,
