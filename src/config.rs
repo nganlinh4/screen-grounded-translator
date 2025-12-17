@@ -944,11 +944,47 @@ pub fn get_config_path() -> PathBuf {
     config_dir.join("config_v3.json")
 }
 
+/// Get all default preset IDs (those that start with "preset_")
+/// These are the built-in presets that ship with the app
+fn get_default_presets() -> Vec<Preset> {
+    Config::default().presets
+}
+
 pub fn load_config() -> Config {
     let path = get_config_path();
     if path.exists() {
         let data = std::fs::read_to_string(path).unwrap_or_default();
         let mut config: Config = serde_json::from_str(&data).unwrap_or_default();
+        
+        // --- AUTO-MERGE NEW DEFAULT PRESETS ---
+        // This ensures users get new presets from updates without losing their custom presets
+        // or modifications to existing presets.
+        //
+        // Strategy:
+        // 1. Default presets have IDs starting with "preset_" (e.g., "preset_translate")
+        // 2. User-created presets have timestamp-based IDs (e.g., "1a2b3c4d5e")
+        // 3. For each default preset:
+        //    - If NOT in user's config → add it (new feature!)
+        //    - If already in user's config → keep user's version (they may have customized it)
+        
+        let default_presets = get_default_presets();
+        let existing_ids: std::collections::HashSet<String> = config.presets.iter()
+            .map(|p| p.id.clone())
+            .collect();
+        
+        // Find new default presets that don't exist in user's config
+        let mut new_presets: Vec<Preset> = Vec::new();
+        for default_preset in default_presets {
+            // Only process built-in presets (those with "preset_" prefix)
+            if default_preset.id.starts_with("preset_") && !existing_ids.contains(&default_preset.id) {
+                new_presets.push(default_preset);
+            }
+        }
+        
+        // Append new presets to the end of user's preset list
+        if !new_presets.is_empty() {
+            config.presets.extend(new_presets);
+        }
         
         // Safety check: Ensure every preset has at least one block matching its type
         for preset in &mut config.presets {
