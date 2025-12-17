@@ -539,6 +539,35 @@ impl SplashScreen {
             }
         }
 
+        // --- LAYER 1.5: GOD RAYS (DAY MODE) ---
+        if !self.is_dark && master_alpha > 0.1 {
+            let sun_pos = center + Vec2::new(0.0, -40.0 * (1.0-warp_prog));
+            let ray_count = 12;
+            let ray_rot = t * 0.1;
+            
+            for i in 0..ray_count {
+                let angle = (i as f32 / ray_count as f32) * PI * 2.0 + ray_rot;
+                let next_angle = ((i as f32 + 0.5) / ray_count as f32) * PI * 2.0 + ray_rot;
+                
+                // Draw a large fan wedge (Original Style: Clear Center -> Visible Edge)
+                let mut mesh = egui::Mesh::default();
+                mesh.vertices.push(egui::epaint::Vertex { pos: sun_pos, uv: Pos2::ZERO, color: Color32::TRANSPARENT });
+                
+                let ray_len = 1200.0;
+                // Increased alpha from 30 to 55 to make it "pop"
+                let c1 = Color32::from_white_alpha(55);
+                
+                let p1 = sun_pos + Vec2::new(angle.cos() * ray_len, angle.sin() * ray_len);
+                let p2 = sun_pos + Vec2::new(next_angle.cos() * ray_len, next_angle.sin() * ray_len);
+                
+                mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: Pos2::ZERO, color: c1 });
+                mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: Pos2::ZERO, color: c1 });
+                
+                mesh.add_triangle(0, 1, 2);
+                painter.add(mesh);
+            }
+        }
+
         // --- LAYER 2: THE REALISTIC PINK MOON ---
         let moon_parallax = self.mouse_influence * -30.0;
         let moon_base_pos = center + Vec2::new(0.0, -40.0) + moon_parallax;
@@ -720,18 +749,18 @@ impl SplashScreen {
                     let p_pos = Pos2::new(c_x, c_y) + (*offset * cloud.scale);
                     let radius = 30.0 * cloud.scale * puff_r_mult;
 
-                    let edge_col = if self.is_dark {
-                         C_CLOUD_EDGE.linear_multiply(cloud_alpha * 0.3)
-                    } else {
-                         C_CLOUD_SHADOW.linear_multiply(cloud_alpha * 0.1) // Softer shadows for white clouds
-                    };
-
-                    // Subtle highlight on top-left edge
-                    painter.circle_filled(
-                        p_pos - Vec2::new(3.0, 3.0), 
-                        radius * 0.9,
-                        edge_col
-                    );
+//                    let edge_col = if self.is_dark {
+//                         C_CLOUD_EDGE.linear_multiply(cloud_alpha * 0.3)
+//                    } else {
+//                         C_CLOUD_SHADOW.linear_multiply(cloud_alpha * 0.1) // Softer shadows for white clouds
+//                    };
+//
+//                    // Subtle highlight on top-left edge
+//                    painter.circle_filled(
+//                        p_pos - Vec2::new(3.0, 3.0), 
+//                        radius * 0.9,
+//                        edge_col
+//                    );
                 }
             }
         }
@@ -755,18 +784,24 @@ impl SplashScreen {
                 let x1 = center.x - w;
                 let x2 = center.x + w;
                 
+                // Distance fade
                 let alpha_grid = (1.0 - (y - horizon) / (rect.bottom() - horizon)).powf(0.5) * master_alpha * 0.5 * grid_fade;
                 
-                let grid_col = if self.is_dark { C_MAGENTA } else { C_DAY_REP };
+                let (grid_col, thickness) = if self.is_dark {
+                    (C_MAGENTA, 1.5)
+                } else {
+                    // Day Mode: Thicker Blue "Stairs"
+                    (C_DAY_REP, 4.0 * (1.0 - (y-horizon)/rect.height())) 
+                };
                 
                 painter.line_segment(
                     [Pos2::new(x1, y), Pos2::new(x2, y)], 
-                    Stroke::new(1.5, grid_col.linear_multiply(alpha_grid))
+                    Stroke::new(thickness, grid_col.linear_multiply(alpha_grid))
                 );
             }
         }
 
-        // --- LAYER 5: 3D VOXELS ---
+        // --- LAYER 5: 3D VOXELS (SPHERES) ---
         let physics_t = t.min(ANIMATION_DURATION);
         let fov = 800.0;
         let cam_fly_dist = warp_prog * 2000.0; 
@@ -778,24 +813,13 @@ impl SplashScreen {
              0.0
         );
 
-        let light_dir = Vec3::new(-0.5, -1.0, -0.5).normalize();
-        
-        let mut draw_list: Vec<(f32, Vec<Pos2>, Color32, bool)> = Vec::with_capacity(self.voxels.len() * 6);
+        // Light direction highlight offset (Top-Left)
+        let light_dir_2d = Vec2::new(-0.4, -0.4); 
 
-        let cube_size = 6.0;
-        let z_stretch = 1.0 + (warp_prog * 150.0); 
-        let verts = [
-            Vec3::new(-1.0, -1.0, -1.0 * z_stretch), Vec3::new( 1.0, -1.0, -1.0 * z_stretch), Vec3::new( 1.0,  1.0, -1.0 * z_stretch), Vec3::new(-1.0,  1.0, -1.0 * z_stretch),
-            Vec3::new(-1.0, -1.0,  1.0 * z_stretch), Vec3::new( 1.0, -1.0,  1.0 * z_stretch), Vec3::new( 1.0,  1.0,  1.0 * z_stretch), Vec3::new(-1.0,  1.0,  1.0 * z_stretch),
-        ];
-        let faces = [
-            ([0, 1, 2, 3], Vec3::new(0.0, 0.0, -1.0)),
-            ([1, 5, 6, 2], Vec3::new(1.0, 0.0, 0.0)),
-            ([5, 4, 7, 6], Vec3::new(0.0, 0.0, 1.0)),
-            ([4, 0, 3, 7], Vec3::new(-1.0, 0.0, 0.0)),
-            ([3, 2, 6, 7], Vec3::new(0.0, 1.0, 0.0)),
-            ([4, 5, 1, 0], Vec3::new(0.0, -1.0, 0.0)),
-        ];
+        // Store: (Z-depth, ScreenPos, Radius, BaseColor, IsGlowing/White)
+        let mut draw_list: Vec<(f32, Pos2, f32, Color32, bool)> = Vec::with_capacity(self.voxels.len());
+
+        let sphere_radius_base = 8.5; // Overlap for pipe look
 
         for v in &self.voxels {
             let mut local_debris_alpha = 1.0;
@@ -809,82 +833,80 @@ impl SplashScreen {
             let mut v_center = v.pos;
             v_center = v_center.rotate_x(global_rot.x).rotate_y(global_rot.y).rotate_z(global_rot.z);
             
-            if warp_prog == 0.0 && v_center.z > cam_dist - 10.0 { continue; }
+            let z_depth = cam_dist - v_center.z;
+            if z_depth < 0.1 { continue; } 
 
-            for (indices, normal) in &faces {
-                let rot_normal = normal
-                    .rotate_x(v.rot.x).rotate_y(v.rot.y).rotate_z(v.rot.z)
-                    .rotate_x(global_rot.x).rotate_y(global_rot.y).rotate_z(global_rot.z);
+            let scale = fov / z_depth;
+            let screen_pos = Pos2::new(
+                center.x + v_center.x * scale,
+                center.y - v_center.y * scale
+            );
 
-                if warp_prog == 0.0 && rot_normal.z > 0.0 { continue; }
-
-                let diffuse = rot_normal.dot(light_dir).max(0.0);
-                let mut intensity = 0.3 + 0.7 * diffuse;
-                
-                // Day Mode Debris: Boost ambient light to keep them white
-                if !self.is_dark && v.is_debris {
-                    intensity = 0.9 + 0.1 * diffuse;
-                }
-                
-                let mut alpha_local = master_alpha;
-                if v.is_debris { alpha_local *= local_debris_alpha; }
-                
-                let mut base_col = v.color;
-                // Override debris color for Day Mode
-                if !self.is_dark && v.is_debris {
-                    base_col = C_CLOUD_WHITE;
-                }
-
-                if warp_prog > 0.0 {
-                    alpha_local *= 1.0 - warp_prog; 
-                    base_col = C_CYAN; 
-                }
-
-                let r = (base_col.r() as f32 * intensity) as u8;
-                let g = (base_col.g() as f32 * intensity) as u8;
-                let b = (base_col.b() as f32 * intensity) as u8;
-                let face_color = Color32::from_rgba_premultiplied(r, g, b, (255.0 * alpha_local) as u8);
-
-                let mut poly_verts = Vec::with_capacity(4);
-                let mut avg_z = 0.0;
-                
-                for &idx in indices {
-                    let local_v = verts[idx].mul(cube_size * v.scale);
-                    let rot_v = local_v.rotate_x(v.rot.x).rotate_y(v.rot.y).rotate_z(v.rot.z);
-                    let world_v = rot_v.add(v.pos);
-                    let final_v = world_v.rotate_x(global_rot.x).rotate_y(global_rot.y).rotate_z(global_rot.z);
-                    
-                    let z_depth = cam_dist - final_v.z;
-                    avg_z += z_depth;
-                    
-                    if z_depth > 0.1 {
-                        let scale = fov / z_depth;
-                        let x = center.x + final_v.x * scale;
-                        let y = center.y - final_v.y * scale;
-                        poly_verts.push(Pos2::new(x, y));
-                    }
-                }
-
-                if poly_verts.len() == 4 {
-                    avg_z /= 4.0;
-                    draw_list.push((avg_z, poly_verts, face_color, v.color == C_WHITE));
-                }
+            // Radius calculation
+            let r = sphere_radius_base * v.scale * scale;
+            
+            // Color Logic
+            let mut alpha_local = master_alpha;
+            if v.is_debris { alpha_local *= local_debris_alpha; }
+            
+            let mut base_col = v.color;
+             // Day mode debris fix
+            if !self.is_dark && v.is_debris {
+                base_col = C_CLOUD_WHITE;
             }
+
+            if warp_prog > 0.0 {
+                alpha_local *= 1.0 - warp_prog; 
+                // base_col = C_CYAN; // Removed to preserve theme colors during exit
+            }
+            
+            let final_col = base_col.linear_multiply(alpha_local);
+            
+            draw_list.push((z_depth, screen_pos, r, final_col, v.color == C_WHITE || v.color == C_DAY_SEC));
         }
 
+        // Sort back-to-front (Z-Painter's Algorithm)
         draw_list.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
 
-        for (_, verts, col, is_glowing) in draw_list {
-            painter.add(Shape::convex_polygon(verts.clone(), col, Stroke::NONE));
-            
-            if master_alpha > 0.8 && warp_prog < 0.5 {
-                let stroke_col = if is_glowing { 
-                    C_WHITE.linear_multiply(0.6) 
-                } else {
-                    if self.is_dark { Color32::from_black_alpha(50) } else { Color32::from_black_alpha(20) }
-                };
-                painter.add(Shape::closed_line(verts, Stroke::new(1.0, stroke_col)));
-            }
+        for (_, pos, r, col, is_white_voxel) in draw_list {
+             // 1. Shadow/Base (The "Rim" on the shadow side)
+             // Darken the color significantly for the edge
+             let shadow_col = if self.is_dark {
+                 Color32::from_black_alpha(200).linear_multiply(col.a() as f32 / 255.0)
+             } else {
+                 // In Day mode, white voxels get a blueish/grey shadow to define shape
+                 if is_white_voxel {
+                     Color32::from_rgb(100, 120, 150).linear_multiply(col.a() as f32 / 255.0)
+                 } else {
+                     // Blue voxels get dark blue shadow
+                     Color32::from_rgb(0, 40, 100).linear_multiply(col.a() as f32 / 255.0)
+                 }
+             };
+             
+             painter.circle_filled(pos, r, shadow_col);
+
+             // 2. Main Body (Shifted towards light to create crescent shadow)
+             let body_offset = light_dir_2d * (r * 0.15);
+             painter.circle_filled(pos + body_offset, r * 0.85, col);
+             
+             // 3. Inner Gradient / Glow (Soft light in center)
+             // Lighter version of main color
+             let glow_col = if is_white_voxel {
+                 Color32::WHITE.linear_multiply(0.5)
+             } else {
+                 col.linear_multiply(0.5)
+             };
+             let gradient_offset = light_dir_2d * (r * 0.3);
+             painter.circle_filled(pos + gradient_offset, r * 0.5, glow_col);
+
+             // 4. Specular Highlight (Sharp Reflection)
+             let highlight_pos = pos + (light_dir_2d * (r * 0.5));
+             let highlight_alpha = if self.is_dark { 0.8 } else { 0.9 }; 
+             let highlight_col = Color32::from_white_alpha((255.0 * highlight_alpha) as u8)
+                                    .linear_multiply(col.a() as f32 / 255.0);
+                                    
+             painter.circle_filled(highlight_pos, r * 0.25, highlight_col);
+             painter.circle_filled(highlight_pos, r * 0.15, Color32::WHITE.linear_multiply(col.a() as f32 / 255.0)); // Hotspot
         }
 
         // --- LAYER 6: UI TEXT ---
@@ -911,11 +933,30 @@ impl SplashScreen {
             
             let magenta_color = if self.is_dark { C_MAGENTA.linear_multiply(master_alpha * ui_alpha) } else { C_DAY_REP.linear_multiply(master_alpha * ui_alpha) };
 
+            let title_text = format!("SCREEN GOATED TOOLBOX {}", env!("CARGO_PKG_VERSION"));
+            let title_font = FontId::proportional(30.0); // Increased size
+            let title_pos = center + Vec2::new(0.0, 150.0);
+
+            // Stylized Shadow Colors
+            let shadow_col = if self.is_dark {
+                C_MAGENTA.linear_multiply(master_alpha * ui_alpha) // Retro Pink Shadow
+            } else {
+                C_WHITE.linear_multiply(master_alpha * ui_alpha)   // Crisp White Shadow
+            };
+
+            // Stylized Bold/Shadow: Draw distinct color offset
             painter.text(
-                center + Vec2::new(0.0, 180.0),
+                title_pos + Vec2::new(2.0, 2.0), // Increased offset for better visibility
                 Align2::CENTER_TOP,
-                &format!("SCREEN GOATED TOOLBOX {}", env!("CARGO_PKG_VERSION")),
-                FontId::proportional(24.0),
+                &title_text,
+                title_font.clone(),
+                shadow_col
+            );
+            painter.text(
+                title_pos,
+                Align2::CENTER_TOP,
+                &title_text,
+                title_font,
                 ui_color
             );
             painter.text(
