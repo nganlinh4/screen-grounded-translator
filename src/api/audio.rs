@@ -271,11 +271,13 @@ pub fn record_audio_and_transcribe(
     // Only active when preset.auto_stop_recording is true
     let auto_stop_enabled = preset.auto_stop_recording;
     let mut has_spoken = false;           // True once user starts speaking
+    let mut first_speech_time: Option<std::time::Instant> = None;  // When user first spoke
     let mut last_active_time = std::time::Instant::now();
     
     // Thresholds tuned for typical speech vs silence
     const NOISE_THRESHOLD: f32 = 0.015;   // RMS above this = speech
     const SILENCE_LIMIT_MS: u128 = 800;   // ms of silence after speech to trigger stop
+    const MIN_RECORDING_MS: u128 = 2000;  // Minimum 2 seconds after first speech
 
     while !stop_signal.load(Ordering::SeqCst) {
         while let Ok(chunk) = rx.try_recv() {
@@ -290,14 +292,21 @@ pub fn record_audio_and_transcribe(
             
             if current_rms > NOISE_THRESHOLD {
                 // User is speaking (volume above threshold)
+                if !has_spoken {
+                    first_speech_time = Some(std::time::Instant::now());
+                }
                 has_spoken = true;
                 last_active_time = std::time::Instant::now();
             } else if has_spoken {
                 // User was speaking but now is silent
-                let silence_duration = last_active_time.elapsed().as_millis();
-                if silence_duration > SILENCE_LIMIT_MS {
-                    // Silence exceeded limit after speech - auto-stop!
-                    stop_signal.store(true, Ordering::SeqCst);
+                // Check minimum recording duration first
+                let recording_duration = first_speech_time.map(|t| t.elapsed().as_millis()).unwrap_or(0);
+                if recording_duration >= MIN_RECORDING_MS {
+                    let silence_duration = last_active_time.elapsed().as_millis();
+                    if silence_duration > SILENCE_LIMIT_MS {
+                        // Silence exceeded limit after speech - auto-stop!
+                        stop_signal.store(true, Ordering::SeqCst);
+                    }
                 }
             }
         }
