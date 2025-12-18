@@ -360,7 +360,7 @@ impl Default for Config {
             ProcessingBlock {
                 block_type: "text".to_string(),
                 model: "text_accurate_kimi".to_string(),
-                prompt: "Rewrite the following text to be professional and formal, suitable for business communication. Maintain the original meaning. Output ONLY the rewritten text.".to_string(),
+                prompt: "Rewrite the following text to be professional and formal, suitable for business communication. CRITICAL: Your output MUST be in the EXACT SAME LANGUAGE as the input text (if input is Korean, output Korean; if Vietnamese, output Vietnamese; if Japanese, output Japanese, etc.). Do NOT translate to English. Maintain the original meaning. Output ONLY the rewritten text.".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: false,
                 show_overlay: false,
