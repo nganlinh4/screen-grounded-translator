@@ -9,11 +9,12 @@ use std::sync::{Arc, Mutex};
 
 use crate::overlay::utils::to_wstring;
 use super::state::{WINDOW_STATES, InteractionMode, ResizeEdge, RefineContext, link_windows, WindowType};
-use super::layout::{get_copy_btn_rect, get_edit_btn_rect, get_undo_btn_rect, get_markdown_btn_rect, get_download_btn_rect, get_resize_edge};
+use super::layout::{get_copy_btn_rect, get_edit_btn_rect, get_undo_btn_rect, get_redo_btn_rect, get_markdown_btn_rect, get_download_btn_rect, get_resize_edge};
 use super::logic;
 use super::paint;
 use super::window::{create_result_window, update_window_text};
-use super::markdown_view; 
+use super::markdown_view;
+use super::refine_input;
 
 // Custom message to defer WebView2 creation (avoids deadlock in button handler)
 const WM_CREATE_WEBVIEW: u32 = WM_USER + 200; 
@@ -266,6 +267,14 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         state.on_undo_btn = false;
                     }
                     
+                    // Redo button hover state
+                    let redo_rect = get_redo_btn_rect(rect.right, rect.bottom);
+                    if !state.redo_history.is_empty() {
+                        state.on_redo_btn = x as i32 >= redo_rect.left - padding && x as i32 <= redo_rect.right + padding && y as i32 >= redo_rect.top - padding && y as i32 <= redo_rect.bottom + padding;
+                    } else {
+                        state.on_redo_btn = false;
+                    }
+                    
                     // Calc Back Button state
                     if state.is_browsing {
                          let btn_size = 28;
@@ -384,6 +393,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 state.on_copy_btn = false;
                 state.on_edit_btn = false;
                 state.on_undo_btn = false;
+                state.on_redo_btn = false;
                 state.on_markdown_btn = false;
                 state.on_download_btn = false;
                 state.current_resize_edge = ResizeEdge::None;
@@ -405,6 +415,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             let mut is_copy_click = false;
             let mut is_edit_click = false;
             let mut is_undo_click = false;
+            let mut is_redo_click = false;
             let mut is_markdown_click = false;
             let mut is_back_click = false;
             let mut is_download_click = false;
@@ -417,6 +428,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         is_copy_click = state.on_copy_btn;
                         is_edit_click = state.on_edit_btn;
                         is_undo_click = state.on_undo_btn;
+                        is_redo_click = state.on_redo_btn;
                         is_markdown_click = state.on_markdown_btn;
                         is_back_click = state.on_back_btn;
                         is_download_click = state.on_download_btn;
@@ -429,61 +441,158 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                      markdown_view::go_back(hwnd);
                  } else if is_undo_click {
                     let mut prev_text = None;
+                    let mut current_text_for_redo = String::new();
+                    let mut is_markdown = false;
+                    let mut is_hovered = false;
                     {
                         let mut states = WINDOW_STATES.lock().unwrap();
                         if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
                             if let Some(last) = state.text_history.pop() {
+                                // Save current text to redo history before replacing
+                                current_text_for_redo = state.full_text.clone();
                                 prev_text = Some(last.clone());
                                 state.full_text = last;
+                                // Push current text to redo stack
+                                if !current_text_for_redo.is_empty() {
+                                    state.redo_history.push(current_text_for_redo);
+                                }
                             }
+                            is_markdown = state.is_markdown_mode;
+                            is_hovered = state.is_hovered;
                         }
                     }
                     if let Some(txt) = prev_text {
                         let wide_text = to_wstring(&txt);
                         SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
-                        let mut states = WINDOW_STATES.lock().unwrap();
-                        if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-                            state.font_cache_dirty = true;
+                        {
+                            let mut states = WINDOW_STATES.lock().unwrap();
+                            if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                                state.font_cache_dirty = true;
+                                // Reset browsing state since content changed
+                                state.is_browsing = false;
+                            }
                         }
+                        
+                        // Update markdown WebView if in markdown mode
+                        if is_markdown {
+                            markdown_view::create_markdown_webview(hwnd, &txt, is_hovered);
+                        }
+                        
                         InvalidateRect(hwnd, None, false);
                     }
-                 } else if is_edit_click {
-                    let mut show = false;
-                    let mut h_edit = HWND(0);
-                    let mut was_markdown_mode = false;
+                 } else if is_redo_click {
+                    // Redo: pop from redo_history, push current to text_history
+                    let mut next_text = None;
+                    let mut current_text_for_undo = String::new();
+                    let mut is_markdown = false;
+                    let mut is_hovered = false;
                     {
                         let mut states = WINDOW_STATES.lock().unwrap();
                         if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-                            state.is_editing = !state.is_editing;
-                            show = state.is_editing;
-                            h_edit = state.edit_hwnd;
-                            
-                            // Auto-disable markdown mode when entering edit mode
-                            if show && state.is_markdown_mode {
-                                was_markdown_mode = true;
-                                state.is_markdown_mode = false;
+                            if let Some(redo_text) = state.redo_history.pop() {
+                                // Save current text to undo history before replacing
+                                current_text_for_undo = state.full_text.clone();
+                                next_text = Some(redo_text.clone());
+                                state.full_text = redo_text;
+                                // Push current text back to undo stack
+                                if !current_text_for_undo.is_empty() {
+                                    state.text_history.push(current_text_for_undo);
+                                }
                             }
+                            is_markdown = state.is_markdown_mode;
+                            is_hovered = state.is_hovered;
                         }
                     }
-                    
-                    // Hide markdown webview if it was on
-                    if was_markdown_mode {
-                        markdown_view::hide_markdown_webview(hwnd);
-                    }
-                    
-                    if show {
-                        let mut rect = RECT::default();
-                        GetClientRect(hwnd, &mut rect);
-                        let w = rect.right - 20;
-                        let h = 40; 
-                        SetWindowPos(h_edit, HWND_TOP, 10, 10, w, h, SWP_SHOWWINDOW);
-                        set_rounded_edit_region(h_edit, w, h);
+                    if let Some(txt) = next_text {
+                        let wide_text = to_wstring(&txt);
+                        SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
+                        {
+                            let mut states = WINDOW_STATES.lock().unwrap();
+                            if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                                state.font_cache_dirty = true;
+                                // Reset browsing state since content changed
+                                state.is_browsing = false;
+                            }
+                        }
                         
-                        // FIX: Activate window so Edit control can receive focus immediately
-                        SetForegroundWindow(hwnd);
-                        SetFocus(h_edit);
+                        // Update markdown WebView if in markdown mode
+                        if is_markdown {
+                            markdown_view::create_markdown_webview(hwnd, &txt, is_hovered);
+                        }
+                        
+                        InvalidateRect(hwnd, None, false);
+                    }
+                 } else if is_edit_click {
+                    // Check if we're in markdown mode to decide which input to use
+                    let (is_markdown_mode, is_currently_editing, h_edit) = {
+                        let states = WINDOW_STATES.lock().unwrap();
+                        if let Some(state) = states.get(&(hwnd.0 as isize)) {
+                            (state.is_markdown_mode, state.is_editing, state.edit_hwnd)
+                        } else {
+                            (false, false, HWND(0))
+                        }
+                    };
+                    
+                    if is_markdown_mode {
+                        // Use WebView-based refine input (stays above markdown view)
+                        if refine_input::is_refine_input_active(hwnd) {
+                            // Toggle off - hide the refine input
+                            refine_input::hide_refine_input(hwnd);
+                            {
+                                let mut states = WINDOW_STATES.lock().unwrap();
+                                if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                                    state.is_editing = false;
+                                }
+                            }
+                            // Resize markdown WebView back to full
+                            let is_hovered = {
+                                let states = WINDOW_STATES.lock().unwrap();
+                                states.get(&(hwnd.0 as isize)).map(|s| s.is_hovered).unwrap_or(false)
+                            };
+                            markdown_view::resize_markdown_webview(hwnd, is_hovered);
+                        } else {
+                            // Toggle on - show the refine input
+                            let lang = {
+                                let app = crate::APP.lock().unwrap();
+                                app.config.ui_language.clone()
+                            };
+                            let locale = crate::gui::locale::LocaleText::get(&lang);
+                            let placeholder = locale.text_input_placeholder;
+                            
+                            if refine_input::show_refine_input(hwnd, placeholder) {
+                                {
+                                    let mut states = WINDOW_STATES.lock().unwrap();
+                                    if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                                        state.is_editing = true;
+                                    }
+                                }
+                                // Resize markdown WebView to leave room for refine input
+                                // The refine input is at top, so markdown view shifts down
+                                markdown_view::resize_markdown_webview(hwnd, true);
+                            }
+                        }
                     } else {
-                        ShowWindow(h_edit, SW_HIDE);
+                        // Plain text mode: use native EDIT control (existing logic)
+                        let show = !is_currently_editing;
+                        {
+                            let mut states = WINDOW_STATES.lock().unwrap();
+                            if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                                state.is_editing = show;
+                            }
+                        }
+                        
+                        if show {
+                            let mut rect = RECT::default();
+                            GetClientRect(hwnd, &mut rect);
+                            let w = rect.right - 20;
+                            let h = 40;
+                            SetWindowPos(h_edit, HWND_TOP, 10, 10, w, h, SWP_SHOWWINDOW);
+                            set_rounded_edit_region(h_edit, w, h);
+                            SetForegroundWindow(hwnd);
+                            SetFocus(h_edit);
+                        } else {
+                            ShowWindow(h_edit, SW_HIDE);
+                        }
                     }
                  } else if is_copy_click {
                     let text_len = GetWindowTextLengthW(hwnd) + 1;
@@ -718,7 +827,8 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                           state.last_text_update_time = now;
                       }
                       
-                      if state.is_editing && GetFocus() == state.edit_hwnd {
+                      // Handle native EDIT control input (plain text mode)
+                      if state.is_editing && !state.is_markdown_mode && GetFocus() == state.edit_hwnd {
                            // ESCAPE to dismiss edit
                            if (GetKeyState(VK_ESCAPE.0 as i32) as u16 & 0x8000) != 0 {
                                state.is_editing = false;
@@ -747,6 +857,8 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
 
                                    // Save current state to history
                                    state.text_history.push(text_to_refine.clone());
+                                   // Clear redo history when new action is performed
+                                   state.redo_history.clear();
                                    
                                    SetWindowTextW(state.edit_hwnd, w!(""));
                                    ShowWindow(state.edit_hwnd, SW_HIDE);
@@ -759,6 +871,68 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                                }
                            }
                        }
+                       
+                       // Handle WebView-based refine input (markdown mode)
+                       // Poll for IPC submit/cancel messages
+                       if state.is_editing && state.is_markdown_mode {
+                           // Note: IPC polling happens outside the lock to avoid deadlock
+                           // We just mark that we need to check it
+                       }
+                }
+            }
+            
+            // Poll WebView-based refine input outside of lock (IPC handler may need lock)
+            {
+                let is_refine_active = refine_input::is_refine_input_active(hwnd);
+                if is_refine_active {
+                    let (submitted, cancelled, input_text) = refine_input::poll_refine_input(hwnd);
+                    
+                    if submitted && !input_text.trim().is_empty() {
+                        // User submitted from WebView refine input
+                        user_input = input_text;
+                        
+                        {
+                            let mut states = WINDOW_STATES.lock().unwrap();
+                            if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                                text_to_refine = state.full_text.clone();
+                                state.text_history.push(text_to_refine.clone());
+                                // Clear redo history when new action is performed
+                                state.redo_history.clear();
+                                state.is_editing = false;
+                                state.is_refining = true;
+                                state.full_text = String::new();
+                                state.pending_text = Some(String::new());
+                            }
+                        }
+                        
+                        // Hide the refine input
+                        refine_input::hide_refine_input(hwnd);
+                        
+                        // Resize markdown WebView back to normal
+                        let is_hovered = {
+                            let states = WINDOW_STATES.lock().unwrap();
+                            states.get(&(hwnd.0 as isize)).map(|s| s.is_hovered).unwrap_or(false)
+                        };
+                        markdown_view::resize_markdown_webview(hwnd, is_hovered);
+                        
+                        trigger_refine = true;
+                    } else if cancelled {
+                        // User cancelled - just hide the input
+                        {
+                            let mut states = WINDOW_STATES.lock().unwrap();
+                            if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                                state.is_editing = false;
+                            }
+                        }
+                        refine_input::hide_refine_input(hwnd);
+                        
+                        // Resize markdown WebView back to normal
+                        let is_hovered = {
+                            let states = WINDOW_STATES.lock().unwrap();
+                            states.get(&(hwnd.0 as isize)).map(|s| s.is_hovered).unwrap_or(false)
+                        };
+                        markdown_view::resize_markdown_webview(hwnd, is_hovered);
+                    }
                 }
             }
 
@@ -911,6 +1085,9 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     // Cleanup markdown webview and timer
                     KillTimer(hwnd, 2);
                     markdown_view::destroy_markdown_webview(hwnd);
+                    
+                    // Cleanup refine input if active
+                    refine_input::hide_refine_input(hwnd);
                 } else {
                     windows_to_close = Vec::new();
                     token_to_signal = None;

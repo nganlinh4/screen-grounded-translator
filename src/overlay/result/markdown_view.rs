@@ -363,8 +363,13 @@ pub fn update_markdown_content(parent_hwnd: HWND, markdown_text: &str) -> bool {
 /// Resize the WebView to match parent window
 /// When hovered: leaves 52px at bottom for buttons
 /// When not hovered: expands to full height for clean view
+/// When refine input active: starts 44px from top (40px input + 4px gap)
 pub fn resize_markdown_webview(parent_hwnd: HWND, is_hovered: bool) {
     let hwnd_key = parent_hwnd.0 as isize;
+    
+    // Check if refine input is active
+    let refine_input_active = super::refine_input::is_refine_input_active(parent_hwnd);
+    let top_offset = if refine_input_active { 44.0 } else { 2.0 }; // 40px input + 4px gap, or 2px edge margin
     
     unsafe {
         let mut rect = RECT::default();
@@ -376,13 +381,13 @@ pub fn resize_markdown_webview(parent_hwnd: HWND, is_hovered: bool) {
         let button_area_height = if is_hovered { 52.0 } else { edge_margin };
         
         let content_width = ((rect.right - rect.left) as f64 - edge_margin * 2.0).max(50.0);
-        let content_height = ((rect.bottom - rect.top) as f64 - edge_margin - button_area_height).max(50.0);
+        let content_height = ((rect.bottom - rect.top) as f64 - top_offset - button_area_height).max(50.0);
         
         WEBVIEWS.with(|webviews| {
             if let Some(webview) = webviews.borrow().get(&hwnd_key) {
                 // Use Physical coordinates since GetClientRect returns physical pixels
                 let _ = webview.set_bounds(Rect {
-                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(edge_margin as i32, edge_margin as i32)),
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(edge_margin as i32, top_offset as i32)),
                     size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
                         content_width as u32,
                         content_height as u32

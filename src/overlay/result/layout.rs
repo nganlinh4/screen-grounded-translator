@@ -220,6 +220,18 @@ pub fn get_undo_btn_rect(window_w: i32, window_h: i32) -> RECT {
     }
 }
 
+pub fn get_redo_btn_rect(window_w: i32, window_h: i32) -> RECT {
+    let undo_rect = get_undo_btn_rect(window_w, window_h);
+    let gap = 8;
+    let width = undo_rect.right - undo_rect.left;
+    RECT {
+        left: undo_rect.left - width - gap,
+        top: undo_rect.top,
+        right: undo_rect.left - gap,
+        bottom: undo_rect.bottom
+    }
+}
+
 
 pub fn get_resize_edge(width: i32, height: i32, x: i32, y: i32) -> ResizeEdge {
     let margin = 8;

@@ -105,7 +105,8 @@ pub struct WindowState {
     pub on_copy_btn: bool,
     pub copy_success: bool,
     pub on_edit_btn: bool, 
-    pub on_undo_btn: bool, 
+    pub on_undo_btn: bool,
+    pub on_redo_btn: bool,  // Redo button hover state
     
     // Edit Mode
     pub is_editing: bool,         // Is the edit box open?
@@ -113,8 +114,9 @@ pub struct WindowState {
     pub context_data: RefineContext, // Data needed for API call
     pub full_text: String,        // Current full text content
     
-    // Text History for Undo
-    pub text_history: Vec<String>, // Stack of previous text states
+    // Text History for Undo/Redo
+    pub text_history: Vec<String>, // Stack of previous text states (for Undo)
+    pub redo_history: Vec<String>, // Stack of undone text states (for Redo)
     
     // Refinement State
     pub is_refining: bool,

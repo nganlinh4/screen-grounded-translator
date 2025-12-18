@@ -76,7 +76,7 @@ pub fn paint_window(hwnd: HWND) {
 
         // --- PHASE 1: STATE SNAPSHOT & CACHE MANAGEMENT ---
         let (
-             bg_color_u32, is_hovered, on_copy_btn, copy_success, on_edit_btn, on_undo_btn, on_markdown_btn, is_markdown_mode, 
+             bg_color_u32, is_hovered, on_copy_btn, copy_success, on_edit_btn, on_undo_btn, on_redo_btn, on_markdown_btn, is_markdown_mode, 
              is_browsing, on_back_btn, on_download_btn,
              broom_data, particles,
              mut cached_text_bm, _cached_font_size, cache_dirty,
@@ -84,6 +84,7 @@ pub fn paint_window(hwnd: HWND) {
              is_refining,
              anim_offset,
              history_count,
+             redo_count,
              graphics_mode
          ) = {
             let mut states = WINDOW_STATES.lock().unwrap();
@@ -148,6 +149,7 @@ pub fn paint_window(hwnd: HWND) {
                         && !state.on_copy_btn 
                         && !state.on_edit_btn
                         && !state.on_undo_btn
+                        && !state.on_redo_btn
                         && !state.on_markdown_btn
                         && !state.on_back_btn
                         && !state.on_download_btn
@@ -164,7 +166,7 @@ pub fn paint_window(hwnd: HWND) {
                 } else { None };
 
                 (
-                    state.bg_color, state.is_hovered, state.on_copy_btn, state.copy_success, state.on_edit_btn, state.on_undo_btn, state.on_markdown_btn, state.is_markdown_mode, 
+                    state.bg_color, state.is_hovered, state.on_copy_btn, state.copy_success, state.on_edit_btn, state.on_undo_btn, state.on_redo_btn, state.on_markdown_btn, state.is_markdown_mode, 
                     state.is_browsing, state.on_back_btn, state.on_download_btn,
                     broom_info, particles_vec,
                     state.content_bitmap, state.cached_font_size as i32, state.font_cache_dirty,
@@ -172,10 +174,11 @@ pub fn paint_window(hwnd: HWND) {
                     state.is_refining,
                     state.animation_offset,
                     state.text_history.len(),
+                    state.redo_history.len(),
                     state.graphics_mode.clone()
                 )
             } else {
-                (0, false, false, false, false, false, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, 0.0, 0, "standard".to_string())
+                (0, false, false, false, false, false, false, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, 0.0, 0, 0, "standard".to_string())
             }
         };
 
@@ -449,6 +452,7 @@ pub fn paint_window(hwnd: HWND) {
                 let cx_md = cx_edit - (btn_size as f32) - 8.0;     // MD is between Edit and Download
                 let cx_dl = cx_md - (btn_size as f32) - 8.0;       // Download is between MD and Undo
                 let cx_undo = cx_dl - (btn_size as f32) - 8.0;
+                let cx_redo = cx_undo - (btn_size as f32) - 8.0;   // Redo is left of Undo
                 let cx_back = (margin + btn_size / 2) as f32;
                 
                 let radius = 13.0;
@@ -457,6 +461,7 @@ pub fn paint_window(hwnd: HWND) {
                 let (tr_c, tg_c, tb_c) = if copy_success { (30.0, 180.0, 30.0) } else if on_copy_btn { (128.0, 128.0, 128.0) } else { (80.0, 80.0, 80.0) };
                 let (tr_e, tg_e, tb_e) = if on_edit_btn { (128.0, 128.0, 128.0) } else { (80.0, 80.0, 80.0) };
                 let (tr_u, tg_u, tb_u) = if on_undo_btn { (128.0, 128.0, 128.0) } else { (80.0, 80.0, 80.0) };
+                let (tr_rd, tg_rd, tb_rd) = if on_redo_btn { (128.0, 128.0, 128.0) } else { (80.0, 80.0, 80.0) };
                 let (tr_m, tg_m, tb_m) = if is_markdown_mode { (60.0, 180.0, 200.0) } else if on_markdown_btn { (100.0, 140.0, 180.0) } else { (80.0, 80.0, 80.0) };
                 let (tr_b, tg_b, tb_b) = if on_back_btn { (128.0, 128.0, 128.0) } else { (80.0, 80.0, 80.0) };
                 let (tr_dl, tg_dl, tb_dl) = if on_download_btn { (100.0, 180.0, 100.0) } else { (80.0, 80.0, 80.0) };
@@ -464,6 +469,7 @@ pub fn paint_window(hwnd: HWND) {
                 let b_start_y = (cy - radius - 4.0) as i32;
                 let b_end_y = (cy + radius + 4.0) as i32;
                 let show_undo = history_count > 0;
+                let show_redo = redo_count > 0;
                 let show_back = is_browsing;
                 let border_inner_radius = radius - 1.5;
 
@@ -589,10 +595,29 @@ pub fn paint_window(hwnd: HWND) {
                                      border_alpha = ((radius + 0.5 - dist_u).clamp(0.0, 1.0) * ((dist_u - (border_inner_radius - 0.5)).clamp(0.0, 1.0))) * 0.6;
                                      let tip_x = cx_undo - 3.5;
                                      let tail_x = cx_undo + 3.5;
-                                     // Undo is Left Arrow too (Back in history logic for undoing edits)
+                                     // Undo is Left Arrow (Back in history)
                                      let d_shaft = dist_segment(fx, fy, tip_x, cy, tail_x, cy);
                                      let d_wing1 = dist_segment(fx, fy, tip_x, cy, tip_x + 3.0, cy - 3.0);
                                      let d_wing2 = dist_segment(fx, fy, tip_x, cy, tip_x + 3.0, cy + 3.0);
+                                     let d_arrow = d_shaft.min(d_wing1).min(d_wing2);
+                                     icon_alpha = (1.3 - d_arrow).clamp(0.0, 1.0);
+                                 }
+                             }
+                             
+                             // REDO (Right Arrow - opposite of Undo)
+                             if !hit && show_redo {
+                                 let dx_rd = (fx - cx_redo).abs();
+                                 let dist_rd = (dx_rd*dx_rd + dy*dy).sqrt();
+                                 let aa_rd = (radius + 0.5 - dist_rd).clamp(0.0, 1.0);
+                                 if aa_rd > 0.0 {
+                                     hit = true; alpha = aa_rd; t_r = tr_rd; t_g = tg_rd; t_b = tb_rd;
+                                     border_alpha = ((radius + 0.5 - dist_rd).clamp(0.0, 1.0) * ((dist_rd - (border_inner_radius - 0.5)).clamp(0.0, 1.0))) * 0.6;
+                                     let tip_x = cx_redo + 3.5;  // Arrow points right
+                                     let tail_x = cx_redo - 3.5;
+                                     // Redo is Right Arrow (Forward in history)
+                                     let d_shaft = dist_segment(fx, fy, tail_x, cy, tip_x, cy);
+                                     let d_wing1 = dist_segment(fx, fy, tip_x, cy, tip_x - 3.0, cy - 3.0);
+                                     let d_wing2 = dist_segment(fx, fy, tip_x, cy, tip_x - 3.0, cy + 3.0);
                                      let d_arrow = d_shaft.min(d_wing1).min(d_wing2);
                                      icon_alpha = (1.3 - d_arrow).clamp(0.0, 1.0);
                                  }
