@@ -447,13 +447,14 @@ pub fn save_html_file(markdown_text: &str) -> bool {
     use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
     use windows::Win32::UI::Shell::{
         IFileSaveDialog, FileSaveDialog, FOS_OVERWRITEPROMPT, FOS_STRICTFILETYPES,
-        SIGDN_FILESYSPATH
+        SIGDN_FILESYSPATH, SHGetKnownFolderPath, FOLDERID_Downloads, SHCreateItemFromParsingName, IShellItem
     };
     use windows::Win32::System::Com::{
         CoInitializeEx, CoCreateInstance, CoUninitialize, 
         CLSCTX_ALL, COINIT_APARTMENTTHREADED
     };
-    use windows::core::Interface;
+    use windows::Win32::UI::Shell::KNOWN_FOLDER_FLAG;
+    use windows::core::{PCWSTR, ComInterface};
     
     unsafe {
         // Initialize COM
@@ -485,6 +486,16 @@ pub fn save_html_file(markdown_text: &str) -> bool {
         
         let _ = dialog.SetFileTypes(&file_types);
         let _ = dialog.SetFileTypeIndex(1);
+        
+        // Set default folder to Downloads
+        if let Ok(downloads_path) = SHGetKnownFolderPath(&FOLDERID_Downloads, KNOWN_FOLDER_FLAG(0), None) {
+            if let Ok(folder_item) = SHCreateItemFromParsingName::<PCWSTR, _, IShellItem>(
+                PCWSTR(downloads_path.0),
+                None,
+            ) {
+                let _ = dialog.SetFolder(&folder_item);
+            }
+        }
         
         // Set default extension
         let default_ext: Vec<u16> = OsStr::new("html")

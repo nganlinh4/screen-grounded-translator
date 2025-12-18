@@ -141,7 +141,7 @@ fn default_prompt_mode() -> String { "fixed".to_string() }
 fn default_text_input_mode() -> String { "select".to_string() }
 fn default_theme_mode() -> ThemeMode { ThemeMode::System }
 fn default_auto_paste_newline() -> bool { true }
-fn default_history_limit() -> usize { 100 }
+fn default_history_limit() -> usize { 50 }
 fn default_graphics_mode() -> String { "standard".to_string() }
 
 
@@ -661,6 +661,7 @@ impl Default for Config {
                 prompt: "".to_string(),
                 selected_language: "Vietnamese".to_string(),
                 streaming_enabled: true,
+                render_mode: "markdown".to_string(),
                 show_overlay: true,
                 auto_copy: false,
                 ..Default::default()
