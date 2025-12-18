@@ -196,6 +196,7 @@ pub fn create_result_window(
                 is_markdown_mode: render_mode == "markdown",
                 on_markdown_btn: false,
                 is_browsing: false,
+                navigation_depth: 0,
                 on_back_btn: false,
                 on_download_btn: false,
             });

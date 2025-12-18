@@ -181,6 +181,7 @@ pub struct WindowState {
     
     // Web Browsing State
     pub is_browsing: bool,                 // True when user has navigated away from initial content
+    pub navigation_depth: usize,           // How many pages deep from initial content (0 = at result)
     pub on_back_btn: bool,                 // Hover state for back button
     
     // Download HTML button state

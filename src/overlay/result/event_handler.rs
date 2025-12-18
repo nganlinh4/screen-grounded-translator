@@ -261,7 +261,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     let padding = 4;
                     state.on_copy_btn = x as i32 >= copy_rect.left - padding && x as i32 <= copy_rect.right + padding && y as i32 >= copy_rect.top - padding && y as i32 <= copy_rect.bottom + padding;
                     state.on_edit_btn = x as i32 >= edit_rect.left - padding && x as i32 <= edit_rect.right + padding && y as i32 >= edit_rect.top - padding && y as i32 <= edit_rect.bottom + padding;
-                    if !state.text_history.is_empty() {
+                    if !state.text_history.is_empty() && !state.is_browsing {
                         state.on_undo_btn = x as i32 >= undo_rect.left - padding && x as i32 <= undo_rect.right + padding && y as i32 >= undo_rect.top - padding && y as i32 <= undo_rect.bottom + padding;
                     } else {
                         state.on_undo_btn = false;
@@ -269,7 +269,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     
                     // Redo button hover state
                     let redo_rect = get_redo_btn_rect(rect.right, rect.bottom);
-                    if !state.redo_history.is_empty() {
+                    if !state.redo_history.is_empty() && !state.is_browsing {
                         state.on_redo_btn = x as i32 >= redo_rect.left - padding && x as i32 <= redo_rect.right + padding && y as i32 >= redo_rect.top - padding && y as i32 <= redo_rect.bottom + padding;
                     } else {
                         state.on_redo_btn = false;

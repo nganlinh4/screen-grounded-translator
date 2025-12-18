@@ -468,8 +468,8 @@ pub fn paint_window(hwnd: HWND) {
 
                 let b_start_y = (cy - radius - 4.0) as i32;
                 let b_end_y = (cy + radius + 4.0) as i32;
-                let show_undo = history_count > 0;
-                let show_redo = redo_count > 0;
+                let show_undo = history_count > 0 && !is_browsing;
+                let show_redo = redo_count > 0 && !is_browsing;
                 let show_back = is_browsing;
                 let border_inner_radius = radius - 1.5;
 

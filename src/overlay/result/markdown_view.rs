@@ -16,6 +16,8 @@ lazy_static::lazy_static! {
     static ref WEBVIEW_STATES: Mutex<HashMap<isize, bool>> = Mutex::new(HashMap::new());
     // Global flag to indicate WebView2 is ready
     static ref WEBVIEW_READY: Mutex<bool> = Mutex::new(false);
+    // Flag to skip next navigation handler call (set before history.back())
+    static ref SKIP_NEXT_NAVIGATION: Mutex<HashMap<isize, bool>> = Mutex::new(HashMap::new());
 }
 
 // Global hidden window handle for WebView warmup
@@ -281,6 +283,7 @@ pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovere
     // Create WebView with small margins so resize handles remain accessible
     // Use Physical coordinates since GetClientRect returns physical pixels
     let hwnd_copy = parent_hwnd;
+    let hwnd_key_for_nav = hwnd_key;
     
     // SIMPLIFIED FOR DEBUGGING - minimal WebView creation  
     // CRITICAL: with_transparent(false) matches text_input's working config
@@ -294,6 +297,39 @@ pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovere
         })
         .with_html(&html_content)
         .with_transparent(false)
+        .with_navigation_handler(move |url: String| {
+            // Check if we should skip this navigation (triggered by history.back())
+            let should_skip = {
+                let mut skip_map = SKIP_NEXT_NAVIGATION.lock().unwrap();
+                if skip_map.get(&hwnd_key_for_nav).copied().unwrap_or(false) {
+                    skip_map.insert(hwnd_key_for_nav, false);
+                    true
+                } else {
+                    false
+                }
+            };
+            
+            if should_skip {
+                // This navigation was from history.back(), don't increment depth
+                return true;
+            }
+            
+            // Detect when user navigates to an external URL (clicked a link)
+            let is_external = url.starts_with("http://") || url.starts_with("https://");
+            
+            if is_external {
+                // Update browsing state and increment depth counter
+                if let Ok(mut states) = super::state::WINDOW_STATES.lock() {
+                    if let Some(state) = states.get_mut(&hwnd_key_for_nav) {
+                        state.is_browsing = true;
+                        state.navigation_depth += 1;
+                    }
+                }
+            }
+            
+            // Allow all navigation
+            true
+        })
         .build_as_child(&wrapper);
     
     match result {
@@ -313,29 +349,71 @@ pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovere
     }
 }
 
-/// Navigate back in history
+/// Navigate back in browser history
 pub fn go_back(parent_hwnd: HWND) {
     let hwnd_key = parent_hwnd.0 as isize;
     
-    WEBVIEWS.with(|webviews| {
-        if let Some(webview) = webviews.borrow().get(&hwnd_key) {
-            // Evaluate JS to go back
-            // We also need to check if we are back at the start
-            // But for now, just go back. Ideally we'd hook into on_page_load
-            // to reset is_browsing if we are back at local content.
-            // For now, let's assume one level deep or just stay in "browsing" mode
-            // until the user manually resets or closes?
-            // Actually, if we inject a script to check location.href after back...
-            let _ = webview.evaluate_script(r#"
-                history.back();
-                setTimeout(() => {
-                    // Notify host if we are back at start? 
-                    // This is complex without IPC setup.
-                    // For now, we trust the user.
-                }, 100);
-            "#);
+    // Check if we're going back to original content (depth will become 0)
+    let returning_to_original = {
+        let mut states = super::state::WINDOW_STATES.lock().unwrap();
+        if let Some(state) = states.get_mut(&hwnd_key) {
+            if state.navigation_depth > 0 {
+                state.navigation_depth -= 1;
+            }
+            // If depth is now 0, we're returning to original content
+            if state.navigation_depth == 0 {
+                state.is_browsing = false; // Hide back button
+                true
+            } else {
+                false
+            }
+        } else {
+            false
         }
-    });
+    };
+    
+    if returning_to_original {
+        // Reload original content from state
+        let original_content = {
+            let states = super::state::WINDOW_STATES.lock().unwrap();
+            states.get(&hwnd_key).map(|s| s.full_text.clone())
+        };
+        
+        if let Some(markdown_text) = original_content {
+            let html = markdown_to_html(&markdown_text);
+            
+            WEBVIEWS.with(|webviews| {
+                if let Some(webview) = webviews.borrow().get(&hwnd_key) {
+                    let escaped_html = html.replace('\\', "\\\\")
+                        .replace('`', "\\`")
+                        .replace("${", "\\${");
+                    let script = format!(
+                        "document.open(); document.write(`{}`); document.close();",
+                        escaped_html
+                    );
+                    let _ = webview.evaluate_script(&script);
+                }
+            });
+        }
+        
+        // Trigger repaint to hide back button
+        unsafe {
+            windows::Win32::Graphics::Gdi::InvalidateRect(parent_hwnd, None, false);
+        }
+    } else {
+        // Normal browser history back
+        // Set flag to prevent navigation_handler from re-incrementing depth
+        {
+            let mut skip_map = SKIP_NEXT_NAVIGATION.lock().unwrap();
+            skip_map.insert(hwnd_key, true);
+        }
+        
+        WEBVIEWS.with(|webviews| {
+            if let Some(webview) = webviews.borrow().get(&hwnd_key) {
+                let _ = webview.evaluate_script("history.back();");
+            }
+        });
+    }
 }
 
 /// Update the markdown content in an existing WebView
