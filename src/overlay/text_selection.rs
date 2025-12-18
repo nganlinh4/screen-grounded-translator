@@ -169,7 +169,11 @@ fn process_selected_text(preset_idx: usize, clipboard_text: String) {
             right: (screen_w + 700) / 2, 
             bottom: (screen_h + 300) / 2 
         };
-        super::process::start_text_processing(clipboard_text, center_rect, config, preset, String::new(), String::new());
+        // Get localized preset name and hotkey for the text input header
+        let localized_name = crate::gui::settings_ui::get_localized_preset_name(&preset.id, &config.ui_language);
+        let cancel_hotkey = preset.hotkeys.first().map(|h| h.name.clone()).unwrap_or_default();
+        
+        super::process::start_text_processing(clipboard_text, center_rect, config, preset, localized_name, cancel_hotkey);
     }
 }
 

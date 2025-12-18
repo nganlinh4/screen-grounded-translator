@@ -262,8 +262,8 @@ pub fn start_text_processing(
     } else if preset.prompt_mode == "dynamic" {
         // Dynamic prompt mode for text selection: show WebView input for user to type command
         let ui_lang = config.ui_language.clone();
-        let localized_name = localized_preset_name;
-        let guide_text = format!("{}...", localized_name);
+        // Header shows just the localized preset name (hotkey goes to footer via cancel_hotkey_name)
+        let guide_text = localized_preset_name.clone();
         
         // Store for use in callback
         let initial_text = Arc::new(initial_text_content);
