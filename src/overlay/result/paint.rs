@@ -77,7 +77,7 @@ pub fn paint_window(hwnd: HWND) {
         // --- PHASE 1: STATE SNAPSHOT & CACHE MANAGEMENT ---
         let (
              bg_color_u32, is_hovered, on_copy_btn, copy_success, on_edit_btn, on_undo_btn, on_markdown_btn, is_markdown_mode, 
-             is_browsing, on_back_btn,
+             is_browsing, on_back_btn, on_download_btn,
              broom_data, particles,
              mut cached_text_bm, _cached_font_size, cache_dirty,
              cached_bg_bm,
@@ -150,6 +150,7 @@ pub fn paint_window(hwnd: HWND) {
                         && !state.on_undo_btn
                         && !state.on_markdown_btn
                         && !state.on_back_btn
+                        && !state.on_download_btn
                         && state.current_resize_edge == ResizeEdge::None
                 );
                 
@@ -164,7 +165,7 @@ pub fn paint_window(hwnd: HWND) {
 
                 (
                     state.bg_color, state.is_hovered, state.on_copy_btn, state.copy_success, state.on_edit_btn, state.on_undo_btn, state.on_markdown_btn, state.is_markdown_mode, 
-                    state.is_browsing, state.on_back_btn,
+                    state.is_browsing, state.on_back_btn, state.on_download_btn,
                     broom_info, particles_vec,
                     state.content_bitmap, state.cached_font_size as i32, state.font_cache_dirty,
                     state.bg_bitmap,
@@ -174,7 +175,7 @@ pub fn paint_window(hwnd: HWND) {
                     state.graphics_mode.clone()
                 )
             } else {
-                (0, false, false, false, false, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, 0.0, 0, "standard".to_string())
+                (0, false, false, false, false, false, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, 0.0, 0, "standard".to_string())
             }
         };
 
@@ -445,8 +446,9 @@ pub fn paint_window(hwnd: HWND) {
                 
                 let cx_copy = (width - margin - btn_size / 2) as f32;
                 let cx_edit = cx_copy - (btn_size as f32) - 8.0;
-                let cx_md = cx_edit - (btn_size as f32) - 8.0;     // MD is between Edit and Undo
-                let cx_undo = cx_md - (btn_size as f32) - 8.0;
+                let cx_md = cx_edit - (btn_size as f32) - 8.0;     // MD is between Edit and Download
+                let cx_dl = cx_md - (btn_size as f32) - 8.0;       // Download is between MD and Undo
+                let cx_undo = cx_dl - (btn_size as f32) - 8.0;
                 let cx_back = (margin + btn_size / 2) as f32;
                 
                 let radius = 13.0;
@@ -457,6 +459,7 @@ pub fn paint_window(hwnd: HWND) {
                 let (tr_u, tg_u, tb_u) = if on_undo_btn { (128.0, 128.0, 128.0) } else { (80.0, 80.0, 80.0) };
                 let (tr_m, tg_m, tb_m) = if is_markdown_mode { (60.0, 180.0, 200.0) } else if on_markdown_btn { (100.0, 140.0, 180.0) } else { (80.0, 80.0, 80.0) };
                 let (tr_b, tg_b, tb_b) = if on_back_btn { (128.0, 128.0, 128.0) } else { (80.0, 80.0, 80.0) };
+                let (tr_dl, tg_dl, tb_dl) = if on_download_btn { (100.0, 180.0, 100.0) } else { (80.0, 80.0, 80.0) };
 
                 let b_start_y = (cy - radius - 4.0) as i32;
                 let b_end_y = (cy + radius + 4.0) as i32;
@@ -554,6 +557,25 @@ pub fn paint_window(hwnd: HWND) {
                                      let d_m4 = dist_segment(fx, fy, cx_md + 4.0, cy - 4.0, cx_md + 4.0, cy + 4.0); 
                                      let d_m = d_m1.min(d_m2).min(d_m3).min(d_m4);
                                      icon_alpha = (1.5 - d_m).clamp(0.0, 1.0);
+                                 }
+                             }
+
+                             // DOWNLOAD
+                             if !hit {
+                                 let dx_dl = (fx - cx_dl).abs();
+                                 let dist_dl = (dx_dl*dx_dl + dy*dy).sqrt();
+                                 let aa_dl = (radius + 0.5 - dist_dl).clamp(0.0, 1.0);
+                                 if aa_dl > 0.0 {
+                                     hit = true; alpha = aa_dl; t_r = tr_dl; t_g = tg_dl; t_b = tb_dl;
+                                     border_alpha = ((radius + 0.5 - dist_dl).clamp(0.0, 1.0) * ((dist_dl - (border_inner_radius - 0.5)).clamp(0.0, 1.0))) * 0.6;
+                                     // Download arrow icon: vertical line + V shape at bottom
+                                     let d_line = dist_segment(fx, fy, cx_dl, cy - 4.0, cx_dl, cy + 2.0);
+                                     let d_arrow1 = dist_segment(fx, fy, cx_dl - 3.5, cy - 0.5, cx_dl, cy + 3.5);
+                                     let d_arrow2 = dist_segment(fx, fy, cx_dl + 3.5, cy - 0.5, cx_dl, cy + 3.5);
+                                     // Base tray
+                                     let d_tray = dist_segment(fx, fy, cx_dl - 4.0, cy + 4.5, cx_dl + 4.0, cy + 4.5);
+                                     let d_icon = d_line.min(d_arrow1).min(d_arrow2).min(d_tray);
+                                     icon_alpha = (1.5 - d_icon).clamp(0.0, 1.0);
                                  }
                              }
 

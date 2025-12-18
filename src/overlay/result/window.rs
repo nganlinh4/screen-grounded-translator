@@ -195,6 +195,7 @@ pub fn create_result_window(
                 on_markdown_btn: false,
                 is_browsing: false,
                 on_back_btn: false,
+                on_download_btn: false,
             });
         }
 

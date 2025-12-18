@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::overlay::utils::to_wstring;
 use super::state::{WINDOW_STATES, InteractionMode, ResizeEdge, RefineContext, link_windows, WindowType};
-use super::layout::{get_copy_btn_rect, get_edit_btn_rect, get_undo_btn_rect, get_markdown_btn_rect, get_resize_edge};
+use super::layout::{get_copy_btn_rect, get_edit_btn_rect, get_undo_btn_rect, get_markdown_btn_rect, get_download_btn_rect, get_resize_edge};
 use super::logic;
 use super::paint;
 use super::window::{create_result_window, update_window_text};
@@ -115,7 +115,10 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     let md_rect = get_markdown_btn_rect(rect.right, rect.bottom);
                     let on_md = pt.x >= md_rect.left && pt.x <= md_rect.right && pt.y >= md_rect.top && pt.y <= md_rect.bottom;
                     
-                    if on_copy || on_edit || on_undo || on_md || on_back {
+                    let dl_rect = get_download_btn_rect(rect.right, rect.bottom);
+                    let on_dl = pt.x >= dl_rect.left && pt.x <= dl_rect.right && pt.y >= dl_rect.top && pt.y <= dl_rect.bottom;
+                    
+                    if on_copy || on_edit || on_undo || on_md || on_back || on_dl {
                         cursor_id = IDC_HAND;
                     }
                 }
@@ -290,6 +293,9 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     let md_rect = get_markdown_btn_rect(rect.right, rect.bottom);
                     state.on_markdown_btn = x as i32 >= md_rect.left - padding && x as i32 <= md_rect.right + padding && y as i32 >= md_rect.top - padding && y as i32 <= md_rect.bottom + padding;
 
+                    let dl_rect = get_download_btn_rect(rect.right, rect.bottom);
+                    state.on_download_btn = x as i32 >= dl_rect.left - padding && x as i32 <= dl_rect.right + padding && y as i32 >= dl_rect.top - padding && y as i32 <= dl_rect.bottom + padding;
+
                     // In markdown mode, let the Timer handle is_hovered state to ensure it syncs with WebView resize
                     let handle_hover_in_mousemove = !state.is_markdown_mode;
 
@@ -379,6 +385,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 state.on_edit_btn = false;
                 state.on_undo_btn = false;
                 state.on_markdown_btn = false;
+                state.on_download_btn = false;
                 state.current_resize_edge = ResizeEdge::None;
                 
                 // For plain text mode, also clear hover state here 
@@ -400,6 +407,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             let mut is_undo_click = false;
             let mut is_markdown_click = false;
             let mut is_back_click = false;
+            let mut is_download_click = false;
             {
                 let mut states = WINDOW_STATES.lock().unwrap();
                 if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
@@ -411,6 +419,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         is_undo_click = state.on_undo_btn;
                         is_markdown_click = state.on_markdown_btn;
                         is_back_click = state.on_back_btn;
+                        is_download_click = state.on_download_btn;
                     }
                 }
             }
@@ -537,6 +546,21 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         }
                         InvalidateRect(hwnd, None, false);
                     }
+                 } else if is_download_click {
+                    // Download as HTML file
+                    let full_text = {
+                        let states = WINDOW_STATES.lock().unwrap();
+                        if let Some(state) = states.get(&(hwnd.0 as isize)) {
+                            state.full_text.clone()
+                        } else {
+                            String::new()
+                        }
+                    };
+                    
+                    if !full_text.is_empty() {
+                        // Call save_html_file which opens the file save dialog
+                        markdown_view::save_html_file(&full_text);
+                    }
                  } else {
                       let linked_hwnd = {
                           let states = WINDOW_STATES.lock().unwrap();
@@ -653,6 +677,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                                 state.on_copy_btn = false;
                                 state.on_undo_btn = false;
                                 state.on_markdown_btn = false;
+                                state.on_download_btn = false;
                             }
                         }
                         markdown_view::resize_markdown_webview(hwnd, false);

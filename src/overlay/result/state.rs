@@ -180,6 +180,9 @@ pub struct WindowState {
     // Web Browsing State
     pub is_browsing: bool,                 // True when user has navigated away from initial content
     pub on_back_btn: bool,                 // Hover state for back button
+    
+    // Download HTML button state
+    pub on_download_btn: bool,             // Hover state for download HTML button
 }
 
 /// Check if a cancellation token is set (chain should stop)

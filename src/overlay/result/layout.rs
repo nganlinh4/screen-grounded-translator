@@ -195,7 +195,8 @@ pub fn get_markdown_btn_rect(window_w: i32, window_h: i32) -> RECT {
     }
 }
 
-pub fn get_undo_btn_rect(window_w: i32, window_h: i32) -> RECT {
+// Download HTML button is between Markdown and Undo buttons
+pub fn get_download_btn_rect(window_w: i32, window_h: i32) -> RECT {
     let md_rect = get_markdown_btn_rect(window_w, window_h);
     let gap = 8;
     let width = md_rect.right - md_rect.left;
@@ -206,6 +207,19 @@ pub fn get_undo_btn_rect(window_w: i32, window_h: i32) -> RECT {
         bottom: md_rect.bottom
     }
 }
+
+pub fn get_undo_btn_rect(window_w: i32, window_h: i32) -> RECT {
+    let dl_rect = get_download_btn_rect(window_w, window_h);
+    let gap = 8;
+    let width = dl_rect.right - dl_rect.left;
+    RECT {
+        left: dl_rect.left - width - gap,
+        top: dl_rect.top,
+        right: dl_rect.left - gap,
+        bottom: dl_rect.bottom
+    }
+}
+
 
 pub fn get_resize_edge(width: i32, height: i32, x: i32, y: i32) -> ResizeEdge {
     let margin = 8;

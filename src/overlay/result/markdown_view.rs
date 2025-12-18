@@ -433,3 +433,111 @@ pub fn has_markdown_webview(parent_hwnd: HWND) -> bool {
     let states = WEBVIEW_STATES.lock().unwrap();
     states.get(&hwnd_key).copied().unwrap_or(false)
 }
+
+/// Save the current content as HTML file using Windows File Save dialog
+/// Returns true if file was saved successfully
+pub fn save_html_file(markdown_text: &str) -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    use windows::Win32::UI::Shell::{
+        IFileSaveDialog, FileSaveDialog, FOS_OVERWRITEPROMPT, FOS_STRICTFILETYPES,
+        SIGDN_FILESYSPATH
+    };
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoCreateInstance, CoUninitialize, 
+        CLSCTX_ALL, COINIT_APARTMENTTHREADED
+    };
+    use windows::core::Interface;
+    
+    unsafe {
+        // Initialize COM
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        
+        // Create file dialog
+        let dialog: IFileSaveDialog = match CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL) {
+            Ok(d) => d,
+            Err(_) => {
+                CoUninitialize();
+                return false;
+            }
+        };
+        
+        // Set file type filter - HTML files
+        let filter_name: Vec<u16> = OsStr::new("HTML Files (*.html)")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let filter_pattern: Vec<u16> = OsStr::new("*.html")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+            
+        let file_types = [COMDLG_FILTERSPEC {
+            pszName: windows::core::PCWSTR(filter_name.as_ptr()),
+            pszSpec: windows::core::PCWSTR(filter_pattern.as_ptr()),
+        }];
+        
+        let _ = dialog.SetFileTypes(&file_types);
+        let _ = dialog.SetFileTypeIndex(1);
+        
+        // Set default extension
+        let default_ext: Vec<u16> = OsStr::new("html")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let _ = dialog.SetDefaultExtension(windows::core::PCWSTR(default_ext.as_ptr()));
+        
+        // Set default filename
+        let default_name: Vec<u16> = OsStr::new("game.html")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let _ = dialog.SetFileName(windows::core::PCWSTR(default_name.as_ptr()));
+        
+        // Set options
+        let _ = dialog.SetOptions(FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES);
+        
+        // Show dialog
+        if dialog.Show(None).is_err() {
+            CoUninitialize();
+            return false; // User cancelled
+        }
+        
+        // Get result
+        let result: windows::Win32::UI::Shell::IShellItem = match dialog.GetResult() {
+            Ok(r) => r,
+            Err(_) => {
+                CoUninitialize();
+                return false;
+            }
+        };
+        
+        // Get file path
+        let path: windows::core::PWSTR = match result.GetDisplayName(SIGDN_FILESYSPATH) {
+            Ok(p) => p,
+            Err(_) => {
+                CoUninitialize();
+                return false;
+            }
+        };
+        
+        // Convert path to String
+        let path_str = path.to_string().unwrap_or_default();
+        
+        // Free the path memory
+        windows::Win32::System::Com::CoTaskMemFree(Some(path.0 as *const _));
+        
+        CoUninitialize();
+        
+        // Generate HTML content
+        let html_content = markdown_to_html(markdown_text);
+        
+        // Write to file
+        match std::fs::write(&path_str, html_content) {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+}
+
