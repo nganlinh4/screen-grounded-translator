@@ -757,6 +757,17 @@ impl SplashScreen {
 
         // --- LAYER 3: VOLUMETRIC DARK CLOUDS (BLACK SILHOUETTE) ---
         let cloud_parallax = self.mouse_influence * -15.0;
+        
+        // Clip clouds in Day Mode so they don't enter the "Sea" (Stairs)
+        // The Sea is composed of lines that start roughly 18px below the horizon (perspective).
+        // We extend the clip rect down by 30px to ensure the clouds are drawn behind the top-most dense stairs, 
+        // eliminating any gap between the sky and the sea.
+        let horizon = center.y + 120.0;
+        let cloud_painter = if !self.is_dark {
+            painter.with_clip_rect(Rect::from_min_max(rect.min, Pos2::new(rect.max.x, horizon + 30.0)))
+        } else {
+            painter.clone()
+        };
 
         for (i, cloud) in self.clouds.iter().enumerate() {
             let c_x = center.x + cloud.pos.x + cloud_parallax.x;
@@ -785,7 +796,7 @@ impl SplashScreen {
                          C_CLOUD_WHITE.linear_multiply(cloud_alpha * 0.95)
                     };
 
-                    painter.circle_filled(
+                    cloud_painter.circle_filled(
                         p_pos + Vec2::new(2.0, 5.0), // Shadow offset down-right
                         radius,
                         core_col
@@ -804,7 +815,7 @@ impl SplashScreen {
         // --- LAYER 4: RETRO GRID ---
         let render_t = t.min(ANIMATION_DURATION + 5.0);
         let cam_y = 150.0 + (render_t * 30.0) + (warp_prog * 10000.0);
-        let horizon = center.y + 120.0;
+        // horizon is already defined above
         let grid_fade = if warp_prog > 0.0 { 1.0 } else { 1.0 }; // Handled by local_fade now
 
         if grid_fade > 0.0 {
