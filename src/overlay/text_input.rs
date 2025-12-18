@@ -8,6 +8,7 @@ use std::sync::{Once, Mutex};
 use std::num::NonZeroIsize;
 use std::cell::RefCell;
 use crate::gui::locale::LocaleText;
+use crate::APP;
 use wry::{WebViewBuilder, Rect};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle, WindowHandle, Win32WindowHandle, HandleError};
 
@@ -40,9 +41,13 @@ lazy_static::lazy_static! {
     static ref CFG_CANCEL: Mutex<String> = Mutex::new(String::new());
     static ref CFG_CALLBACK: Mutex<Option<Box<dyn Fn(String, HWND) + Send>>> = Mutex::new(None);
     static ref CFG_CONTINUOUS: Mutex<bool> = Mutex::new(false);
+    
+    // Cross-thread text injection (for auto-paste from transcription)
+    static ref PENDING_TEXT: Mutex<Option<String>> = Mutex::new(None);
 }
 
 const WM_APP_SHOW: u32 = WM_USER + 99;
+const WM_APP_SET_TEXT: u32 = WM_USER + 100; // New: trigger text injection from other threads
 
 // Thread-local storage for WebView (not Send)
 thread_local! {
@@ -86,6 +91,7 @@ fn get_editor_css() -> &'static str {
         flex-direction: column;
         overflow: hidden;
         background: linear-gradient(180deg, #FAFAFA 0%, #F0F0F0 100%);
+        position: relative;
     }
 
 
@@ -94,6 +100,7 @@ fn get_editor_css() -> &'static str {
         flex: 1;
         width: 100%;
         padding: 12px 14px;
+        padding-right: 50px; /* Space for mic button */
         border: none;
         outline: none;
         resize: none;
@@ -138,6 +145,41 @@ fn get_editor_css() -> &'static str {
         color: #999;
         pointer-events: none;
     }
+    
+    /* Floating Mic Button */
+    .mic-btn {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: none;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+        transition: all 0.2s ease;
+        z-index: 10;
+    }
+    
+    .mic-btn:hover {
+        transform: translateY(-50%) scale(1.08);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+    }
+    
+    .mic-btn:active {
+        transform: translateY(-50%) scale(0.95);
+    }
+    
+    .mic-btn svg {
+        width: 18px;
+        height: 18px;
+        fill: white;
+    }
     "#
 }
 
@@ -159,9 +201,16 @@ fn get_editor_html(placeholder: &str) -> String {
 <body>
     <div class="editor-container">
         <textarea id="editor" placeholder="{escaped_placeholder}" autofocus></textarea>
+        <button class="mic-btn" id="micBtn" title="Speech to text">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+        </button>
     </div>
     <script>
         const editor = document.getElementById('editor');
+        const micBtn = document.getElementById('micBtn');
         
         // Auto focus on load
         window.onload = () => {{
@@ -184,6 +233,12 @@ fn get_editor_html(placeholder: &str) -> String {
                 e.preventDefault();
                 window.ipc.postMessage('cancel');
             }}
+        }});
+        
+        // Mic button click
+        micBtn.addEventListener('click', (e) => {{
+            e.preventDefault();
+            window.ipc.postMessage('mic');
         }});
         
         // Prevent context menu
@@ -215,23 +270,40 @@ pub fn get_input_edit_hwnd() -> Option<HWND> {
 }
 
 /// Set text content in the webview editor (for paste operations)
+/// This is thread-safe and can be called from any thread
 pub fn set_editor_text(text: &str) {
-    let escaped = text
-        .replace('\\', "\\\\")
-        .replace('`', "\\`")
-        .replace("${", "\\${")
-        .replace('\n', "\\n")
-        .replace('\r', "");
-    
-    TEXT_INPUT_WEBVIEW.with(|webview| {
-        if let Some(wv) = webview.borrow().as_ref() {
-            let script = format!(
-                r#"document.getElementById('editor').value = `{}`; document.getElementById('editor').focus();"#,
-                escaped
-            );
-            let _ = wv.evaluate_script(&script);
+    unsafe {
+        // Store the text in the mutex
+        *PENDING_TEXT.lock().unwrap() = Some(text.to_string());
+        
+        // Post message to the text input window to trigger the injection
+        if INPUT_HWND.0 != 0 {
+            PostMessageW(INPUT_HWND, WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
         }
-    });
+    }
+}
+
+/// Internal function to apply pending text (called on the window's thread)
+fn apply_pending_text() {
+    let text = PENDING_TEXT.lock().unwrap().take();
+    if let Some(text) = text {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('`', "\\`")
+            .replace("${", "\\${")
+            .replace('\n', "\\n")
+            .replace('\r', "");
+        
+        TEXT_INPUT_WEBVIEW.with(|webview| {
+            if let Some(wv) = webview.borrow().as_ref() {
+                let script = format!(
+                    r#"document.getElementById('editor').value = `{}`; document.getElementById('editor').focus();"#,
+                    escaped
+                );
+                let _ = wv.evaluate_script(&script);
+            }
+        });
+    }
 }
 
 /// Clear the webview editor content and refocus (for continuous input mode)
@@ -430,6 +502,18 @@ unsafe fn init_webview(hwnd: HWND, w: i32, h: i32) {
                     }
                 } else if body == "cancel" {
                     *SHOULD_CLOSE.lock().unwrap() = true;
+                } else if body == "mic" {
+                    // Trigger transcription preset
+                    let transcribe_idx = {
+                        let app = crate::APP.lock().unwrap();
+                        app.config.presets.iter().position(|p| p.id == "preset_transcribe")
+                    };
+                    
+                    if let Some(preset_idx) = transcribe_idx {
+                        std::thread::spawn(move || {
+                            crate::overlay::recording::show_recording_overlay(preset_idx);
+                        });
+                    }
                 }
             })
             .build_as_child(&wrapper);
@@ -497,6 +581,12 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             // IPC check timer
             SetTimer(hwnd, 2, 50, None);
 
+            LRESULT(0)
+        }
+
+        WM_APP_SET_TEXT => {
+            // Apply pending text from cross-thread call
+            apply_pending_text();
             LRESULT(0)
         }
 
@@ -574,10 +664,11 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let x = (lparam.0 & 0xFFFF) as i16 as i32;
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
             
-            // Close Button
             let mut rect = RECT::default();
             GetClientRect(hwnd, &mut rect);
             let w = rect.right;
+            
+            // Close Button
             let close_x = w - 30;
             let close_y = 20;
             if (x - close_x).abs() < 15 && (y - close_y).abs() < 15 {

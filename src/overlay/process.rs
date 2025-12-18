@@ -839,18 +839,25 @@ fn run_chain_step(
     // 5. Post-Processing (Copy)
     if block.auto_copy && !result_text.trim().is_empty() {
         let txt_c = result_text.clone();
+        let preset_id_clone = preset_id.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(100));
             
-            // Get auto_paste_newline setting from active preset
+            // Get auto_paste settings from the RUNNING preset (by ID), not active_preset_idx
             let (should_add_newline, should_paste, target_window) = {
                 let app = crate::APP.lock().unwrap();
-                let active_idx = app.config.active_preset_idx;
-                if active_idx < app.config.presets.len() {
-                    let preset = &app.config.presets[active_idx];
+                // Find the preset that's actually running this chain
+                if let Some(preset) = app.config.presets.iter().find(|p| p.id == preset_id_clone) {
                     (preset.auto_paste_newline, preset.auto_paste, app.last_active_window)
                 } else {
-                    (false, false, app.last_active_window)
+                    // Fallback to active preset if not found (shouldn't happen)
+                    let active_idx = app.config.active_preset_idx;
+                    if active_idx < app.config.presets.len() {
+                        let preset = &app.config.presets[active_idx];
+                        (preset.auto_paste_newline, preset.auto_paste, app.last_active_window)
+                    } else {
+                        (false, false, app.last_active_window)
+                    }
                 }
             };
             
@@ -864,22 +871,11 @@ fn run_chain_step(
             copy_to_clipboard(&final_text, HWND(0));
             
             if should_paste {
-                // Check if text input window is active - if so, paste into it instead
-                if let Some(edit_hwnd) = text_input::get_input_edit_hwnd() {
-                    // Paste into the text input edit control
-                    unsafe {
-                        use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, GetParent};
-                        use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
-                        
-                        // Ensure the text input window has focus
-                        SetForegroundWindow(GetParent(edit_hwnd));
-                        SetFocus(edit_hwnd);
-                        
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        
-                        // Send Ctrl+V to the edit control
-                        crate::overlay::utils::force_focus_and_paste(edit_hwnd);
-                    }
+                // Check if text input window is active - if so, set text directly
+                if text_input::is_active() {
+                    // Use set_editor_text to inject text into the webview editor
+                    text_input::set_editor_text(&final_text);
+                    text_input::refocus_editor();
                 } else if let Some(target) = target_window {
                     // Normal paste to last active window
                     crate::overlay::utils::force_focus_and_paste(target);
