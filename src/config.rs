@@ -1007,6 +1007,31 @@ pub fn load_config() -> Config {
             config.presets.extend(new_presets);
         }
         
+        // --- MIGRATE CRITICAL SETTINGS FOR EXISTING BUILT-IN PRESETS ---
+        // When default presets are updated with new settings (like auto_paste=true),
+        // we need to sync those settings to existing user presets.
+        // This fixes the issue where auto_paste doesn't work initially for old configs.
+        {
+            let default_presets = get_default_presets();
+            for preset in &mut config.presets {
+                // Only update built-in presets (those with "preset_" prefix)
+                if preset.id.starts_with("preset_") {
+                    // Find the matching default preset
+                    if let Some(default_preset) = default_presets.iter().find(|p| p.id == preset.id) {
+                        // Sync auto_paste and auto_paste_newline from defaults
+                        // This ensures new default settings are applied even to existing presets
+                        preset.auto_paste = default_preset.auto_paste;
+                        preset.auto_paste_newline = default_preset.auto_paste_newline;
+                        
+                        // Also sync auto_stop_recording for audio presets
+                        if preset.preset_type == "audio" {
+                            preset.auto_stop_recording = default_preset.auto_stop_recording;
+                        }
+                    }
+                }
+            }
+        }
+        
         // Safety check: Ensure every preset has at least one block matching its type
         for preset in &mut config.presets {
             // If empty, add default block based on preset type
