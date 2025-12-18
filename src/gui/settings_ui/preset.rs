@@ -165,6 +165,18 @@ pub fn render_preset_editor(
                             if ui.selectable_value(&mut preset.text_input_mode, "type".to_string(), text.text_mode_type).clicked() { changed = true; }
                         });
                     
+                    // For "select" mode: show prompt_mode dropdown (like image presets)
+                    if preset.text_input_mode == "select" && !preset.show_controller_ui {
+                        ui.add_space(10.0);
+                        ui.label(text.prompt_mode_label);
+                        egui::ComboBox::from_id_source("text_prompt_mode_combo")
+                            .selected_text(if preset.prompt_mode == "dynamic" { text.prompt_mode_dynamic } else { text.prompt_mode_fixed })
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_value(&mut preset.prompt_mode, "fixed".to_string(), text.prompt_mode_fixed).clicked() { changed = true; }
+                                if ui.selectable_value(&mut preset.prompt_mode, "dynamic".to_string(), text.prompt_mode_dynamic).clicked() { changed = true; }
+                            });
+                    }
+                    
                     if preset.text_input_mode == "type" && !preset.show_controller_ui {
                         if ui.checkbox(&mut preset.continuous_input, text.continuous_input_label).clicked() { changed = true; }
                     }

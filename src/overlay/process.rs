@@ -259,6 +259,45 @@ pub fn start_text_processing(
                 );
             });
         });
+    } else if preset.prompt_mode == "dynamic" {
+        // Dynamic prompt mode for text selection: show WebView input for user to type command
+        let ui_lang = config.ui_language.clone();
+        let localized_name = localized_preset_name;
+        let guide_text = format!("{}...", localized_name);
+        
+        // Store for use in callback
+        let initial_text = Arc::new(initial_text_content);
+        let config = Arc::new(config);
+        let preset = Arc::new(preset);
+        
+        text_input::show(guide_text, ui_lang, cancel_hotkey_name, false, move |user_prompt, input_hwnd| {
+            // Close the input window
+            unsafe { PostMessageW(input_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            
+            // Clone preset and modify the first block's prompt with user's input
+            let mut modified_preset = (*preset).clone();
+            if let Some(block0) = modified_preset.blocks.get_mut(0) {
+                if block0.prompt.is_empty() {
+                    block0.prompt = user_prompt.clone();
+                } else {
+                    block0.prompt = format!("{}\n\nUser request: {}", block0.prompt, user_prompt);
+                }
+            }
+            
+            let config_clone = (*config).clone();
+            let initial_text_clone = (*initial_text).clone();
+            
+            // Execute the chain with modified preset
+            std::thread::spawn(move || {
+                execute_chain_pipeline(
+                    initial_text_clone, 
+                    screen_rect, 
+                    config_clone, 
+                    modified_preset, 
+                    RefineContext::None
+                );
+            });
+        });
     } else {
         execute_chain_pipeline(initial_text_content, screen_rect, config, preset, RefineContext::None);
     }

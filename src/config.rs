@@ -389,6 +389,27 @@ impl Default for Config {
             }
         ];
 
+        // 3f2. Ask about text (Hỏi về text) - dynamic prompt for text selection
+        let mut p3f2 = Preset::default();
+        p3f2.id = "preset_ask_text".to_string();
+        p3f2.name = "Ask about text".to_string();
+        p3f2.preset_type = "text".to_string();
+        p3f2.text_input_mode = "select".to_string();
+        p3f2.prompt_mode = "dynamic".to_string(); // User types custom command
+        p3f2.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "compound_mini".to_string(),
+                prompt: "".to_string(), // Empty - user will provide
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                render_mode: "markdown".to_string(),
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
+
         // 3g. Extract Table (Trích bảng) - IMAGE preset
         let mut p3g = Preset::default();
         p3g.id = "preset_extract_table".to_string();
@@ -920,7 +941,7 @@ impl Default for Config {
                 // Column 1: Image presets
                 p1, p7, p2, p3g, p4, p4b, p6, p8, p9, p10, p14b, p14c, pm1,
                 // Column 2: Text presets (Bôi MASTER after Giải thích code, Gõ MASTER after Internet search)
-                p3, p3h, p3b, p3c, p3d, p3e, p3f, pm2, p5, p5b, p5c, pm3,
+                p3, p3h, p3b, p3c, p3d, p3e, p3f, p3f2, pm2, p5, p5b, p5c, pm3,
                 // Column 3: Audio presets (Mic presets first, then device audio presets at end)
                 p11, p13, p14, pm4, p12, pm5, p16,
             ],
