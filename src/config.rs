@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::collections::HashMap;
 
+// --- CONSTANTS ---
+const DEFAULT_HISTORY_LIMIT: usize = 50;
+
 // --- THEME MODE ENUM ---
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ThemeMode {
@@ -141,7 +144,7 @@ fn default_prompt_mode() -> String { "fixed".to_string() }
 fn default_text_input_mode() -> String { "select".to_string() }
 fn default_theme_mode() -> ThemeMode { ThemeMode::System }
 fn default_auto_paste_newline() -> bool { true }
-fn default_history_limit() -> usize { 50 }
+fn default_history_limit() -> usize { DEFAULT_HISTORY_LIMIT }
 fn default_graphics_mode() -> String { "standard".to_string() }
 
 
@@ -1012,7 +1015,7 @@ impl Default for Config {
             active_preset_idx: 0,
             theme_mode: ThemeMode::System,
             ui_language: get_system_ui_language(),
-            max_history_items: 100,
+            max_history_items: DEFAULT_HISTORY_LIMIT,
             graphics_mode: "standard".to_string(),
             start_in_tray: false,
             run_as_admin_on_startup: false,
