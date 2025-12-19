@@ -883,6 +883,68 @@ impl Default for Config {
         p16.is_upcoming = true;
         p16.blocks = vec![];
 
+        // 16b. Hỏi nhanh AI (Quick AI question via mic)
+        let mut p16b = Preset::default();
+        p16b.id = "preset_quick_ai_question".to_string();
+        p16b.name = "Quick AI Question".to_string();
+        p16b.preset_type = "audio".to_string();
+        p16b.audio_source = "mic".to_string();
+        p16b.auto_stop_recording = true;
+        p16b.blocks = vec![
+            ProcessingBlock {
+                block_type: "audio".to_string(),
+                model: "whisper-accurate".to_string(),
+                prompt: "".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: false,
+                auto_copy: false,
+                ..Default::default()
+            },
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "text_accurate_kimi".to_string(),
+                prompt: "Answer the following question concisely and helpfully in {language1}. Format as markdown. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) or triple backticks.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                render_mode: "markdown".to_string(),
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
+
+        // 16c. Nói để search (Speak to search)
+        let mut p16c = Preset::default();
+        p16c.id = "preset_voice_search".to_string();
+        p16c.name = "Voice Search".to_string();
+        p16c.preset_type = "audio".to_string();
+        p16c.audio_source = "mic".to_string();
+        p16c.auto_stop_recording = true;
+        p16c.blocks = vec![
+            ProcessingBlock {
+                block_type: "audio".to_string(),
+                model: "whisper-accurate".to_string(),
+                prompt: "".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: false,
+                show_overlay: false,
+                auto_copy: false,
+                ..Default::default()
+            },
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "compound_mini".to_string(),
+                prompt: "Search the internet for information about the following query and provide a comprehensive summary in {language1}. Include key facts, recent developments, and relevant details with clickable links to sources if possible. Format the output as markdown creatively. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) or triple backticks.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                render_mode: "markdown".to_string(),
+                show_overlay: true,
+                auto_copy: false,
+                ..Default::default()
+            }
+        ];
+
         // === MASTER PRESETS ===
         // These presets show a preset wheel for the user to choose which preset to use
 
@@ -921,6 +983,7 @@ impl Default for Config {
         pm4.name = "Mic MASTER".to_string();
         pm4.preset_type = "audio".to_string();
         pm4.audio_source = "mic".to_string();
+        pm4.auto_stop_recording = true;
         pm4.is_master = true;
         pm4.show_controller_ui = true;
         pm4.blocks = vec![];
@@ -944,7 +1007,7 @@ impl Default for Config {
                 // Column 2: Text presets (Bôi MASTER after Giải thích code, Gõ MASTER after Internet search)
                 p3, p3h, p3b, p3c, p3d, p3e, p3f, p3f2, pm2, p5, p5b, p5c, pm3,
                 // Column 3: Audio presets (Mic presets first, then device audio presets at end)
-                p11, p13, p14, pm4, p12, pm5, p16,
+                p11, p13, p14, p16b, p16c, pm4, p12, pm5, p16,
             ],
             active_preset_idx: 0,
             theme_mode: ThemeMode::System,

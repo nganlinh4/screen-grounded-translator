@@ -277,7 +277,7 @@ impl LocaleText {
                    restore_preset_btn: "Khôi phục",
                 restore_preset_tooltip: "Đặt lại cài đặt về mặc định",
                 // --- COMPOUND SEARCH UI VI ---
-                search_doing: "Đang",
+                search_doing: "Đang thực thi",
                 search_searching: "tìm kiếm",
                 search_query_label: "📝 Truy vấn tìm kiếm:",
                 search_found_sources: "📚 ĐÃ TÌM THẤY {} NGUỒN",

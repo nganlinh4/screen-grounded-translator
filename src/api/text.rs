@@ -7,6 +7,17 @@ use super::client::UREQ_AGENT;
 use super::types::{StreamChunk, ChatCompletionResponse};
 use super::vision::translate_image_streaming as vision_translate_image_streaming;
 
+fn get_context_quote(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let len = words.len();
+    if len > 50 {
+        format!("\"... {}\"", words[len - 50..].join(" "))
+    } else {
+        format!("\"... {}\"", words.join(" "))
+    }
+}
+
+
 pub fn translate_text_streaming<F>(
     groq_api_key: &str,
     gemini_api_key: &str,
@@ -138,9 +149,10 @@ where
 
             // Show initial searching state with localized preset name
             let locale = LocaleText::get(ui_language);
+            let context_quote = get_context_quote(&prompt);
             let search_msg = match &search_label {
-                Some(label) => format!("🔍 {} {}...", locale.search_doing, label),
-                None => format!("🔍 {} {}...", locale.search_doing, locale.search_searching),
+                Some(label) => format!("{}\n\n🔍 {} {}...", context_quote, locale.search_doing, label),
+                None => format!("{}\n\n🔍 {} {}...", context_quote, locale.search_doing, locale.search_searching),
             };
             on_chunk(&search_msg);
             
@@ -194,10 +206,11 @@ where
                                 }
                             }
                             
+                            let context_quote = get_context_quote(&prompt);
                             if !search_queries.is_empty() {
                                 let phase1_header = match &search_label {
-                                    Some(label) => format!("🔍 {} {}...\n\n", locale.search_doing.to_uppercase(), label.to_uppercase()),
-                                    None => format!("🔍 {} {}...\n\n", locale.search_doing.to_uppercase(), locale.search_searching.to_uppercase()),
+                                    Some(label) => format!("{}\n\n🔍 {} {}...\n\n", context_quote, locale.search_doing.to_uppercase(), label.to_uppercase()),
+                                    None => format!("{}\n\n🔍 {} {}...\n\n", context_quote, locale.search_doing.to_uppercase(), locale.search_searching.to_uppercase()),
                                 };
                                 let mut phase1 = phase1_header;
                                 phase1.push_str(&format!("{}\n", locale.search_query_label));
@@ -230,7 +243,8 @@ where
                                 // Sort by score descending
                                 all_sources.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
                                 
-                                let mut phase2 = format!("{}\n\n", locale.search_found_sources.replace("{}", &all_sources.len().to_string()));
+                                let context_quote = get_context_quote(&prompt);
+                                let mut phase2 = format!("{}\n\n{}\n\n", context_quote, locale.search_found_sources.replace("{}", &all_sources.len().to_string()));
                                 phase2.push_str(&format!("{}\n\n", locale.search_sources_label));
                                 
                                 for (i, (title, url, score, content)) in all_sources.iter().take(6).enumerate() {
@@ -266,8 +280,10 @@ where
                                 std::thread::sleep(std::time::Duration::from_millis(1200));
                                 
                                 // PHASE 3: Synthesizing message
+                                let context_quote = get_context_quote(&prompt);
                                 let phase3 = format!(
-                                    "{}\n\n{}\n{}\n",
+                                    "{}\n\n{}\n\n{}\n{}\n",
+                                    context_quote,
                                     locale.search_synthesizing,
                                     locale.search_analyzed_sources.replace("{}", &all_sources.len().min(6).to_string()),
                                     locale.search_processing
@@ -514,7 +530,8 @@ where
                 });
                 
                 let locale = LocaleText::get(ui_language);
-                on_chunk(&format!("🔍 {} {}...", locale.search_doing, locale.search_searching));
+                let context_quote = get_context_quote(&final_prompt);
+                on_chunk(&format!("{}\n\n🔍 {} {}...", context_quote, locale.search_doing, locale.search_searching));
                 
                 let resp = UREQ_AGENT.post("https://api.groq.com/openai/v1/chat/completions")
                     .set("Authorization", &format!("Bearer {}", groq_api_key))
@@ -552,7 +569,9 @@ where
                                 }
                                 
                                 if !search_queries.is_empty() {
-                                    let mut phase1 = format!("🔍 {} {}...\n\n{}\n", 
+                                    let context_quote = get_context_quote(&final_prompt);
+                                    let mut phase1 = format!("{}\n\n🔍 {} {}...\n\n{}\n", 
+                                        context_quote,
                                         locale.search_doing.to_uppercase(), 
                                         locale.search_searching.to_uppercase(),
                                         locale.search_query_label);
@@ -578,7 +597,8 @@ where
                                 
                                 if !all_sources.is_empty() {
                                     all_sources.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-                                    let mut phase2 = format!("{}\n\n", locale.search_found_sources.replace("{}", &all_sources.len().to_string()));
+                                    let context_quote = get_context_quote(&final_prompt);
+                                    let mut phase2 = format!("{}\n\n{}\n\n", context_quote, locale.search_found_sources.replace("{}", &all_sources.len().to_string()));
                                     for (i, (title, url, score)) in all_sources.iter().take(5).enumerate() {
                                         let t = if title.chars().count() > 50 { format!("{}...", title.chars().take(47).collect::<String>()) } else { title.clone() };
                                         let domain = url.split('/').nth(2).unwrap_or("");

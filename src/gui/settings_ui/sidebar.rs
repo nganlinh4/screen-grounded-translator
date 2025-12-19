@@ -36,6 +36,8 @@ pub fn get_localized_preset_name(preset_id: &str, lang_code: &str) -> String {
         ("preset_fact_check", "vi") => "Kiểm chứng thông tin".to_string(),
         ("preset_omniscient_god", "vi") => "Thần Trí tuệ".to_string(),
         ("preset_realtime_audio_translate", "vi") => "Dịch cabin (sắp có)".to_string(),
+        ("preset_quick_ai_question", "vi") => "Hỏi nhanh AI".to_string(),
+        ("preset_voice_search", "vi") => "Nói để search".to_string(),
         // MASTER presets - Vietnamese
         ("preset_image_master", "vi") => "Ảnh MASTER".to_string(),
         ("preset_text_select_master", "vi") => "Bôi MASTER".to_string(),
@@ -72,6 +74,8 @@ pub fn get_localized_preset_name(preset_id: &str, lang_code: &str) -> String {
         ("preset_fact_check", "ko") => "정보 확인".to_string(),
         ("preset_omniscient_god", "ko") => "전지전능한 신".to_string(),
         ("preset_realtime_audio_translate", "ko") => "실시간 음성 번역 (예정)".to_string(),
+        ("preset_quick_ai_question", "ko") => "빠른 AI 질문".to_string(),
+        ("preset_voice_search", "ko") => "음성 검색".to_string(),
         // MASTER presets - Korean
         ("preset_image_master", "ko") => "이미지 마스터".to_string(),
         ("preset_text_select_master", "ko") => "선택 마스터".to_string(),
@@ -108,6 +112,8 @@ pub fn get_localized_preset_name(preset_id: &str, lang_code: &str) -> String {
         ("preset_fact_check", _) => "Fact Check".to_string(),
         ("preset_omniscient_god", _) => "Omniscient God".to_string(),
         ("preset_realtime_audio_translate", _) => "Realtime Audio Trans (soon)".to_string(),
+        ("preset_quick_ai_question", _) => "Quick AI Question".to_string(),
+        ("preset_voice_search", _) => "Voice Search".to_string(),
         // MASTER presets - English (default)
         ("preset_image_master", _) => "Image MASTER".to_string(),
         ("preset_text_select_master", _) => "Select MASTER".to_string(),
