@@ -849,6 +849,13 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                      if state.is_refining {
                          state.animation_offset -= 8.0; 
                          if state.animation_offset < -3600.0 { state.animation_offset += 3600.0; }
+                         
+                         // Refresh markdown WebView when refinement starts to show the context quote
+                         if state.is_markdown_mode && state.font_cache_dirty {
+                             state.font_cache_dirty = false;
+                             markdown_view::update_markdown_content_ex(hwnd, &state.full_text, true, &state.preset_prompt, &state.input_text);
+                         }
+                         
                          need_repaint = true;
                      }
 
@@ -882,6 +889,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                                 state.text_history.push(text_to_refine.clone());
                                 // Clear redo history when new action is performed
                                 state.redo_history.clear();
+                                state.input_text = text_to_refine.clone();
                                 state.is_editing = false;
                                 state.is_refining = true;
                                 state.full_text = String::new();
@@ -930,7 +938,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         state.font_cache_dirty = true;
                         state.full_text = txt.clone();
                         
-                        if state.is_markdown_mode {
+                        if state.is_markdown_mode && !state.is_refining {
                             (Some(state.full_text.clone()), state.is_hovered)
                         } else {
                             (None, false)

@@ -185,6 +185,7 @@ pub fn create_result_window(
                 bg_h: 0,
                 edit_font: hfont,
                 preset_prompt, 
+                input_text: String::new(),
                 retrans_config: None, // Deprecated in favor of chain logic
                 graphics_mode,
                 cancellation_token: None,

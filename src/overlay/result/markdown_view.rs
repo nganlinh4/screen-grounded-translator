@@ -217,7 +217,43 @@ fn is_html_content(content: &str) -> bool {
 }
 
 /// Convert markdown text to styled HTML, or pass through raw HTML
-pub fn markdown_to_html(markdown: &str) -> String {
+pub fn markdown_to_html(markdown: &str, is_refining: bool, preset_prompt: &str, input_text: &str) -> String {
+    if is_refining {
+        let combined = if input_text.is_empty() {
+            preset_prompt.to_string()
+        } else {
+            format!("{}\n\n{}", preset_prompt, input_text)
+        };
+        let quote = crate::overlay::utils::get_context_quote(&combined);
+        return format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        {} 
+        body {{ 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            text-align: center; 
+            height: 100vh; 
+            margin: 0; 
+            padding: 24px;
+            font-style: italic;
+            color: #aaa;
+            font-size: 16px;
+        }}
+    </style>
+</head>
+<body>{}</body>
+</html>"#,
+            MARKDOWN_CSS,
+            quote
+        );
+    }
+
     // If input is already HTML, return it as-is
     if is_html_content(markdown) {
         return markdown.to_string();
@@ -252,6 +288,20 @@ pub fn markdown_to_html(markdown: &str) -> String {
 /// Must be called from the main thread!
 pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovered: bool) -> bool {
     let hwnd_key = parent_hwnd.0 as isize;
+    let (is_refining, preset_prompt, input_text) = {
+        let states = super::state::WINDOW_STATES.lock().unwrap();
+        if let Some(state) = states.get(&hwnd_key) {
+            (state.is_refining, state.preset_prompt.clone(), state.input_text.clone())
+        } else {
+            (false, String::new(), String::new())
+        }
+    };
+    create_markdown_webview_ex(parent_hwnd, markdown_text, is_hovered, is_refining, &preset_prompt, &input_text)
+}
+
+/// Create a WebView child window for markdown rendering (Internal version, call without lock if possible)
+pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hovered: bool, is_refining: bool, preset_prompt: &str, input_text: &str) -> bool {
+    let hwnd_key = parent_hwnd.0 as isize;
     
     // Check if we already have a webview
     let exists = WEBVIEWS.with(|webviews| {
@@ -259,7 +309,7 @@ pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovere
     });
     
     if exists {
-        return update_markdown_content(parent_hwnd, markdown_text);
+        return update_markdown_content_ex(parent_hwnd, markdown_text, is_refining, preset_prompt, input_text);
     }
     
     
@@ -267,7 +317,7 @@ pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovere
     let mut rect = RECT::default();
     unsafe { GetClientRect(parent_hwnd, &mut rect); }
     
-    let html_content = markdown_to_html(markdown_text);
+    let html_content = markdown_to_html(markdown_text, is_refining, preset_prompt, input_text);
     
     let wrapper = HwndWrapper(parent_hwnd);
     
@@ -460,7 +510,21 @@ pub fn go_forward(parent_hwnd: HWND) {
 /// Update the markdown content in an existing WebView
 pub fn update_markdown_content(parent_hwnd: HWND, markdown_text: &str) -> bool {
     let hwnd_key = parent_hwnd.0 as isize;
-    let html = markdown_to_html(markdown_text);
+    let (is_refining, preset_prompt, input_text) = {
+        let states = super::state::WINDOW_STATES.lock().unwrap();
+        if let Some(state) = states.get(&hwnd_key) {
+            (state.is_refining, state.preset_prompt.clone(), state.input_text.clone())
+        } else {
+            (false, String::new(), String::new())
+        }
+    };
+    update_markdown_content_ex(parent_hwnd, markdown_text, is_refining, &preset_prompt, &input_text)
+}
+
+/// Update the markdown content in an existing WebView (Raw version, does not fetch state)
+pub fn update_markdown_content_ex(parent_hwnd: HWND, markdown_text: &str, is_refining: bool, preset_prompt: &str, input_text: &str) -> bool {
+    let hwnd_key = parent_hwnd.0 as isize;
+    let html = markdown_to_html(markdown_text, is_refining, preset_prompt, input_text); 
     
     WEBVIEWS.with(|webviews| {
         if let Some(webview) = webviews.borrow().get(&hwnd_key) {
@@ -666,7 +730,7 @@ pub fn save_html_file(markdown_text: &str) -> bool {
         CoUninitialize();
         
         // Generate HTML content
-        let html_content = markdown_to_html(markdown_text);
+        let html_content = markdown_to_html(markdown_text, false, "", "");
         
         // Write to file
         match std::fs::write(&path_str, html_content) {

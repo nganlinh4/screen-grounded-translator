@@ -87,7 +87,9 @@ pub fn paint_window(hwnd: HWND) {
              redo_count,
              navigation_depth,
              max_navigation_depth,
-             graphics_mode
+             graphics_mode,
+             preset_prompt,
+             input_text
          ) = {
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
@@ -180,10 +182,12 @@ pub fn paint_window(hwnd: HWND) {
                     state.redo_history.len(),
                     state.navigation_depth,
                     state.max_navigation_depth,
-                    state.graphics_mode.clone()
+                    state.graphics_mode.clone(),
+                    state.preset_prompt.clone(),
+                    state.input_text.clone()
                 )
             } else {
-                (0, false, false, false, false, false, false, false, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, 0.0, 0, 0, 0, 0, "standard".to_string())
+                (0, false, false, false, false, false, false, false, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, 0.0, 0, 0, 0, 0, "standard".to_string(), String::new(), String::new())
             }
         };
 
@@ -209,9 +213,7 @@ pub fn paint_window(hwnd: HWND) {
             DeleteDC(cache_dc);
         }
 
-        // --- PHASE 3: TEXT CACHE UPDATE ---
-        // Skip text rendering when in markdown mode (WebView handles it) or refining
-        if !is_refining && !is_markdown_mode {
+        if !is_markdown_mode {
             if cache_dirty || cached_text_bm.0 == 0 {
                 if cached_text_bm.0 != 0 { DeleteObject(cached_text_bm); }
 
@@ -227,22 +229,33 @@ pub fn paint_window(hwnd: HWND) {
                 SetBkMode(cache_dc, TRANSPARENT);
                 SetTextColor(cache_dc, COLORREF(0x00FFFFFF));
 
-                let text_len = GetWindowTextLengthW(hwnd) + 1;
-                let mut buf = vec![0u16; text_len as usize];
-                GetWindowTextW(hwnd, &mut buf);
-
-                let h_padding = 6; 
+                let mut buf = if is_refining {
+                    let combined = if input_text.is_empty() {
+                        preset_prompt.clone()
+                    } else {
+                        format!("{}\n\n{}", preset_prompt, input_text)
+                    };
+                    let quote = crate::overlay::utils::get_context_quote(&combined);
+                    quote.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>()
+                } else {
+                    let text_len = GetWindowTextLengthW(hwnd) + 1;
+                    let mut b = vec![0u16; text_len as usize];
+                    GetWindowTextW(hwnd, &mut b);
+                    b
+                };
+                
+                let h_padding = if is_refining { 20 } else { 6 }; 
                 let available_w = (width - (h_padding * 2)).max(1);
                 let v_safety_margin = 4;
                 let available_h = (height - v_safety_margin).max(1);
                 
-                let mut low = 8;
-                let max_possible = available_h.min(100);
+                let mut low = if is_refining { 8 } else { 8 };
+                let max_possible = if is_refining { 18.min(available_h) } else { available_h.min(100) };
                 let mut high = max_possible;
                 let mut best_fit = 8;
-
+                
                 if high < low {
-                    best_fit = 8;
+                    best_fit = low;
                 } else {
                     while low <= high {
                         let mid = (low + high) / 2;
@@ -257,7 +270,8 @@ pub fn paint_window(hwnd: HWND) {
                 }
                 let font_size_val = best_fit;
 
-                let hfont = CreateFontW(font_size_val, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
+                let font_weight = if is_refining { FW_NORMAL } else { FW_MEDIUM };
+                let hfont = CreateFontW(font_size_val, 0, 0, 0, font_weight.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
                 let old_font = SelectObject(cache_dc, hfont);
 
                 let mut measure_rect = RECT { left: 0, top: 0, right: available_w, bottom: 0 };
@@ -272,7 +286,8 @@ pub fn paint_window(hwnd: HWND) {
                     bottom: height
                 };
                 
-                DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, DT_LEFT | DT_WORDBREAK | DT_EDITCONTROL);
+                let draw_flags = if is_refining { DT_CENTER | DT_WORDBREAK | DT_EDITCONTROL } else { DT_LEFT | DT_WORDBREAK | DT_EDITCONTROL };
+                DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, draw_flags);
 
                 SelectObject(cache_dc, old_font);
                 DeleteObject(hfont);

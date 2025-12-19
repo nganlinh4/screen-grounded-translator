@@ -129,6 +129,8 @@ pub struct WindowState {
     
     // NEW: Preset Prompt for "Type" mode logic
     pub preset_prompt: String,
+    // NEW: Input text currently being refined/processed
+    pub input_text: String,
     // NEW: Retranslation Config
     pub retrans_config: Option<RetranslationConfig>,
     

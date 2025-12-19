@@ -6,16 +6,7 @@ use crate::gui::locale::LocaleText;
 use super::client::UREQ_AGENT;
 use super::types::{StreamChunk, ChatCompletionResponse};
 use super::vision::translate_image_streaming as vision_translate_image_streaming;
-
-fn get_context_quote(text: &str) -> String {
-    let words: Vec<&str> = text.split_whitespace().collect();
-    let len = words.len();
-    if len > 50 {
-        format!("\"... {}\"", words[len - 50..].join(" "))
-    } else {
-        format!("\"... {}\"", words.join(" "))
-    }
-}
+use crate::overlay::utils::get_context_quote;
 
 
 pub fn translate_text_streaming<F>(

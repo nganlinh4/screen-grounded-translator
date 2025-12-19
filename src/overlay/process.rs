@@ -713,7 +713,11 @@ fn run_chain_step(
             if block.block_type != "image" {
                 // Text block: use rainbow edge refining animation
                 let mut s = WINDOW_STATES.lock().unwrap();
-                if let Some(st) = s.get_mut(&(my_hwnd.unwrap().0 as isize)) { st.is_refining = true; }
+                if let Some(st) = s.get_mut(&(my_hwnd.unwrap().0 as isize)) { 
+                    st.input_text = input_text.clone();
+                    st.is_refining = true; 
+                    st.font_cache_dirty = true;
+                }
             }
         }
 
@@ -809,7 +813,10 @@ fn run_chain_step(
                     if let Some(h) = my_hwnd { 
                         {
                             let mut s = WINDOW_STATES.lock().unwrap();
-                            if let Some(st) = s.get_mut(&(h.0 as isize)) { st.is_refining = false; }
+                            if let Some(st) = s.get_mut(&(h.0 as isize)) { 
+                                st.is_refining = false; 
+                                st.font_cache_dirty = true;
+                            }
                         }
                         update_window_text(h, &t); 
                     }
@@ -819,7 +826,10 @@ fn run_chain_step(
 
         if let Some(h) = my_hwnd {
              let mut s = WINDOW_STATES.lock().unwrap();
-             if let Some(st) = s.get_mut(&(h.0 as isize)) { st.is_refining = false; }
+             if let Some(st) = s.get_mut(&(h.0 as isize)) { 
+                 st.is_refining = false; 
+                 st.font_cache_dirty = true;
+             }
         }
 
         match res {
