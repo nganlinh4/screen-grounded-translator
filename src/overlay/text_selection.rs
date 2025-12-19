@@ -294,7 +294,15 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
             SetWindowPos(hwnd, HWND_TOPMOST, pt.x - 30, pt.y - 60, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
             if IS_SELECTING { ANIMATION_OFFSET -= 15.0; } else { ANIMATION_OFFSET += 5.0; }
             if ANIMATION_OFFSET > 3600.0 { ANIMATION_OFFSET -= 3600.0; } if ANIMATION_OFFSET < -3600.0 { ANIMATION_OFFSET += 3600.0; }
-            if CURRENT_ALPHA < 255 { CURRENT_ALPHA += 25; if CURRENT_ALPHA > 255 { CURRENT_ALPHA = 255; } }
+            if IS_PROCESSING || super::preset_wheel::is_wheel_active() {
+                if CURRENT_ALPHA > 0 { 
+                    CURRENT_ALPHA -= 50; 
+                    if CURRENT_ALPHA < 0 { CURRENT_ALPHA = 0; } 
+                }
+            } else if CURRENT_ALPHA < 255 { 
+                CURRENT_ALPHA += 25; 
+                if CURRENT_ALPHA > 255 { CURRENT_ALPHA = 255; } 
+            }
             paint_tag_window(hwnd, 200, 40, CURRENT_ALPHA as u8, IS_SELECTING); LRESULT(0)
         }
         WM_CLOSE => { TAG_ABORT_SIGNAL.store(true, Ordering::SeqCst); DestroyWindow(hwnd); PostQuitMessage(0); LRESULT(0) }
