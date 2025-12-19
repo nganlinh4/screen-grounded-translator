@@ -3,6 +3,8 @@ use eframe::egui::{Color32, Pos2, Rect, Vec2, FontId, Align2, Stroke};
 use std::f32::consts::PI;
 use std::cmp::Ordering;
 
+use crate::{WINDOW_WIDTH, WINDOW_HEIGHT};
+
 // --- CONFIGURATION ---
 const ANIMATION_DURATION: f32 = 8.5;
 const START_TRANSITION: f32 = 3.0; 
@@ -341,7 +343,15 @@ impl SplashScreen {
         ctx.request_repaint();
 
         // --- UPDATE CLOUDS ---
-        let rect = ctx.input(|i| i.viewport().inner_rect.unwrap_or(Rect::from_min_size(Pos2::ZERO, Vec2::ZERO)));
+        let viewport_rect = ctx.input(|i| i.viewport().inner_rect.unwrap_or(Rect::from_min_size(Pos2::ZERO, Vec2::ZERO)));
+        // Fallback to expected size if viewport not ready
+        let size = if viewport_rect.width() < 100.0 || viewport_rect.height() < 100.0 {
+            Vec2::new(WINDOW_WIDTH, WINDOW_HEIGHT)
+        } else {
+            viewport_rect.size()
+        };
+        // Use window-local coords (0,0 origin) for consistency with paint()
+        let rect = Rect::from_min_size(Pos2::ZERO, size);
         for cloud in &mut self.clouds {
             cloud.pos.x += cloud.velocity * dt;
             // Wrap around
@@ -483,10 +493,25 @@ impl SplashScreen {
              warp_prog = (dt / EXIT_DURATION).powi(5);
         }
 
-        let rect = ctx.input(|i| i.viewport().inner_rect.unwrap_or(Rect::from_min_size(Pos2::ZERO, Vec2::ZERO)));
+        // FIX: The viewport's inner_rect returns SCREEN coordinates (window position on screen).
+        // However, the layer_painter paints in WINDOW-LOCAL coordinates where (0,0) is top-left of window.
+        // We must ALWAYS anchor our rect at (0,0) to ensure consistent positioning regardless of window location.
+        let viewport_rect = ctx.input(|i| i.viewport().inner_rect.unwrap_or(Rect::from_min_size(Pos2::ZERO, Vec2::ZERO)));
+        
+        // Use viewport size but ALWAYS anchor at (0,0) for window-local painting
+        let size = if viewport_rect.width() < 100.0 || viewport_rect.height() < 100.0 {
+            // Fallback during startup before window is fully realized
+            Vec2::new(WINDOW_WIDTH, WINDOW_HEIGHT)
+        } else {
+            viewport_rect.size()
+        };
+        // CRITICAL: Always use Pos2::ZERO as origin - painter works in window-local coords
+        let rect = Rect::from_min_size(Pos2::ZERO, size);
+        
         // Use a Foreground layer to paint ON TOP of the main UI
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("splash_overlay")));
         
+        // Center is now correctly at (width/2, height/2) in window-local coords
         let center = rect.center();
         let _center_vec = Vec2::new(center.x, center.y);
         
