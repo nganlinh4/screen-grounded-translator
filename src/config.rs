@@ -303,7 +303,6 @@ impl Default for Config {
         p3b.preset_type = "text".to_string();
         p3b.text_input_mode = "select".to_string();
         p3b.auto_paste = true; // Replace original text
-        p3b.auto_paste_newline = true; // Add newline after pasting
         p3b.blocks = vec![
             ProcessingBlock {
                 block_type: "text".to_string(),
@@ -324,7 +323,6 @@ impl Default for Config {
         p3c.preset_type = "text".to_string();
         p3c.text_input_mode = "select".to_string();
         p3c.auto_paste = true; // Replace original text
-        p3c.auto_paste_newline = true;
         p3c.blocks = vec![
             ProcessingBlock {
                 block_type: "text".to_string(),
@@ -345,7 +343,6 @@ impl Default for Config {
         p3d.preset_type = "text".to_string();
         p3d.text_input_mode = "select".to_string();
         p3d.auto_paste = true;
-        p3d.auto_paste_newline = true;
         p3d.blocks = vec![
             ProcessingBlock {
                 block_type: "text".to_string(),
@@ -366,7 +363,6 @@ impl Default for Config {
         p3e.preset_type = "text".to_string();
         p3e.text_input_mode = "select".to_string();
         p3e.auto_paste = true;
-        p3e.auto_paste_newline = true;
         p3e.blocks = vec![
             ProcessingBlock {
                 block_type: "text".to_string(),
@@ -417,6 +413,28 @@ impl Default for Config {
                 render_mode: "markdown".to_string(),
                 show_overlay: true,
                 auto_copy: false,
+                ..Default::default()
+            }
+        ];
+
+        // 3f3. Edit as follows (Sửa như sau:) - dynamic prompt for text selection
+        let mut p3f3 = Preset::default();
+        p3f3.id = "preset_edit_as_follows".to_string();
+        p3f3.name = "Edit as follows:".to_string();
+        p3f3.preset_type = "text".to_string();
+        p3f3.text_input_mode = "select".to_string();
+        p3f3.prompt_mode = "dynamic".to_string();
+        p3f3.auto_paste = true;
+        p3f3.blocks = vec![
+            ProcessingBlock {
+                block_type: "text".to_string(),
+                model: "compound_mini".to_string(),
+                prompt: "Edit the following text according to the user's specific instructions. CRITICAL: Maintain the original language of the text unless instructed otherwise. Output ONLY the edited result without any introductory text, explanations, or quotes.".to_string(),
+                selected_language: "Vietnamese".to_string(),
+                streaming_enabled: true,
+                render_mode: "stream".to_string(),
+                show_overlay: false,
+                auto_copy: true,
                 ..Default::default()
             }
         ];
@@ -1034,7 +1052,7 @@ impl Default for Config {
                 // Column 1: Image presets
                 p1, p7, p2, p3g, p4, p4b, p6, p8, p9, p10, p14b, p14c, pm1,
                 // Column 2: Text presets (Bôi MASTER after Giải thích code, Gõ MASTER after Internet search)
-                p3, p3h, p3b, p3c, p3d, p3e, p3f, p3f2, pm2, p5, p5a, p5b, p5c, pm3,
+                p3, p3h, p3b, p3c, p3d, p3e, p3f, p3f2, p3f3, pm2, p5, p5a, p5b, p5c, pm3,
                 // Column 3: Audio presets (Mic presets first, then device audio presets at end)
                 p11, p13, p14, p16b, p16c, pm4, p12, pm5, p16,
             ],
