@@ -52,20 +52,14 @@ pub fn render_global_settings(
                 ui.label(egui::RichText::new(text.api_keys_header).strong().size(14.0));
                 ui.add_space(16.0);
                 
-                // Localized checkbox labels
-                let (use_groq_label, use_gemini_label, use_openrouter_label) = match config.ui_language.as_str() {
-                    "vi" => ("Dùng Groq", "Dùng Gemini", "Dùng OpenRouter"),
-                    "ko" => ("Groq 사용", "Gemini 사용", "OpenRouter 사용"),
-                    _ => ("Use Groq", "Use Gemini", "Use OpenRouter"),
-                };
                 
-                if ui.checkbox(&mut config.use_groq, use_groq_label).changed() {
+                if ui.checkbox(&mut config.use_groq, text.use_groq_checkbox).changed() {
                     changed = true;
                 }
-                if ui.checkbox(&mut config.use_gemini, use_gemini_label).changed() {
+                if ui.checkbox(&mut config.use_gemini, text.use_gemini_checkbox).changed() {
                     changed = true;
                 }
-                if ui.checkbox(&mut config.use_openrouter, use_openrouter_label).changed() {
+                if ui.checkbox(&mut config.use_openrouter, text.use_openrouter_checkbox).changed() {
                     changed = true;
                 }
             });
@@ -106,8 +100,8 @@ pub fn render_global_settings(
             // OpenRouter API Key (only show if enabled)
             if config.use_openrouter {
                 ui.horizontal(|ui| {
-                    ui.label("OpenRouter API Key:");
-                    if ui.link("Get API Key").clicked() { let _ = open::that("https://openrouter.ai/settings/keys"); }
+                    ui.label(text.openrouter_api_key_label);
+                    if ui.link(text.openrouter_get_key_link).clicked() { let _ = open::that("https://openrouter.ai/settings/keys"); }
                 });
                 ui.horizontal(|ui| {
                     if ui.add(egui::TextEdit::singleline(&mut config.openrouter_api_key).password(!*show_openrouter_api_key).desired_width(API_KEY_FIELD_WIDTH)).changed() {
