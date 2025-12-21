@@ -103,28 +103,18 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         .collect::<Vec<_>>()
         .join("\n");
     
-    // Audio source selector (only for transcription window)
+    // Audio source selector (only for transcription window) - simple toggle switch
     let audio_selector = if !is_translation {
-
+        let is_device = audio_source == "device";
         format!(r#"
-            <div class="custom-select" id="audio-source-select" tabindex="0">
-                <div class="select-trigger">
-                    <span class="material-symbols-rounded select-icon">{current_icon}</span>
-                    <span class="material-symbols-rounded arrow">arrow_drop_down</span>
-                </div>
-                <div class="select-options">
-                    <div class="select-option" data-value="mic">
-                        <span class="material-symbols-rounded">mic</span>
-                        <span>{mic_text}</span>
-                    </div>
-                    <div class="select-option" data-value="device">
-                        <span class="material-symbols-rounded">speaker_group</span>
-                        <span>{device_text}</span>
-                    </div>
-                </div>
+            <div class="audio-toggle" id="audio-toggle" title="Toggle audio source">
+                <span class="material-symbols-rounded audio-icon {mic_active}" data-value="mic">mic</span>
+                <span class="material-symbols-rounded audio-icon {device_active}" data-value="device">speaker_group</span>
             </div>
-        "#, current_icon = if audio_source == "device" { "speaker_group" } else { "mic" },
-            mic_text = mic_text, device_text = device_text)
+        "#, 
+            mic_active = if !is_device { "active" } else { "" },
+            device_active = if is_device { "active" } else { "" }
+        )
     } else {
         // Language selector for translation window
         format!(r#"
@@ -209,7 +199,7 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             transition: all 0.25s ease-out;
             z-index: 10;
             top: 32px;
-            opacity: 0.5;
+            opacity: 0.4;
         }}
         #header:hover ~ #header-toggle {{
             color: #00c8ff;
@@ -390,54 +380,27 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             opacity: 1;
             color: {glow_color};
         }}
-        .custom-select {{
-            position: relative;
-            background: #2a2a2a;
-            color: #ccc;
-            border-radius: 4px;
-            font-size: 13px;
-            cursor: pointer;
-            user-select: none;
-            outline: none;
-            min-width: 90px;
-        }}
-        .select-trigger {{
+        .audio-toggle {{
             display: flex;
-            align-items: center;
-            padding: 4px 8px;
-            gap: 6px;
-        }}
-        .select-trigger:hover {{
-            color: #fff;
-        }}
-        .select-options {{
-            display: none;
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            background: #2a2a2a;
-            border: 1px solid #444;
+            gap: 2px;
+            background: rgba(30,30,30,0.8);
             border-radius: 4px;
-            z-index: 100;
-            overflow: hidden;
-            margin-top: 4px;
+            padding: 2px;
         }}
-        .custom-select.open .select-options {{
-           display: block;
+        .audio-icon {{
+            font-size: 16px;
+            padding: 4px;
+            border-radius: 3px;
+            cursor: pointer;
+            color: #555;
+            transition: all 0.2s;
         }}
-        .select-option {{
-           display: flex;
-           align-items: center;
-           padding: 6px 8px;
-           gap: 6px;
+        .audio-icon:hover {{
+            color: #aaa;
         }}
-        .select-option:hover {{
-           background: #3a3a3a;
-           color: #fff;
-        }}
-        .select-icon {{
-           font-size: 16px;
+        .audio-icon.active {{
+            color: #00c8ff;
+            background: rgba(0,200,255,0.15);
         }}
     </style>
 </head>
@@ -483,13 +446,15 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         let transVisible = true;
         let headerCollapsed = false;
         
-        // Header toggle
-        headerToggle.addEventListener('click', function(e) {{
-            e.stopPropagation();
-            headerCollapsed = !headerCollapsed;
-            header.classList.toggle('collapsed', headerCollapsed);
-            headerToggle.classList.toggle('collapsed', headerCollapsed);
-        }});
+        // Header toggle (with null check in case element is commented out)
+        if (headerToggle) {{
+            headerToggle.addEventListener('click', function(e) {{
+                e.stopPropagation();
+                headerCollapsed = !headerCollapsed;
+                header.classList.toggle('collapsed', headerCollapsed);
+                headerToggle.classList.toggle('collapsed', headerCollapsed);
+            }});
+        }}
         
         // Drag support
         container.addEventListener('mousedown', function(e) {{
@@ -578,42 +543,24 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             }}
         }});
         
-        // Custom Audio Select Logic
-        const audioSelect = document.getElementById('audio-source-select');
-        if (audioSelect) {{
-            const trigger = audioSelect.querySelector('.select-trigger');
-            const options = audioSelect.querySelectorAll('.select-option');
-            const currentIcon = audioSelect.querySelector('.select-icon');
-            const currentText = audioSelect.querySelector('.select-text');
-
-            trigger.addEventListener('mousedown', (e) => {{
-                e.stopPropagation();
-                audioSelect.classList.toggle('open');
-            }});
-
-            options.forEach(opt => {{
-                opt.addEventListener('mousedown', (e) => {{
+        // Audio Toggle Switch Logic
+        const audioToggle = document.getElementById('audio-toggle');
+        if (audioToggle) {{
+            const icons = audioToggle.querySelectorAll('.audio-icon');
+            
+            icons.forEach(icon => {{
+                icon.addEventListener('click', (e) => {{
                     e.stopPropagation();
-                    // Close dropdown
-                    audioSelect.classList.remove('open');
+                    e.preventDefault();
                     
-                    // Update UI
-                    const val = opt.getAttribute('data-value');
-                    const iconName = opt.querySelector('.material-symbols-rounded').textContent;
-                    const text = opt.querySelector('span:last-child').textContent;
-                    currentIcon.textContent = iconName;
-                    currentText.textContent = text;
+                    // Update UI - toggle active class
+                    icons.forEach(i => i.classList.remove('active'));
+                    icon.classList.add('active');
                     
-                    // IPC
+                    // Send IPC
+                    const val = icon.getAttribute('data-value');
                     window.ipc.postMessage('audioSource:' + val);
                 }});
-            }});
-
-            // Close on click outside
-            document.addEventListener('mousedown', (e) => {{
-                if (!audioSelect.contains(e.target)) {{
-                    audioSelect.classList.remove('open');
-                }}
             }});
         }}
 
