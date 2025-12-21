@@ -959,7 +959,6 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
             } else if body.starts_with("fontSize:") {
                 // Font size change - store for future use
                 if let Ok(size) = body[9..].parse::<u32>() {
-                    println!("[WEBVIEW] Font size changed to: {}", size);
                     let mut app = APP.lock().unwrap();
                     app.config.realtime_font_size = size;
                     crate::config::save_config(&app.config);
@@ -967,7 +966,6 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
             } else if body.starts_with("audioSource:") {
                 // Audio source change - signal restart with new source
                 let source = body[12..].to_string();
-                println!("[WEBVIEW] Audio source change requested: {}", source);
                 if let Ok(mut new_source) = NEW_AUDIO_SOURCE.lock() {
                     *new_source = source.clone();
                 }
@@ -982,7 +980,6 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
             } else if body.starts_with("language:") {
                 // Target language change - signal update
                 let lang = body[9..].to_string();
-                println!("[WEBVIEW] Target language change requested: {}", lang);
                 if let Ok(mut new_lang) = NEW_TARGET_LANGUAGE.lock() {
                     *new_lang = lang.clone();
                 }

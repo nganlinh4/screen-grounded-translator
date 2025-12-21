@@ -234,8 +234,6 @@ fn connect_websocket(api_key: &str) -> Result<tungstenite::WebSocket<native_tls:
         .next()
         .ok_or_else(|| anyhow::anyhow!("Failed to resolve hostname: {}", host))?;
     
-    println!("Resolved {} to {}", host, addr);
-    
     // Connect TCP with a long timeout for initial handshake
     let tcp_stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
     // Use blocking mode with long timeout during setup
@@ -277,8 +275,6 @@ fn send_setup_message(socket: &mut tungstenite::WebSocket<native_tls::TlsStream<
     });
     
     let msg_str = setup.to_string();
-    println!("Sending setup: {}", safe_truncate(&msg_str, 500));
-    
     socket.write(tungstenite::Message::Text(msg_str))?;
     socket.flush()?;
     
@@ -373,7 +369,6 @@ pub fn start_realtime_transcription(
             if AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
                 if let Ok(new_source) = NEW_AUDIO_SOURCE.lock() {
                     if !new_source.is_empty() {
-                        println!("[AUDIO] Restarting with new source: {}", new_source);
                         current_preset.audio_source = new_source.clone();
                         
                         // Don't reset state - continue with same transcript
@@ -408,68 +403,45 @@ fn run_realtime_transcription(
     }
     
     // Connect WebSocket
-    println!("Connecting to Gemini Live API...");
     let mut socket = connect_websocket(&gemini_api_key)?;
-    println!("Connected! Sending setup...");
     
     // Send setup for transcription only
     send_setup_message(&mut socket)?;
-    println!("Setup sent. Starting audio capture...");
     
     // Wait for setup acknowledgment (blocking mode with 30s timeout)
     let setup_start = Instant::now();
     loop {
         match socket.read() {
             Ok(tungstenite::Message::Text(msg)) => {
-                println!("Received TEXT: {}", safe_truncate(&msg, 500));
                 if msg.contains("setupComplete") {
-                    println!("Setup complete!");
                     break;
                 }
-                // Check for error messages
                 if msg.contains("error") || msg.contains("Error") {
-                    println!("ERROR in response: {}", msg);
                     return Err(anyhow::anyhow!("Server returned error: {}", msg));
                 }
             }
             Ok(tungstenite::Message::Close(frame)) => {
                 let close_info = frame.map(|f| format!("code={}, reason={}", f.code, f.reason)).unwrap_or("no frame".to_string());
-                println!("Received CLOSE: {}", close_info);
                 return Err(anyhow::anyhow!("Connection closed by server: {}", close_info));
             }
             Ok(tungstenite::Message::Binary(data)) => {
-                println!("Received BINARY: {} bytes", data.len());
-                // Try to decode as UTF-8 text
                 if let Ok(text) = String::from_utf8(data.clone()) {
-                    println!("Binary as text: {}", safe_truncate(&text, 500));
                     if text.contains("setupComplete") {
-                        println!("Setup complete (from binary)!");
                         break;
                     }
-                } else {
-                    // Could be protobuf or binary JSON - print hex for debugging
-                    let hex: String = data.iter().take(50).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
-                    println!("Binary hex: {}", hex);
-                    // The first binary message after setup is likely the setupComplete confirmation
-                    // For native audio API, a small binary message is the setup acknowledgment
-                    if data.len() < 100 {
-                        println!("Assuming small binary is setupComplete");
-                        break;
-                    }
+                } else if data.len() < 100 {
+                    // Small binary message is likely setup acknowledgment
+                    break;
                 }
             }
-            Ok(other) => {
-                println!("Received OTHER message type: {:?}", other);
-            }
+            Ok(_) => {}
             Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
-                // Timeout during read - this is expected with blocking socket, retry
                 if setup_start.elapsed() > Duration::from_secs(30) {
                     return Err(anyhow::anyhow!("Setup timeout - no response from server"));
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
-                println!("WebSocket error during setup: {:?}", e);
                 return Err(e.into());
             }
         }
@@ -481,7 +453,6 @@ fn run_realtime_transcription(
     
     // Switch to non-blocking mode for the main loop
     set_socket_nonblocking(&mut socket)?;
-    println!("Switched to non-blocking mode. Starting audio capture...");
     
     // Setup audio capture (similar to record_audio_and_transcribe)
     #[cfg(target_os = "windows")]
@@ -648,10 +619,7 @@ fn run_realtime_transcription(
     
     // Main loop: send audio chunks and receive transcriptions
     let mut last_send = Instant::now();
-    let mut last_debug = Instant::now();
     let send_interval = Duration::from_millis(100); // Send audio every 100ms
-    let mut total_samples_sent: usize = 0;
-    let mut messages_received: usize = 0;
     
     // Silence injection state machine
     // Every 20 seconds, inject 2 seconds of silence to "wake up" the lazy model
@@ -681,7 +649,6 @@ fn run_realtime_transcription(
         {
             use crate::overlay::realtime_webview::AUDIO_SOURCE_CHANGE;
             if AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
-                println!("[AUDIO] Audio source change requested - restarting...");
                 break; // Exit loop to restart with new source
             }
         }
@@ -690,7 +657,6 @@ fn run_realtime_transcription(
         match audio_mode {
             AudioMode::Normal => {
                 if mode_start.elapsed() >= NORMAL_DURATION {
-                    println!("[SILENCE INJECTION] Entering silence mode - buffering real audio");
                     audio_mode = AudioMode::Silence;
                     mode_start = Instant::now();
                     silence_buffer.clear();
@@ -698,7 +664,6 @@ fn run_realtime_transcription(
             }
             AudioMode::Silence => {
                 if mode_start.elapsed() >= SILENCE_DURATION {
-                    println!("[SILENCE INJECTION] Entering catch-up mode - {} samples buffered", silence_buffer.len());
                     audio_mode = AudioMode::CatchUp;
                     mode_start = Instant::now();
                 }
@@ -706,7 +671,6 @@ fn run_realtime_transcription(
             AudioMode::CatchUp => {
                 // Exit catch-up when buffer is depleted
                 if silence_buffer.is_empty() {
-                    println!("[SILENCE INJECTION] Catch-up complete - returning to normal");
                     audio_mode = AudioMode::Normal;
                     mode_start = Instant::now();
                 }
@@ -725,9 +689,7 @@ fn run_realtime_transcription(
                 AudioMode::Normal => {
                     // Normal mode: send real audio directly
                     if !real_audio.is_empty() {
-                        total_samples_sent += real_audio.len();
-                        if let Err(e) = send_audio_chunk(&mut socket, &real_audio) {
-                            eprintln!("Error sending audio: {}", e);
+                        if let Err(_) = send_audio_chunk(&mut socket, &real_audio) {
                             break;
                         }
                     }
@@ -738,9 +700,7 @@ fn run_realtime_transcription(
                     
                     // Send 100ms of silence (zeros)
                     let silence: Vec<i16> = vec![0i16; SAMPLES_PER_100MS];
-                    total_samples_sent += silence.len();
-                    if let Err(e) = send_audio_chunk(&mut socket, &silence) {
-                        eprintln!("Error sending silence: {}", e);
+                    if let Err(_) = send_audio_chunk(&mut socket, &silence) {
                         break;
                     }
                 }
@@ -759,9 +719,7 @@ fn run_realtime_transcription(
                     };
                     
                     if !to_send.is_empty() {
-                        total_samples_sent += to_send.len();
-                        if let Err(e) = send_audio_chunk(&mut socket, &to_send) {
-                            eprintln!("Error sending catch-up audio: {}", e);
+                        if let Err(_) = send_audio_chunk(&mut socket, &to_send) {
                             break;
                         }
                     }
@@ -775,22 +733,13 @@ fn run_realtime_transcription(
             }
         }
         
-        // Debug output every 3 seconds
-        if last_debug.elapsed() > Duration::from_secs(3) {
-            println!("[DEBUG] Samples sent: {}, Messages received: {}", total_samples_sent, messages_received);
-            last_debug = Instant::now();
-        }
-        
         // Receive transcriptions (non-blocking)
         match socket.read() {
             Ok(tungstenite::Message::Text(msg)) => {
-                messages_received += 1;
-                println!("[RECV TEXT] {}", safe_truncate(&msg, 300));
                 
                 // Parse inputTranscription for Window 1 (what user said)
                 if let Some(transcript) = parse_input_transcription(&msg) {
                     if !transcript.is_empty() {
-                        println!("[TRANSCRIPT] {}", transcript);
                         let display_text = if let Ok(mut s) = state.lock() {
                             s.append_transcript(&transcript);
                             s.display_transcript.clone()
@@ -805,105 +754,65 @@ fn run_realtime_transcription(
                 }
             }
             Ok(tungstenite::Message::Binary(data)) => {
-                messages_received += 1;
-                // Try to decode as JSON text (the API seems to send JSON in binary frames)
+                // Try to decode as JSON text (the API sends JSON in binary frames)
                 if let Ok(text) = String::from_utf8(data.clone()) {
-                    println!("[RECV BINARY as TEXT] {}", safe_truncate(&text, 300));
-                    
                     // Parse inputTranscription for Window 1
                     if let Some(transcript) = parse_input_transcription(&text) {
                         if !transcript.is_empty() {
-                            println!("[TRANSCRIPT from binary] {}", transcript);
-                                let display_text = if let Ok(mut s) = state.lock() {
-                                    s.append_transcript(&transcript);
-                                    s.display_transcript.clone()
-                                } else {
-                                    String::new()
-                                };
-                                
-                                if !display_text.is_empty() {
-                                    update_overlay_text(overlay_hwnd, &display_text);
-                                }
+                            let display_text = if let Ok(mut s) = state.lock() {
+                                s.append_transcript(&transcript);
+                                s.display_transcript.clone()
+                            } else {
+                                String::new()
+                            };
+                            
+                            if !display_text.is_empty() {
+                                update_overlay_text(overlay_hwnd, &display_text);
+                            }
                         }
                     }
                 } else {
-                    println!("[RECV BINARY] {} bytes (not UTF-8)", data.len());
+                    // Binary data that's not UTF-8 - ignore
                 }
             }
             Ok(tungstenite::Message::Close(_)) => {
-                println!("[RECONNECT] WebSocket closed by server - attempting reconnection...");
-                
                 // Enter reconnection mode - buffer audio while reconnecting
-                let reconnect_start = Instant::now();
                 let mut reconnect_buffer: Vec<i16> = Vec::new();
-                
-                // Close old socket (don't drop - we'll reassign it)
                 let _ = socket.close(None);
                 
                 // Try to reconnect (with retry)
                 let mut reconnected = false;
-                for attempt in 1..=3 {
-                    println!("[RECONNECT] Attempt {} of 3...", attempt);
-                    
-                    // Buffer audio while we try to reconnect
+                for _attempt in 1..=3 {
                     {
                         let mut buf = audio_buffer.lock().unwrap();
                         reconnect_buffer.extend(std::mem::take(&mut *buf));
                     }
                     
-                    // Try to create new connection
                     match connect_websocket(&gemini_api_key) {
                         Ok(mut new_socket) => {
-                            // Send setup message
-                            if let Err(e) = send_setup_message(&mut new_socket) {
-                                eprintln!("[RECONNECT] Setup failed: {}", e);
-                                continue;
-                            }
+                            if send_setup_message(&mut new_socket).is_err() { continue; }
+                            if set_socket_nonblocking(&mut new_socket).is_err() { continue; }
                             
-                            // Set non-blocking
-                            if let Err(e) = set_socket_nonblocking(&mut new_socket) {
-                                eprintln!("[RECONNECT] Non-blocking failed: {}", e);
-                                continue;
-                            }
-                            
-                            // Buffer any audio that came in during reconnection
                             {
                                 let mut buf = audio_buffer.lock().unwrap();
                                 reconnect_buffer.extend(std::mem::take(&mut *buf));
                             }
                             
-                            println!("[RECONNECT] Success! Buffered {} samples during reconnect ({:.1}s)", 
-                                reconnect_buffer.len(), 
-                                reconnect_buffer.len() as f64 / TARGET_SAMPLE_RATE as f64
-                            );
-                            
-                            // Put buffered audio into silence_buffer for catch-up
                             silence_buffer.clear();
                             silence_buffer.extend(reconnect_buffer);
-                            
-                            // Enter catch-up mode
                             audio_mode = AudioMode::CatchUp;
                             mode_start = Instant::now();
-                            
-                            // Replace socket
                             socket = new_socket;
                             reconnected = true;
                             break;
                         }
-                        Err(e) => {
-                            eprintln!("[RECONNECT] Connection failed: {}", e);
+                        Err(_) => {
                             std::thread::sleep(Duration::from_millis(500));
                         }
                     }
                 }
                 
-                if !reconnected {
-                    eprintln!("[RECONNECT] Failed after 3 attempts, stopping...");
-                    break;
-                }
-                
-                println!("[RECONNECT] Reconnection took {:.1}s, entering catch-up mode", 
-                    reconnect_start.elapsed().as_secs_f64());
+                if !reconnected { break; }
             }
             Ok(_) => {}
             Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
@@ -913,20 +822,11 @@ fn run_realtime_transcription(
                 // Check if it's a connection reset error - treat similar to close
                 let error_str = e.to_string();
                 if error_str.contains("reset") || error_str.contains("closed") || error_str.contains("broken") {
-                    println!("[RECONNECT] Connection error: {} - attempting reconnection...", e);
-                    
-                    // Enter reconnection mode
-                    let reconnect_start = Instant::now();
                     let mut reconnect_buffer: Vec<i16> = Vec::new();
-                    
-                    // Close old socket (don't drop - we'll reassign it)
                     let _ = socket.close(None);
                     
-                    // Try to reconnect
                     let mut reconnected = false;
-                    for attempt in 1..=3 {
-                        println!("[RECONNECT] Attempt {} of 3...", attempt);
-                        
+                    for _attempt in 1..=3 {
                         {
                             let mut buf = audio_buffer.lock().unwrap();
                             reconnect_buffer.extend(std::mem::take(&mut *buf));
@@ -942,8 +842,6 @@ fn run_realtime_transcription(
                                     reconnect_buffer.extend(std::mem::take(&mut *buf));
                                 }
                                 
-                                println!("[RECONNECT] Success! Buffered {} samples", reconnect_buffer.len());
-                                
                                 silence_buffer.clear();
                                 silence_buffer.extend(reconnect_buffer);
                                 audio_mode = AudioMode::CatchUp;
@@ -952,21 +850,14 @@ fn run_realtime_transcription(
                                 reconnected = true;
                                 break;
                             }
-                            Err(e) => {
-                                eprintln!("[RECONNECT] Failed: {}", e);
+                            Err(_) => {
                                 std::thread::sleep(Duration::from_millis(500));
                             }
                         }
                     }
                     
-                    if !reconnected {
-                        eprintln!("[RECONNECT] Failed after 3 attempts");
-                        break;
-                    }
-                    
-                    println!("[RECONNECT] Reconnection took {:.1}s", reconnect_start.elapsed().as_secs_f64());
+                    if !reconnected { break; }
                 } else {
-                    eprintln!("WebSocket error: {}", e);
                     break;
                 }
             }
@@ -1007,8 +898,6 @@ fn run_translation_loop(
             .unwrap_or_else(|| "English".to_string())
     };
     
-    println!("Translation loop started. Target language: {}", target_language);
-    
     while !stop_signal.load(Ordering::Relaxed) {
         if !unsafe { IsWindow(translation_hwnd).as_bool() } {
             break;
@@ -1018,7 +907,6 @@ fn run_translation_loop(
         if crate::overlay::realtime_webview::LANGUAGE_CHANGE.load(Ordering::SeqCst) {
             if let Ok(new_lang) = crate::overlay::realtime_webview::NEW_TARGET_LANGUAGE.lock() {
                 if !new_lang.is_empty() {
-                    println!("[TRANSLATION] Switching target language to: {}", new_lang);
                     target_language = new_lang.clone();
                     
                     // Clear current translation state for clean switch
@@ -1062,11 +950,6 @@ fn run_translation_loop(
             }
             
             if let Some(chunk) = chunk {
-                println!("[TRANSLATION] {} chunk: {} (has_finished: {})", 
-                    if should_replace { "REPLACING" } else { "NEW" },
-                    safe_truncate(&chunk, 100),
-                    has_finished
-                );
                 
                 // Remember what we're sending
                 {
@@ -1223,8 +1106,6 @@ fn run_translation_loop(
                             
                             // Check if it's a rate limit error (429)
                             if error_str.contains("429") {
-                                println!("[TRANSLATION] Rate limit hit, trying LibreTranslate fallback...");
-                                
                                 // Use LibreTranslate as fallback
                                 if let Some(fallback_translation) = translate_with_libretranslate(&chunk, &target_language) {
                                     // Display fallback translation
@@ -1244,15 +1125,15 @@ fn run_translation_loop(
                                         }
                                     }
                                 } else {
-                                    eprintln!("[TRANSLATION] LibreTranslate fallback also failed");
+                                    // LibreTranslate fallback failed silently
                                 }
                             } else {
-                                eprintln!("[TRANSLATION] API error ({}): {}", model_name, e);
+                                // API error, skip this chunk
                             }
                         }
                     }
                 } else {
-                    println!("[TRANSLATION] No API key available for {}", model_name);
+                    // No API key available
                 }
             }
             
@@ -1261,8 +1142,6 @@ fn run_translation_loop(
         
         std::thread::sleep(Duration::from_millis(100));
     }
-    
-    println!("Translation loop stopped.");
 }
 
 // Static buffer for overlay text updates (thread-safe)
@@ -1351,13 +1230,12 @@ fn translate_with_libretranslate(text: &str, target_lang: &str) -> Option<String
                     .and_then(|d| d.get("translatedText"))
                     .and_then(|t| t.as_str())
                 {
-                    println!("[MYMEMORY] Fallback translation successful");
                     return Some(translated.to_string());
                 }
             }
         }
-        Err(e) => {
-            eprintln!("[MYMEMORY] API failed: {}", e);
+        Err(_) => {
+            // API failed silently
         }
     }
     
