@@ -335,6 +335,7 @@ pub const WM_TRANSLATION_UPDATE: u32 = WM_APP + 201;
 /// 2. Streams audio from mic/device
 /// 3. Receives transcriptions and updates the overlay
 /// 4. Optionally triggers translation every 2 seconds on new sentence chunks
+/// 5. Restarts automatically when audio source change is requested
 pub fn start_realtime_transcription(
     preset: Preset,
     stop_signal: Arc<AtomicBool>,
@@ -343,8 +344,44 @@ pub fn start_realtime_transcription(
     state: SharedRealtimeState,
 ) {
     std::thread::spawn(move || {
-        if let Err(e) = run_realtime_transcription(preset, stop_signal, overlay_hwnd, translation_hwnd, state) {
-            eprintln!("Realtime transcription error: {}", e);
+        use crate::overlay::realtime_webview::{AUDIO_SOURCE_CHANGE, NEW_AUDIO_SOURCE};
+        
+        let mut current_preset = preset;
+        
+        loop {
+            // Clear any pending audio source change request
+            AUDIO_SOURCE_CHANGE.store(false, Ordering::SeqCst);
+            
+            // Run transcription - returns when stopped or when restart is needed
+            let result = run_realtime_transcription(
+                current_preset.clone(),
+                stop_signal.clone(),
+                overlay_hwnd,
+                translation_hwnd,
+                state.clone(),
+            );
+            
+            if let Err(e) = result {
+                eprintln!("Realtime transcription error: {}", e);
+            }
+            
+            // Check if we should restart with new audio source
+            if AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
+                if let Ok(new_source) = NEW_AUDIO_SOURCE.lock() {
+                    if !new_source.is_empty() {
+                        println!("[AUDIO] Restarting with new source: {}", new_source);
+                        current_preset.audio_source = new_source.clone();
+                        
+                        // Don't reset state - continue with same transcript
+                        // Just clear stop signal for restart
+                        stop_signal.store(false, Ordering::SeqCst);
+                        continue; // Restart the loop
+                    }
+                }
+            }
+            
+            // Normal exit - don't restart
+            break;
         }
     });
 }
@@ -616,6 +653,15 @@ fn run_realtime_transcription(
         if !unsafe { IsWindow(overlay_hwnd).as_bool() } {
             stop_signal.store(true, Ordering::SeqCst);
             break;
+        }
+        
+        // Check if audio source change was requested - exit to restart
+        {
+            use crate::overlay::realtime_webview::AUDIO_SOURCE_CHANGE;
+            if AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
+                println!("[AUDIO] Audio source change requested - restarting...");
+                break; // Exit loop to restart with new source
+            }
         }
         
         // State machine transitions
@@ -932,6 +978,13 @@ fn run_translation_loop(
         }
         
         if last_run.elapsed() >= interval {
+            // Check visibility - avoid burning API requests if hidden
+            if !crate::overlay::realtime_webview::TRANS_VISIBLE.load(Ordering::SeqCst) {
+                 last_run = Instant::now();
+                 std::thread::sleep(Duration::from_millis(500));
+                 continue;
+            }
+
             // Get translation chunk (from last committed sentence to current end)
             let (chunk, should_replace, has_finished, is_unchanged) = {
                 let s = state.lock().unwrap();
@@ -1166,6 +1219,11 @@ fn update_overlay_text(hwnd: HWND, text: &str) {
         *display = text.to_string();
     }
     
+    // Skip IPC if hidden
+    if !crate::overlay::realtime_webview::MIC_VISIBLE.load(Ordering::SeqCst) {
+        return;
+    }
+    
     // Post message to trigger repaint
     unsafe {
         let _ = PostMessageW(hwnd, WM_REALTIME_UPDATE, WPARAM(0), LPARAM(0));
@@ -1176,6 +1234,11 @@ fn update_overlay_text(hwnd: HWND, text: &str) {
 fn update_translation_text(hwnd: HWND, text: &str) {
     if let Ok(mut display) = TRANSLATION_DISPLAY_TEXT.lock() {
         *display = text.to_string();
+    }
+    
+    // Skip IPC if hidden
+    if !crate::overlay::realtime_webview::TRANS_VISIBLE.load(Ordering::SeqCst) {
+        return;
     }
     
     // Post message to trigger repaint
@@ -1197,23 +1260,18 @@ pub fn get_translation_display_text() -> String {
 /// Free translation fallback for when primary APIs hit rate limits
 /// Uses MyMemory API - free, no API key needed, 1000 words/day limit
 fn translate_with_libretranslate(text: &str, target_lang: &str) -> Option<String> {
-    // Convert full language name to ISO 639-1 code
-    let target_code = match target_lang.to_lowercase().as_str() {
-        "vietnamese" | "tiếng việt" => "vi",
-        "korean" | "한국어" => "ko",
-        "english" => "en",
-        "japanese" | "日本語" => "ja",
-        "chinese" | "chinese (simplified)" | "中文" => "zh-CN",
-        "french" | "français" => "fr",
-        "german" | "deutsch" => "de",
-        "spanish" | "español" => "es",
-        "russian" | "русский" => "ru",
-        "portuguese" | "português" => "pt",
-        "italian" | "italiano" => "it",
-        "thai" | "ไทย" => "th",
-        "indonesian" | "bahasa indonesia" => "id",
-        _ => "en", // Default to English
-    };
+    // Convert full language name to ISO 639-1 code using isolang
+    let target_code = isolang::Language::from_name(target_lang)
+        .and_then(|lang| lang.to_639_1())
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| {
+            // Fallback for common variations
+            match target_lang.to_lowercase().as_str() {
+                "chinese" | "chinese (simplified)" => "zh-CN".to_string(),
+                "chinese (traditional)" => "zh-TW".to_string(),
+                _ => "en".to_string() // Default to English
+            }
+        });
     
     // Use MyMemory API - free, no API key required
     // Format: https://api.mymemory.translated.net/get?q=text&langpair=auto|target
