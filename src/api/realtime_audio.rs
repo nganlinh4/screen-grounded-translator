@@ -20,7 +20,7 @@ use crate::APP;
 use crate::api::client::UREQ_AGENT;
 
 /// Interval for triggering translation (milliseconds)
-const TRANSLATION_INTERVAL_MS: u64 = 2000;
+const TRANSLATION_INTERVAL_MS: u64 = 3000;
 
 /// Model for realtime audio transcription
 const REALTIME_MODEL: &str = "gemini-2.5-flash-native-audio-preview-12-2025";
@@ -56,6 +56,10 @@ pub struct RealtimeState {
     pub uncommitted_translation: String,
     /// Display translation (WebView handles scrolling)
     pub display_translation: String,
+    
+    /// Translation history for conversation context: (source_text, translation)
+    /// Keeps last 9 entries to maintain consistent style/atmosphere
+    pub translation_history: Vec<(String, String)>,
 }
 
 impl RealtimeState {
@@ -68,6 +72,7 @@ impl RealtimeState {
             committed_translation: String::new(),
             uncommitted_translation: String::new(),
             display_translation: String::new(),
+            translation_history: Vec::new(),
         }
     }
     
@@ -176,6 +181,36 @@ impl RealtimeState {
     pub fn append_translation(&mut self, new_text: &str) {
         self.uncommitted_translation.push_str(new_text);
         self.update_display_translation();
+    }
+    
+    /// Add a completed translation to history for conversation context
+    /// Keeps only the last 9 entries
+    pub fn add_to_history(&mut self, source: String, translation: String) {
+        self.translation_history.push((source, translation));
+        // Keep only last 9 entries
+        while self.translation_history.len() > 9 {
+            self.translation_history.remove(0);
+        }
+    }
+    
+    /// Get translation history as messages for API request
+    pub fn get_history_messages(&self, target_language: &str) -> Vec<serde_json::Value> {
+        let mut messages = Vec::new();
+        
+        for (source, translation) in &self.translation_history {
+            // User message: request to translate
+            messages.push(serde_json::json!({
+                "role": "user",
+                "content": format!("Translate to {}:\n{}", target_language, source)
+            }));
+            // Assistant message: the translation
+            messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": translation
+            }));
+        }
+        
+        messages
     }
 }
 
@@ -559,6 +594,23 @@ fn run_realtime_transcription(
     let mut total_samples_sent: usize = 0;
     let mut messages_received: usize = 0;
     
+    // Silence injection state machine
+    // Every 20 seconds, inject 2 seconds of silence to "wake up" the lazy model
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum AudioMode {
+        Normal,    // Normal audio sending
+        Silence,   // Sending silence, buffering real audio
+        CatchUp,   // Sending buffered audio at 2x speed
+    }
+    let mut audio_mode = AudioMode::Normal;
+    let mut mode_start = Instant::now();
+    let mut silence_buffer: Vec<i16> = Vec::new(); // Buffer for audio during silence/catch-up
+    
+    const NORMAL_DURATION: Duration = Duration::from_secs(20);
+    const SILENCE_DURATION: Duration = Duration::from_secs(2);
+    const TARGET_SAMPLE_RATE: usize = 16000;
+    const SAMPLES_PER_100MS: usize = TARGET_SAMPLE_RATE / 10; // 1600 samples per 100ms
+    
     while !stop_signal.load(Ordering::Relaxed) {
         // Check if overlay window still exists
         if !unsafe { IsWindow(overlay_hwnd).as_bool() } {
@@ -566,18 +618,85 @@ fn run_realtime_transcription(
             break;
         }
         
+        // State machine transitions
+        match audio_mode {
+            AudioMode::Normal => {
+                if mode_start.elapsed() >= NORMAL_DURATION {
+                    println!("[SILENCE INJECTION] Entering silence mode - buffering real audio");
+                    audio_mode = AudioMode::Silence;
+                    mode_start = Instant::now();
+                    silence_buffer.clear();
+                }
+            }
+            AudioMode::Silence => {
+                if mode_start.elapsed() >= SILENCE_DURATION {
+                    println!("[SILENCE INJECTION] Entering catch-up mode - {} samples buffered", silence_buffer.len());
+                    audio_mode = AudioMode::CatchUp;
+                    mode_start = Instant::now();
+                }
+            }
+            AudioMode::CatchUp => {
+                // Exit catch-up when buffer is depleted
+                if silence_buffer.is_empty() {
+                    println!("[SILENCE INJECTION] Catch-up complete - returning to normal");
+                    audio_mode = AudioMode::Normal;
+                    mode_start = Instant::now();
+                }
+            }
+        }
+        
         // Send accumulated audio
         if last_send.elapsed() >= send_interval {
-            let audio_to_send: Vec<i16> = {
+            // Get real audio from recording
+            let real_audio: Vec<i16> = {
                 let mut buf = audio_buffer.lock().unwrap();
                 std::mem::take(&mut *buf)
             };
             
-            if !audio_to_send.is_empty() {
-                total_samples_sent += audio_to_send.len();
-                if let Err(e) = send_audio_chunk(&mut socket, &audio_to_send) {
-                    eprintln!("Error sending audio: {}", e);
-                    break;
+            match audio_mode {
+                AudioMode::Normal => {
+                    // Normal mode: send real audio directly
+                    if !real_audio.is_empty() {
+                        total_samples_sent += real_audio.len();
+                        if let Err(e) = send_audio_chunk(&mut socket, &real_audio) {
+                            eprintln!("Error sending audio: {}", e);
+                            break;
+                        }
+                    }
+                }
+                AudioMode::Silence => {
+                    // Silence mode: buffer real audio, send zeros
+                    silence_buffer.extend(real_audio);
+                    
+                    // Send 100ms of silence (zeros)
+                    let silence: Vec<i16> = vec![0i16; SAMPLES_PER_100MS];
+                    total_samples_sent += silence.len();
+                    if let Err(e) = send_audio_chunk(&mut socket, &silence) {
+                        eprintln!("Error sending silence: {}", e);
+                        break;
+                    }
+                }
+                AudioMode::CatchUp => {
+                    // Catch-up mode: buffer new audio, send from buffer at 2x speed
+                    silence_buffer.extend(real_audio);
+                    
+                    // Send 2x normal chunk size (200ms worth = 3200 samples) from buffer
+                    let chunk_size = SAMPLES_PER_100MS * 2;
+                    let to_send: Vec<i16> = if silence_buffer.len() >= chunk_size {
+                        silence_buffer.drain(..chunk_size).collect()
+                    } else if !silence_buffer.is_empty() {
+                        silence_buffer.drain(..).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    
+                    if !to_send.is_empty() {
+                        total_samples_sent += to_send.len();
+                        if let Err(e) = send_audio_chunk(&mut socket, &to_send) {
+                            eprintln!("Error sending catch-up audio: {}", e);
+                            break;
+                        }
+                    }
                 }
             }
             last_send = Instant::now();
@@ -718,30 +837,88 @@ fn run_translation_loop(
                     s.set_last_sent(&chunk);
                 }
                 
-                // Get Groq API key
-                let groq_key = {
+                // Get API keys, model selection, and history
+                let (groq_key, gemini_key, translation_model, history_messages) = {
                     let app = APP.lock().unwrap();
-                    app.config.api_key.clone()
+                    let groq = app.config.api_key.clone();
+                    let gemini = app.config.gemini_api_key.clone();
+                    let model = app.config.realtime_translation_model.clone();
+                    drop(app);
+                    
+                    let history = if let Ok(s) = state.lock() {
+                        s.get_history_messages(&target_language)
+                    } else {
+                        Vec::new()
+                    };
+                    (groq, gemini, model, history)
                 };
                 
-                if !groq_key.is_empty() {
-                    let url = "https://api.groq.com/openai/v1/chat/completions";
+                // Determine which API to use based on model selection
+                let is_google = translation_model == "google-gemma";
+                let (url, model_name, api_key) = if is_google {
+                    // Google AI API with Gemma
+                    (
+                        format!("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
+                        "gemma-3-27b-it".to_string(),
+                        gemini_key
+                    )
+                } else {
+                    // Default: Groq API with Llama
+                    (
+                        "https://api.groq.com/openai/v1/chat/completions".to_string(),
+                        "llama-3.1-8b-instant".to_string(),
+                        groq_key
+                    )
+                };
+                
+                // Build messages array
+                let mut messages: Vec<serde_json::Value> = Vec::new();
+                
+                let system_instruction = format!(
+                    "You are a professional translator. Translate text to {} while maintaining consistent style, tone, and atmosphere. Output ONLY the translation, nothing else.",
+                    target_language
+                );
+                
+                if is_google {
+                    // Google Gemma: No system role, include instruction in first user message
+                    // Add history first (without system prompt)
+                    messages.extend(history_messages);
                     
+                    // Add current translation request with instruction embedded
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": format!("{}\n\nTranslate to {}:\n{}", system_instruction, target_language, chunk)
+                    }));
+                } else {
+                    // Groq Llama: Supports system role
+                    messages.push(serde_json::json!({
+                        "role": "system",
+                        "content": system_instruction
+                    }));
+                    
+                    // Add history (last 9 translation pairs for context)
+                    messages.extend(history_messages);
+                    
+                    // Add current translation request
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": format!("Translate to {}:\n{}", target_language, chunk)
+                    }));
+                }
+                
+                if !api_key.is_empty() {
                     let payload = serde_json::json!({
-                        "model": "llama-3.1-8b-instant",
-                        "messages": [{
-                            "role": "user",
-                            "content": format!(
-                                "Translate the following text to {}. Output ONLY the translation, nothing else:\n\n{}",
-                                target_language, chunk
-                            )
-                        }],
+                        "model": model_name,
+                        "messages": messages,
                         "stream": true,
                         "max_tokens": 512
                     });
                     
-                    match UREQ_AGENT.post(url)
-                        .set("Authorization", &format!("Bearer {}", groq_key))
+                    // Clone chunk for adding to history later
+                    let chunk_for_history = chunk.clone();
+                    
+                    match UREQ_AGENT.post(&url)
+                        .set("Authorization", &format!("Bearer {}", api_key))
                         .set("Content-Type", "application/json")
                         .send_json(payload)
                     {
@@ -793,6 +970,9 @@ fn run_translation_loop(
                             // After successful translation, commit any finished sentences
                             if has_finished && !full_translation.is_empty() {
                                 if let Ok(mut s) = state.lock() {
+                                    // Add to history for context in future translations
+                                    s.add_to_history(chunk_for_history, full_translation.clone());
+                                    
                                     s.commit_finished_sentences();
                                     // Clear last_sent since we committed
                                     s.last_sent_text.clear();
@@ -800,11 +980,11 @@ fn run_translation_loop(
                             }
                         }
                         Err(e) => {
-                            eprintln!("[TRANSLATION] Groq API error: {}", e);
+                            eprintln!("[TRANSLATION] API error ({}): {}", model_name, e);
                         }
                     }
                 } else {
-                    println!("[TRANSLATION] No Groq API key available");
+                    println!("[TRANSLATION] No API key available for {}", model_name);
                 }
             }
             

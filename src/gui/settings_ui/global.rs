@@ -276,6 +276,7 @@ pub fn render_global_settings(
                     let saved_use_groq = config.use_groq;
                     let saved_use_gemini = config.use_gemini;
                     let saved_use_openrouter = config.use_openrouter;
+                    let saved_realtime_model = config.realtime_translation_model.clone();
                     
                     *config = Config::default();
                     
@@ -286,9 +287,40 @@ pub fn render_global_settings(
                     config.use_groq = saved_use_groq;
                     config.use_gemini = saved_use_gemini;
                     config.use_openrouter = saved_use_openrouter;
+                    config.realtime_translation_model = saved_realtime_model;
                     request_node_graph_view_reset(ui.ctx());
                     changed = true;
                 }
+            });
+            
+            ui.add_space(4.0);
+            
+            // Realtime Translation Model selector
+            ui.horizontal(|ui| {
+                let label = match config.ui_language.as_str() {
+                    "vi" => "Model dịch realtime:",
+                    "ko" => "실시간 번역 모델:",
+                    _ => "Realtime translation model:",
+                };
+                ui.label(label);
+                
+                let current_model_label = match config.realtime_translation_model.as_str() {
+                    "google-gemma" => "Google Gemma 3 27B",
+                    _ => "Groq Llama 3.1 8B",
+                };
+                
+                egui::ComboBox::from_id_salt("realtime_translation_model_combo")
+                    .selected_text(current_model_label)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(config.realtime_translation_model == "groq-llama", "Groq Llama 3.1 8B (Fast)").clicked() {
+                            config.realtime_translation_model = "groq-llama".to_string();
+                            changed = true;
+                        }
+                        if ui.selectable_label(config.realtime_translation_model == "google-gemma", "Google Gemma 3 27B (Accurate)").clicked() {
+                            config.realtime_translation_model = "google-gemma".to_string();
+                            changed = true;
+                        }
+                    });
             });
         });
 

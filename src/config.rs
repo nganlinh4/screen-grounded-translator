@@ -211,7 +211,12 @@ pub struct Config {
     pub use_gemini: bool,
     #[serde(default)]
     pub use_openrouter: bool,
+    /// Model for realtime translation: "groq-llama" or "google-gemma"
+    #[serde(default = "default_realtime_translation_model")]
+    pub realtime_translation_model: String,
 }
+
+fn default_realtime_translation_model() -> String { "groq-llama".to_string() }
 
 impl Default for Config {
     fn default() -> Self {
@@ -1070,6 +1075,7 @@ impl Default for Config {
             use_groq: true,
             use_gemini: true,
             use_openrouter: false,
+            realtime_translation_model: "groq-llama".to_string(),
         }
     }
 }
