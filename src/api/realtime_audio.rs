@@ -701,6 +701,13 @@ fn run_realtime_transcription(
     const TARGET_SAMPLE_RATE: usize = 16000;
     const SAMPLES_PER_100MS: usize = TARGET_SAMPLE_RATE / 10; // 1600 samples per 100ms
     
+    // Proactive reconnection state: detect when model becomes "stuck"
+    // If we're sending audio but not receiving any transcription for N seconds, reconnect
+    let mut last_transcription_time = Instant::now();
+    let mut consecutive_empty_reads: u32 = 0;
+    const NO_RESULT_THRESHOLD_SECS: u64 = 8; // Reconnect if no results for 8 seconds
+    const EMPTY_READ_CHECK_COUNT: u32 = 50; // Only check after ~5 seconds (50 * 100ms)
+    
     while !stop_signal.load(Ordering::Relaxed) {
         // Check if overlay window still exists
         if !unsafe { IsWindow(overlay_hwnd).as_bool() } {
@@ -803,6 +810,10 @@ fn run_realtime_transcription(
                 // Parse inputTranscription for Window 1 (what user said)
                 if let Some(transcript) = parse_input_transcription(&msg) {
                     if !transcript.is_empty() {
+                        // Reset no-result trackers - we got a valid transcription
+                        last_transcription_time = Instant::now();
+                        consecutive_empty_reads = 0;
+                        
                         let display_text = if let Ok(mut s) = state.lock() {
                             s.append_transcript(&transcript);
                             s.display_transcript.clone()
@@ -822,6 +833,10 @@ fn run_realtime_transcription(
                     // Parse inputTranscription for Window 1
                     if let Some(transcript) = parse_input_transcription(&text) {
                         if !transcript.is_empty() {
+                            // Reset no-result trackers - we got a valid transcription
+                            last_transcription_time = Instant::now();
+                            consecutive_empty_reads = 0;
+                            
                             let display_text = if let Ok(mut s) = state.lock() {
                                 s.append_transcript(&transcript);
                                 s.display_transcript.clone()
@@ -866,6 +881,11 @@ fn run_realtime_transcription(
                             audio_mode = AudioMode::CatchUp;
                             mode_start = Instant::now();
                             socket = new_socket;
+                            
+                            // Reset no-result trackers after successful reconnection
+                            last_transcription_time = Instant::now();
+                            consecutive_empty_reads = 0;
+                            
                             reconnected = true;
                             break;
                         }
@@ -880,6 +900,64 @@ fn run_realtime_transcription(
             Ok(_) => {}
             Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
                 // Non-blocking or timeout, no data available - this is expected
+                // Track consecutive empty reads for proactive reconnection
+                consecutive_empty_reads += 1;
+                
+                // Check if we should proactively reconnect due to no results
+                if consecutive_empty_reads >= EMPTY_READ_CHECK_COUNT 
+                    && last_transcription_time.elapsed() > Duration::from_secs(NO_RESULT_THRESHOLD_SECS) 
+                {
+                    // Model appears stuck - proactively reconnect
+                    // Start buffering audio NOW before we even close the socket
+                    let mut reconnect_buffer: Vec<i16> = Vec::new();
+                    {
+                        let mut buf = audio_buffer.lock().unwrap();
+                        reconnect_buffer.extend(std::mem::take(&mut *buf));
+                    }
+                    
+                    let _ = socket.close(None);
+                    
+                    let mut reconnected = false;
+                    for _attempt in 1..=3 {
+                        // Keep collecting audio during reconnection attempts
+                        {
+                            let mut buf = audio_buffer.lock().unwrap();
+                            reconnect_buffer.extend(std::mem::take(&mut *buf));
+                        }
+                        
+                        match connect_websocket(&gemini_api_key) {
+                            Ok(mut new_socket) => {
+                                if send_setup_message(&mut new_socket).is_err() { continue; }
+                                if set_socket_nonblocking(&mut new_socket).is_err() { continue; }
+                                
+                                // Collect any audio that came in during setup
+                                {
+                                    let mut buf = audio_buffer.lock().unwrap();
+                                    reconnect_buffer.extend(std::mem::take(&mut *buf));
+                                }
+                                
+                                // Transfer buffered audio to catch-up mode
+                                silence_buffer.clear();
+                                silence_buffer.extend(reconnect_buffer);
+                                audio_mode = AudioMode::CatchUp;
+                                mode_start = Instant::now();
+                                socket = new_socket;
+                                
+                                // Reset no-result trackers after successful reconnection
+                                last_transcription_time = Instant::now();
+                                consecutive_empty_reads = 0;
+                                
+                                reconnected = true;
+                                break;
+                            }
+                            Err(_) => {
+                                std::thread::sleep(Duration::from_millis(500));
+                            }
+                        }
+                    }
+                    
+                    if !reconnected { break; }
+                }
             }
             Err(e) => {
                 // Check if it's a connection reset error - treat similar to close
@@ -910,6 +988,11 @@ fn run_realtime_transcription(
                                 audio_mode = AudioMode::CatchUp;
                                 mode_start = Instant::now();
                                 socket = new_socket;
+                                
+                                // Reset no-result trackers after successful reconnection
+                                last_transcription_time = Instant::now();
+                                consecutive_empty_reads = 0;
+                                
                                 reconnected = true;
                                 break;
                             }
