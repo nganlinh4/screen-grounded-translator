@@ -148,6 +148,12 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         )
     };
     
+    let loading_icon = if is_translation {
+        r##"<svg class="loading-svg" viewBox="0 0 24 24" fill="none" stroke="#ff9633" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"></path><path d="m4 14 6-6 2-3"></path><path d="M2 5h12"></path><path d="M7 2h1"></path><path d="m22 22-5-10-5 10"></path><path d="M14 18h6"></path></svg>"##
+    } else {
+        r##"<svg class="loading-svg" viewBox="0 0 24 24" fill="none" stroke="#00c8ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v1a7 7 0 0 1-14 0v-1"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg>"##
+    };
+
     format!(r#"<!DOCTYPE html>
 <html>
 <head>
@@ -180,7 +186,28 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             background: rgb(26, 26, 26);
             z-index: 9999;
             pointer-events: none;
-            animation: fadeOut 0.3s ease-out 0.7s forwards;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            animation: fadeOut 0.4s ease-out 0.9s forwards;
+        }}
+        .loading-svg {{
+            width: 72px;
+            height: 72px;
+            filter: drop-shadow(0 0 12px {glow_color}90);
+            animation: breathe 2.5s ease-in-out infinite;
+        }}
+        @keyframes breathe {{
+            0%, 100% {{ 
+                transform: scale(1); 
+                opacity: 0.85;
+                filter: drop-shadow(0 0 8px {glow_color}60);
+            }}
+            50% {{ 
+                transform: scale(1.08); 
+                opacity: 1;
+                filter: drop-shadow(0 0 20px {glow_color});
+            }}
         }}
         @keyframes fadeOut {{
             from {{ opacity: 1; }}
@@ -548,7 +575,7 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
     </style>
 </head>
 <body>
-    <div id="loading-overlay"></div>
+    <div id="loading-overlay">{loading_icon}</div>
     <div id="container">
         <div id="header">
             <div id="title">{title_content}</div>
@@ -980,7 +1007,14 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         window.switchModel = switchModel;
     </script>
 </body>
-</html>"#)
+</html>"#,
+        glow_color = glow_color,
+        title_content = title_content,
+        audio_selector = audio_selector,
+        placeholder_text = placeholder_text,
+        font_size = font_size,
+        loading_icon = loading_icon
+    )
 }
 
 pub fn is_realtime_overlay_active() -> bool {
