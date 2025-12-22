@@ -145,16 +145,47 @@ impl RealtimeState {
         if let Some(last_sentence_end) = self.find_last_sentence_end() {
             if last_sentence_end > self.last_committed_pos {
                 self.last_committed_pos = last_sentence_end;
-                // Move uncommitted translation to committed
+                
+                // Find the last sentence delimiter in the translation
+                // Only commit up to that point, keep the rest in uncommitted
                 if !self.uncommitted_translation.is_empty() {
-                    if self.committed_translation.is_empty() {
-                        self.committed_translation = self.uncommitted_translation.clone();
-                    } else {
-                        self.committed_translation.push(' ');
-                        self.committed_translation.push_str(&self.uncommitted_translation);
+                    let sentence_delimiters = ['.', '!', '?', '。', '！', '？'];
+                    
+                    // Find the last sentence end in the translation
+                    let mut last_trans_end: Option<usize> = None;
+                    for (idx, ch) in self.uncommitted_translation.char_indices() {
+                        if sentence_delimiters.contains(&ch) {
+                            last_trans_end = Some(idx + ch.len_utf8());
+                        }
                     }
-                    // No truncation needed - WebView handles scrolling
-                    self.uncommitted_translation.clear();
+                    
+                    if let Some(trans_end) = last_trans_end {
+                        // Split translation: commit the finished part, keep the rest
+                        let to_commit = self.uncommitted_translation[..trans_end].trim().to_string();
+                        let to_keep = self.uncommitted_translation[trans_end..].trim().to_string();
+                        
+                        if !to_commit.is_empty() {
+                            if self.committed_translation.is_empty() {
+                                self.committed_translation = to_commit;
+                            } else {
+                                self.committed_translation.push(' ');
+                                self.committed_translation.push_str(&to_commit);
+                            }
+                        }
+                        
+                        self.uncommitted_translation = to_keep;
+                    } else {
+                        // No sentence delimiter in translation - move all to committed
+                        // (This handles edge cases where source has punctuation but translation doesn't)
+                        if self.committed_translation.is_empty() {
+                            self.committed_translation = self.uncommitted_translation.clone();
+                        } else {
+                            self.committed_translation.push(' ');
+                            self.committed_translation.push_str(&self.uncommitted_translation);
+                        }
+                        self.uncommitted_translation.clear();
+                    }
+                    
                     self.update_display_translation();
                 }
             }
@@ -324,6 +355,7 @@ fn parse_input_transcription(msg: &str) -> Option<String> {
 pub const WM_REALTIME_UPDATE: u32 = WM_APP + 200;
 pub const WM_TRANSLATION_UPDATE: u32 = WM_APP + 201;
 pub const WM_VOLUME_UPDATE: u32 = WM_APP + 202;
+pub const WM_MODEL_SWITCH: u32 = WM_APP + 203;
 
 // Shared RMS value for volume visualization
 pub static REALTIME_RMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -921,6 +953,13 @@ fn run_translation_loop(
             crate::overlay::realtime_webview::LANGUAGE_CHANGE.store(false, Ordering::SeqCst);
         }
         
+        // Check for translation model change
+        if crate::overlay::realtime_webview::TRANSLATION_MODEL_CHANGE.load(Ordering::SeqCst) {
+            // Model change doesn't need to clear state - just let next translation use the new model
+            // The model is read from config on each translation iteration anyway
+            crate::overlay::realtime_webview::TRANSLATION_MODEL_CHANGE.store(false, Ordering::SeqCst);
+        }
+        
         if last_run.elapsed() >= interval {
             // Check visibility - avoid burning API requests if hidden
             if !crate::overlay::realtime_webview::TRANS_VISIBLE.load(Ordering::SeqCst) {
@@ -930,15 +969,14 @@ fn run_translation_loop(
             }
 
             // Get translation chunk (from last committed sentence to current end)
-            let (chunk, should_replace, has_finished, is_unchanged) = {
+            let (chunk, has_finished, is_unchanged) = {
                 let s = state.lock().unwrap();
                 match s.get_translation_chunk() {
                     Some((text, has_finished)) => {
                         let is_unchanged = s.is_chunk_unchanged(&text);
-                        let should_replace = s.should_replace_translation(&text);
-                        (Some(text), should_replace, has_finished, is_unchanged)
+                        (Some(text), has_finished, is_unchanged)
                     }
-                    None => (None, false, false, true)
+                    None => (None, false, true)
                 }
             };
             
@@ -980,14 +1018,14 @@ fn run_translation_loop(
                     (
                         format!("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
                         "gemma-3-27b-it".to_string(),
-                        gemini_key
+                        gemini_key.clone()
                     )
                 } else {
                     // Default: Groq API with Llama
                     (
                         "https://api.groq.com/openai/v1/chat/completions".to_string(),
                         "llama-3.1-8b-instant".to_string(),
-                        groq_key
+                        groq_key.clone()
                     )
                 };
                 
@@ -1002,7 +1040,7 @@ fn run_translation_loop(
                 if is_google {
                     // Google Gemma: No system role, include instruction in first user message
                     // Add history first (without system prompt)
-                    messages.extend(history_messages);
+                    messages.extend(history_messages.clone());
                     
                     // Add current translation request with instruction embedded
                     messages.push(serde_json::json!({
@@ -1017,7 +1055,7 @@ fn run_translation_loop(
                     }));
                     
                     // Add history (last 9 translation pairs for context)
-                    messages.extend(history_messages);
+                    messages.extend(history_messages.clone());
                     
                     // Add current translation request
                     messages.push(serde_json::json!({
@@ -1063,11 +1101,10 @@ fn run_translation_loop(
                                                         
                                                         // Update display in real-time
                                                         let display_text = if let Ok(mut s) = state.lock() {
-                                                            if is_first_chunk && should_replace {
+                                                            if is_first_chunk {
+                                                                // Always clear uncommitted when starting a new translation
+                                                                // The full chunk is being translated, so any partial translation is stale
                                                                 s.start_new_translation();
-                                                                s.append_translation(content);
-                                                                is_first_chunk = false;
-                                                            } else if is_first_chunk {
                                                                 s.append_translation(content);
                                                                 is_first_chunk = false;
                                                             } else {
@@ -1106,30 +1143,128 @@ fn run_translation_loop(
                             
                             // Check if it's a rate limit error (429)
                             if error_str.contains("429") {
-                                // Use LibreTranslate as fallback
-                                if let Some(fallback_translation) = translate_with_libretranslate(&chunk, &target_language) {
-                                    // Display fallback translation
-                                    if let Ok(mut s) = state.lock() {
-                                        if should_replace {
-                                            s.start_new_translation();
-                                        }
-                                        s.append_translation(&fallback_translation);
-                                        let display = s.display_translation.clone();
-                                        update_translation_text(translation_hwnd, &display);
+                                // Switch to the OTHER model and retry
+                                let alternate_model = if is_google { "groq-llama" } else { "google-gemma" };
+                                let alt_is_google = alternate_model == "google-gemma";
+                                
+                                // Get the alternate API key
+                                let alt_api_key = if alt_is_google { gemini_key.clone() } else { groq_key.clone() };
+                                
+                                if !alt_api_key.is_empty() {
+                                    // Update config to persist the switch
+                                    {
+                                        let mut app = APP.lock().unwrap();
+                                        app.config.realtime_translation_model = alternate_model.to_string();
+                                        crate::config::save_config(&app.config);
+                                    }
+                                    
+                                    // Signal UI to animate the model switch
+                                    unsafe {
+                                        // WPARAM: 1 = google-gemma, 0 = groq-llama
+                                        let model_flag = if alt_is_google { 1 } else { 0 };
+                                        let _ = PostMessageW(translation_hwnd, WM_MODEL_SWITCH, WPARAM(model_flag), LPARAM(0));
+                                    }
+                                    
+                                    // Build alternate request
+                                    let (alt_url, alt_model_name) = if alt_is_google {
+                                        (
+                                            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
+                                            "gemma-3-27b-it".to_string()
+                                        )
+                                    } else {
+                                        (
+                                            "https://api.groq.com/openai/v1/chat/completions".to_string(),
+                                            "llama-3.1-8b-instant".to_string()
+                                        )
+                                    };
+                                    
+                                    // Rebuild messages for alternate model
+                                    let mut alt_messages: Vec<serde_json::Value> = Vec::new();
+                                    let alt_system = format!(
+                                        "You are a professional translator. Translate text to {} while maintaining consistent style, tone, and atmosphere. Output ONLY the translation, nothing else.",
+                                        target_language
+                                    );
+                                    
+                                    if alt_is_google {
+                                        alt_messages.extend(history_messages.clone());
+                                        alt_messages.push(serde_json::json!({
+                                            "role": "user",
+                                            "content": format!("{}\n\nTranslate to {}:\n{}", alt_system, target_language, chunk)
+                                        }));
+                                    } else {
+                                        alt_messages.push(serde_json::json!({
+                                            "role": "system",
+                                            "content": alt_system
+                                        }));
+                                        alt_messages.extend(history_messages.clone());
+                                        alt_messages.push(serde_json::json!({
+                                            "role": "user",
+                                            "content": format!("Translate to {}:\n{}", target_language, chunk)
+                                        }));
+                                    }
+                                    
+                                    let alt_payload = serde_json::json!({
+                                        "model": alt_model_name,
+                                        "messages": alt_messages,
+                                        "stream": true,
+                                        "max_tokens": 512
+                                    });
+                                    
+                                    // Retry with alternate model
+                                    if let Ok(alt_resp) = UREQ_AGENT.post(&alt_url)
+                                        .set("Authorization", &format!("Bearer {}", alt_api_key))
+                                        .set("Content-Type", "application/json")
+                                        .send_json(alt_payload)
+                                    {
+                                        let alt_reader = std::io::BufReader::new(alt_resp.into_reader());
+                                        let mut retry_translation = String::new();
+                                        let mut retry_first = true;
                                         
-                                        // Commit if this was a finished sentence
-                                        if has_finished {
-                                            s.add_to_history(chunk_for_history.clone(), fallback_translation);
-                                            s.commit_finished_sentences();
-                                            s.last_sent_text.clear();
+                                        for line in alt_reader.lines().flatten() {
+                                            if stop_signal.load(Ordering::Relaxed) { break; }
+                                            
+                                            if line.starts_with("data: ") {
+                                                let json_str = &line["data: ".len()..];
+                                                if json_str.trim() == "[DONE]" { break; }
+                                                
+                                                if let Ok(chunk_resp) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                                    if let Some(choices) = chunk_resp.get("choices").and_then(|c| c.as_array()) {
+                                                        if let Some(first) = choices.first() {
+                                                            if let Some(delta) = first.get("delta") {
+                                                                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                                                                    retry_translation.push_str(content);
+                                                                    
+                                                                    if let Ok(mut s) = state.lock() {
+                                                                        if retry_first {
+                                                                            s.start_new_translation();
+                                                                            s.append_translation(content);
+                                                                            retry_first = false;
+                                                                        } else {
+                                                                            s.append_translation(content);
+                                                                        }
+                                                                        let display = s.display_translation.clone();
+                                                                        update_translation_text(translation_hwnd, &display);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Commit if finished
+                                        if has_finished && !retry_translation.is_empty() {
+                                            if let Ok(mut s) = state.lock() {
+                                                s.add_to_history(chunk_for_history.clone(), retry_translation);
+                                                s.commit_finished_sentences();
+                                                s.last_sent_text.clear();
+                                            }
                                         }
                                     }
-                                } else {
-                                    // LibreTranslate fallback failed silently
                                 }
-                            } else {
-                                // API error, skip this chunk
                             }
+                            // Other API errors - skip silently
                         }
                     }
                 } else {

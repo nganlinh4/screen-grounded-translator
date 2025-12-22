@@ -20,7 +20,7 @@ use crate::gui::locale::LocaleText;
 use crate::config::get_all_languages;
 use crate::api::realtime_audio::{
     start_realtime_transcription, RealtimeState, SharedRealtimeState,
-    WM_REALTIME_UPDATE, WM_TRANSLATION_UPDATE, WM_VOLUME_UPDATE, REALTIME_RMS,
+    WM_REALTIME_UPDATE, WM_TRANSLATION_UPDATE, WM_VOLUME_UPDATE, WM_MODEL_SWITCH, REALTIME_RMS,
 };
 
 // Window dimensions
@@ -41,6 +41,10 @@ lazy_static::lazy_static! {
     pub static ref LANGUAGE_CHANGE: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     /// The new target language to use
     pub static ref NEW_TARGET_LANGUAGE: Mutex<String> = Mutex::new(String::new());
+    /// Signal to change translation model
+    pub static ref TRANSLATION_MODEL_CHANGE: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    /// The new translation model to use ("google-gemma" or "groq-llama")
+    pub static ref NEW_TRANSLATION_MODEL: Mutex<String> = Mutex::new(String::new());
     /// Visibility state for windows
     pub static ref MIC_VISIBLE: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     pub static ref TRANS_VISIBLE: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
@@ -76,7 +80,7 @@ impl HasWindowHandle for HwndWrapper {
 }
 
 /// CSS and HTML for the realtime overlay with smooth scrolling
-fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[String], current_language: &str, font_size: u32, text: &LocaleText) -> String {
+fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[String], current_language: &str, translation_model: &str, font_size: u32, text: &LocaleText) -> String {
     let title_icon = if is_translation { "translate" } else { "graphic_eq" };
     let title_text = if is_translation { text.realtime_translation } else { text.realtime_listening };
     let glow_color = if is_translation { "#ff9633" } else { "#00c8ff" };
@@ -116,12 +120,21 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             device_active = if is_device { "active" } else { "" }
         )
     } else {
-        // Language selector for translation window
+        // Language selector and model toggle for translation window
+        let is_gemma = translation_model == "google-gemma";
         format!(r#"
+            <div class="model-toggle" id="model-toggle">
+                <span class="material-symbols-rounded model-icon {gemma_active}" data-value="google-gemma" title="AI Translation (Gemma)">auto_awesome</span>
+                <span class="material-symbols-rounded model-icon {fallback_active}" data-value="groq-llama" title="Fast Translation (Groq)">speed</span>
+            </div>
             <select id="language-select" title="Target Language">
-                {}
+                {lang_options}
             </select>
-        "#, lang_options)
+        "#,
+            lang_options = lang_options,
+            gemma_active = if is_gemma { "active" } else { "" },
+            fallback_active = if !is_gemma { "active" } else { "" }
+        )
     };
     
     format!(r#"<!DOCTYPE html>
@@ -402,6 +415,40 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             color: #00c8ff;
             background: rgba(0,200,255,0.15);
         }}
+        .model-toggle {{
+            display: flex;
+            gap: 2px;
+            background: rgba(30,30,30,0.8);
+            border-radius: 4px;
+            padding: 2px;
+        }}
+        .model-icon {{
+            font-size: 16px;
+            padding: 4px;
+            border-radius: 3px;
+            cursor: pointer;
+            color: #555;
+            transition: all 0.2s;
+        }}
+        .model-icon:hover {{
+            color: #aaa;
+        }}
+        .model-icon.active {{
+            color: #ff9633;
+            background: rgba(255,150,51,0.15);
+        }}
+        @keyframes model-switch-pulse {{
+            0% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(255,150,51,0.7); }}
+            25% {{ transform: scale(1.3); box-shadow: 0 0 15px 5px rgba(255,150,51,0.5); }}
+            50% {{ transform: scale(1.1); box-shadow: 0 0 10px 3px rgba(255,150,51,0.3); }}
+            75% {{ transform: scale(1.2); box-shadow: 0 0 12px 4px rgba(255,150,51,0.4); }}
+            100% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(255,150,51,0); }}
+        }}
+        .model-icon.switching {{
+            animation: model-switch-pulse 2s ease-out;
+            color: #ff9633 !important;
+            background: rgba(255,150,51,0.3) !important;
+        }}
     </style>
 </head>
 <body>
@@ -573,6 +620,27 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             }});
             langSelect.addEventListener('mousedown', function(e) {{ e.stopPropagation(); }});
         }}
+
+        // Model Toggle Switch Logic
+        const modelToggle = document.getElementById('model-toggle');
+        if (modelToggle) {{
+            const icons = modelToggle.querySelectorAll('.model-icon');
+            
+            icons.forEach(icon => {{
+                icon.addEventListener('click', (e) => {{
+                    e.stopPropagation();
+                    e.preventDefault();
+                    
+                    // Update UI - toggle active class
+                    icons.forEach(i => i.classList.remove('active'));
+                    icon.classList.add('active');
+                    
+                    // Send IPC
+                    const val = icon.getAttribute('data-value');
+                    window.ipc.postMessage('translationModel:' + val);
+                }});
+            }});
+        }}
         
         // Handle resize to keep text at bottom
         let lastWidth = viewport.clientWidth;
@@ -703,6 +771,30 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         }}
         
         window.updateVolume = updateVolume;
+        
+        // Model switch animation (called when 429 fallback switches models)
+        function switchModel(isGemma) {{
+            const modelToggle = document.getElementById('model-toggle');
+            if (!modelToggle) return;
+            
+            const icons = modelToggle.querySelectorAll('.model-icon');
+            icons.forEach(icon => {{
+                const val = icon.getAttribute('data-value');
+                const shouldBeActive = (isGemma && val === 'google-gemma') || (!isGemma && val === 'groq-llama');
+                
+                // Update active state
+                icon.classList.remove('active');
+                if (shouldBeActive) {{
+                    icon.classList.add('active');
+                    // Add switching animation
+                    icon.classList.add('switching');
+                    // Remove animation class after it completes (2s)
+                    setTimeout(() => icon.classList.remove('switching'), 2000);
+                }}
+            }});
+        }}
+        
+        window.switchModel = switchModel;
     </script>
 </body>
 </html>"#)
@@ -744,12 +836,13 @@ pub fn show_realtime_overlay(preset_idx: usize) {
         });
         
         // Fetch config
-        let (font_size, config_audio_source, config_language, trans_size, transcription_size) = {
+        let (font_size, config_audio_source, config_language, config_translation_model, trans_size, transcription_size) = {
             let app = APP.lock().unwrap();
             (
                 app.config.realtime_font_size,
                 app.config.realtime_audio_source.clone(),
                 app.config.realtime_target_language.clone(),
+                app.config.realtime_translation_model.clone(),
                 app.config.realtime_translation_size,
                 app.config.realtime_transcription_size
             )
@@ -812,7 +905,7 @@ pub fn show_realtime_overlay(preset_idx: usize) {
         REALTIME_HWND = main_hwnd;
         
         // Create WebView for main overlay
-        create_realtime_webview(main_hwnd, false, &config_audio_source, &target_language, font_size);
+        create_realtime_webview(main_hwnd, false, &config_audio_source, &target_language, &config_translation_model, font_size);
         
         // --- Create Translation Overlay if needed ---
         let translation_hwnd = if has_translation {
@@ -848,7 +941,7 @@ pub fn show_realtime_overlay(preset_idx: usize) {
             );
             
             TRANSLATION_HWND = trans_hwnd;
-            create_realtime_webview(trans_hwnd, true, "mic", &target_language, font_size);
+            create_realtime_webview(trans_hwnd, true, "mic", &target_language, &config_translation_model, font_size);
             
             Some(trans_hwnd)
         } else {
@@ -887,7 +980,7 @@ pub fn show_realtime_overlay(preset_idx: usize) {
 
 
 
-fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str, current_language: &str, font_size: u32) {
+fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str, current_language: &str, translation_model: &str, font_size: u32) {
     let hwnd_key = hwnd.0 as isize;
     
     let mut rect = RECT::default();
@@ -903,7 +996,7 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
         LocaleText::get(&lang)
     };
     
-    let html = get_realtime_html(is_translation, audio_source, &languages, current_language, font_size, &locale_text);
+    let html = get_realtime_html(is_translation, audio_source, &languages, current_language, translation_model, font_size, &locale_text);
     let wrapper = HwndWrapper(hwnd);
     
     // Capture hwnd for the IPC handler closure
@@ -991,6 +1084,20 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
                     crate::config::save_config(&app.config);
                 }
                 LANGUAGE_CHANGE.store(true, Ordering::SeqCst);
+            } else if body.starts_with("translationModel:") {
+                // Translation model change - signal update
+                let model = body[17..].to_string();
+                if let Ok(mut new_model) = NEW_TRANSLATION_MODEL.lock() {
+                    *new_model = model.clone();
+                }
+                
+                // Save to config
+                {
+                    let mut app = APP.lock().unwrap();
+                    app.config.realtime_translation_model = model;
+                    crate::config::save_config(&app.config);
+                }
+                TRANSLATION_MODEL_CHANGE.store(true, Ordering::SeqCst);
             } else if body.starts_with("resize:") {
                 // Resize window by delta
                 let coords = &body[7..];
@@ -1187,6 +1294,20 @@ unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam: WPA
                 }
             };
             update_webview_text(hwnd, &old_text, &new_text);
+            LRESULT(0)
+        }
+        WM_MODEL_SWITCH => {
+            // Animate the model switch in the UI
+            // WPARAM: 1 = google-gemma, 0 = groq-llama
+            let is_gemma = wparam.0 == 1;
+            let hwnd_key = hwnd.0 as isize;
+            let script = format!("if(window.switchModel) window.switchModel({});", is_gemma);
+            
+            REALTIME_WEBVIEWS.with(|wvs| {
+                if let Some(webview) = wvs.borrow().get(&hwnd_key) {
+                    let _ = webview.evaluate_script(&script);
+                }
+            });
             LRESULT(0)
         }
         WM_SIZE => {
