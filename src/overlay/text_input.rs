@@ -145,24 +145,24 @@ fn get_editor_css() -> &'static str {
         z-index: 10;
     }
     
-    /* Floating Mic Button */
+    /* Floating Mic Button - Solid cyan aesthetic */
     .mic-btn {
         width: 44px;
         height: 44px;
         border-radius: 50%;
-        border: none;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: 1px solid rgba(0, 200, 255, 0.3);
+        background: rgba(30, 30, 30, 0.9);
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
         transition: all 0.2s ease;
     }
     
     .mic-btn:hover {
-        transform: scale(1.08);
-        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+        background: rgba(0, 200, 255, 0.15);
+        border-color: #00c8ff;
+        box-shadow: 0 0 12px rgba(0, 200, 255, 0.4);
     }
     
     .mic-btn:active {
@@ -172,27 +172,27 @@ fn get_editor_css() -> &'static str {
     .mic-btn svg {
         width: 22px;
         height: 22px;
-        fill: white;
+        fill: #00c8ff;
     }
     
-    /* Send Button */
+    /* Send Button - Solid green/teal aesthetic */
     .send-btn {
         width: 44px;
         height: 44px;
         border-radius: 50%;
-        border: none;
-        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        border: 1px solid rgba(79, 195, 247, 0.3);
+        background: rgba(30, 30, 30, 0.9);
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 2px 8px rgba(56, 239, 125, 0.4);
         transition: all 0.2s ease;
     }
     
     .send-btn:hover {
-        transform: scale(1.08);
-        box-shadow: 0 4px 12px rgba(56, 239, 125, 0.5);
+        background: rgba(79, 195, 247, 0.15);
+        border-color: #4fc3f7;
+        box-shadow: 0 0 12px rgba(79, 195, 247, 0.4);
     }
     
     .send-btn:active {
@@ -202,7 +202,7 @@ fn get_editor_css() -> &'static str {
     .send-btn svg {
         width: 22px;
         height: 22px;
-        fill: white;
+        fill: #4fc3f7;
     }
     "#
 }

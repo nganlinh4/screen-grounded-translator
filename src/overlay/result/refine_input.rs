@@ -140,25 +140,25 @@ const REFINE_CSS: &str = r#"
         box-shadow: 0 0 0 1px #4fc3f7;
     }
     
-    /* Mic Button */
+    /* Mic Button - Solid cyan aesthetic */
     .mic-btn {
         width: 28px;
         height: 28px;
         border-radius: 50%;
-        border: none;
+        border: 1px solid rgba(0, 200, 255, 0.3);
         margin-left: 8px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: rgba(30, 30, 30, 0.9);
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 2px 6px rgba(102, 126, 234, 0.4);
         transition: all 0.15s ease;
     }
     
     .mic-btn:hover {
-        transform: scale(1.08);
-        box-shadow: 0 3px 10px rgba(102, 126, 234, 0.5);
+        background: rgba(0, 200, 255, 0.15);
+        border-color: #00c8ff;
+        box-shadow: 0 0 8px rgba(0, 200, 255, 0.4);
     }
     
     .mic-btn:active {
@@ -168,28 +168,28 @@ const REFINE_CSS: &str = r#"
     .mic-btn svg {
         width: 14px;
         height: 14px;
-        fill: white;
+        fill: #00c8ff;
     }
     
-    /* Send Button */
+    /* Send Button - Solid teal aesthetic */
     .send-btn {
         width: 28px;
         height: 28px;
         border-radius: 50%;
-        border: none;
+        border: 1px solid rgba(79, 195, 247, 0.3);
         margin-left: 6px;
-        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        background: rgba(30, 30, 30, 0.9);
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 2px 6px rgba(56, 239, 125, 0.4);
         transition: all 0.15s ease;
     }
     
     .send-btn:hover {
-        transform: scale(1.08);
-        box-shadow: 0 3px 10px rgba(56, 239, 125, 0.5);
+        background: rgba(79, 195, 247, 0.15);
+        border-color: #4fc3f7;
+        box-shadow: 0 0 8px rgba(79, 195, 247, 0.4);
     }
     
     .send-btn:active {
@@ -199,7 +199,7 @@ const REFINE_CSS: &str = r#"
     .send-btn svg {
         width: 14px;
         height: 14px;
-        fill: white;
+        fill: #4fc3f7;
     }
     
     .hint {

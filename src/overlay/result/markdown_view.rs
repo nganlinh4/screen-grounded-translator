@@ -126,11 +126,21 @@ unsafe extern "system" fn warmup_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+/// Google Fonts link for Google Sans Flex with rounded aesthetics
+const GOOGLE_FONTS_LINK: &str = r#"
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,slnt,wdth,wght,ROND@6..144,-10..0,25..151,100..1000,100&display=swap" as="style" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,slnt,wdth,wght,ROND@6..144,-10..0,25..151,100..1000,100&display=swap" />
+"#;
+
 /// CSS styling for the markdown content
 const MARKDOWN_CSS: &str = r#"
     * { box-sizing: border-box; }
     body { 
-        font-family: 'Segoe UI', -apple-system, sans-serif;
+        font-family: 'Google Sans Flex', 'Segoe UI', -apple-system, sans-serif;
+        font-optical-sizing: auto;
+        font-variation-settings: 'wght' 400, 'wdth' 100, 'slnt' 0, 'ROND' 100;
         font-size: 14px;
         line-height: 1.6;
         background: #1a1a1a;
@@ -142,11 +152,40 @@ const MARKDOWN_CSS: &str = r#"
         word-wrap: break-word;
     }
     body > *:first-child { margin-top: 0; }
-    h1 { font-size: 1.8em; color: #4fc3f7; border-bottom: 1px solid #333; padding-bottom: 8px; margin-top: 0; }
-    h2 { font-size: 1.5em; color: #81d4fa; border-bottom: 1px solid #2a2a2a; padding-bottom: 6px; margin-top: 0.5em; }
-    h3 { font-size: 1.2em; color: #b3e5fc; margin-top: 0.5em; }
-    h4, h5, h6 { color: #e1f5fe; margin-top: 0.5em; }
+    h1 { 
+        font-size: 1.8em; 
+        color: #4fc3f7; 
+        border-bottom: 1px solid #333; 
+        padding-bottom: 8px; 
+        margin-top: 0;
+        font-variation-settings: 'wght' 600, 'wdth' 100, 'slnt' 0, 'ROND' 100;
+    }
+    h2 { 
+        font-size: 1.5em; 
+        color: #81d4fa; 
+        border-bottom: 1px solid #2a2a2a; 
+        padding-bottom: 6px; 
+        margin-top: 0.5em;
+        font-variation-settings: 'wght' 550, 'wdth' 100, 'slnt' 0, 'ROND' 100;
+    }
+    h3 { 
+        font-size: 1.2em; 
+        color: #b3e5fc; 
+        margin-top: 0.5em;
+        font-variation-settings: 'wght' 500, 'wdth' 100, 'slnt' 0, 'ROND' 100;
+    }
+    h4, h5, h6 { 
+        color: #e1f5fe; 
+        margin-top: 0.5em;
+        font-variation-settings: 'wght' 500, 'wdth' 100, 'slnt' 0, 'ROND' 100;
+    }
     p { margin: 0.5em 0; }
+    strong, b {
+        font-variation-settings: 'wght' 600, 'wdth' 100, 'slnt' 0, 'ROND' 100;
+    }
+    em, i {
+        font-variation-settings: 'wght' 400, 'wdth' 100, 'slnt' -10, 'ROND' 100;
+    }
     code { 
         font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
         background: #2d2d2d; 
@@ -177,6 +216,7 @@ const MARKDOWN_CSS: &str = r#"
         background: #1a1a1a;
         padding: 8px 16px;
         border-radius: 0 8px 8px 0;
+        font-variation-settings: 'wght' 300, 'wdth' 100, 'slnt' 0, 'ROND' 100;
     }
     ul, ol { padding-left: 24px; margin: 0.8em 0; }
     li { margin: 4px 0; }
@@ -190,7 +230,11 @@ const MARKDOWN_CSS: &str = r#"
         padding: 8px 12px; 
         text-align: left;
     }
-    th { background: #252525; color: #81d4fa; }
+    th { 
+        background: #252525; 
+        color: #81d4fa;
+        font-variation-settings: 'wght' 600, 'wdth' 100, 'slnt' 0, 'ROND' 100;
+    }
     tr:nth-child(even) { background: #1a1a1a; }
     hr { border: none; border-top: 1px solid #444; margin: 1.5em 0; }
     img { max-width: 100%; border-radius: 8px; }
@@ -351,6 +395,7 @@ pub fn markdown_to_html(markdown: &str, is_refining: bool, preset_prompt: &str, 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {}
     <style>
         {} 
         body {{ 
@@ -369,6 +414,7 @@ pub fn markdown_to_html(markdown: &str, is_refining: bool, preset_prompt: &str, 
 </head>
 <body>{}</body>
 </html>"#,
+            GOOGLE_FONTS_LINK,
             MARKDOWN_CSS,
             quote
         );
@@ -396,10 +442,12 @@ pub fn markdown_to_html(markdown: &str, is_refining: bool, preset_prompt: &str, 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {}
     <style>{}</style>
 </head>
 <body>{}</body>
 </html>"#,
+        GOOGLE_FONTS_LINK,
         MARKDOWN_CSS,
         html_output
     )
