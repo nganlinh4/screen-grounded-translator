@@ -18,9 +18,11 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use crate::config::Preset;
 use crate::APP;
 use crate::api::client::UREQ_AGENT;
+use urlencoding;
+use isolang;
 
 /// Interval for triggering translation (milliseconds)
-const TRANSLATION_INTERVAL_MS: u64 = 3000;
+const TRANSLATION_INTERVAL_MS: u64 = 1500;
 
 /// Model for realtime audio transcription
 const REALTIME_MODEL: &str = "gemini-2.5-flash-native-audio-preview-12-2025";
@@ -181,14 +183,22 @@ impl RealtimeState {
             }
         }
 
-        // 2. Commit all EXCEPT the last one (The Safety Buffer)
-        // We need at least 2 matches to commit the first one. 
-        // If we only have 1 match, we hold it back to ensure it doesn't get duplicated next time.
-        let num_to_commit = if matches.len() > 1 {
-            matches.len() - 1
-        } else {
-            0
-        };
+        // 2. Decide how many to commit
+        let num_matches = matches.len();
+        let mut num_to_commit = 0;
+
+        if num_matches > 1 {
+            // Normal Robust Mode: Commit all except the last one
+            num_to_commit = num_matches - 1;
+        } else if num_matches == 1 {
+            // Pressure Valve Mode:
+            // If we only have 1 match, usually we wait. 
+            // BUT if the uncommitted text is long (> 100 chars), the start is likely stable.
+            // Force commit to keep the buffer clean.
+            if self.uncommitted_translation.len() > 100 {
+                num_to_commit = 1;
+            }
+        }
 
         if num_to_commit > 0 {
             // Get the boundary of the last sentence we are allowed to commit
@@ -1039,243 +1049,202 @@ fn run_translation_loop(
                     (groq, gemini, model, history)
                 };
                 
-                // Determine which API to use based on model selection
-                let is_google = translation_model == "google-gemma";
-                let (url, model_name, api_key) = if is_google {
-                    // Google AI API with Gemma
-                    (
-                        format!("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
-                        "gemma-3-27b-it".to_string(),
-                        gemini_key.clone()
-                    )
-                } else {
-                    // Default: Groq API with Llama
-                    (
-                        "https://api.groq.com/openai/v1/chat/completions".to_string(),
-                        "llama-3.1-8b-instant".to_string(),
-                        groq_key.clone()
-                    )
-                };
-                
-                // Build messages array
-                let mut messages: Vec<serde_json::Value> = Vec::new();
-                
-                let system_instruction = format!(
-                    "You are a professional translator. Translate text to {} while maintaining consistent style, tone, and atmosphere. Output ONLY the translation, nothing else.",
-                    target_language
-                );
-                
-                if is_google {
-                    // Google Gemma: No system role (or problematic in beta), include instruction in first user message
-                    // Add history first (without system prompt)
-                    messages.extend(history_messages.clone());
-                    
-                    // Add current translation request with instruction embedded
-                    messages.push(serde_json::json!({
-                        "role": "user",
-                        "content": format!("{}\n\nTranslate to {}:\n{}", system_instruction, target_language, chunk)
-                    }));
-                } else {
-                    // Groq Llama: Supports system role
-                    messages.push(serde_json::json!({
-                        "role": "system",
-                        "content": system_instruction
-                    }));
-                    
-                    // Add history (last 3 translation pairs for context)
-                    messages.extend(history_messages.clone());
-                    
-                    // Add current translation request
-                    messages.push(serde_json::json!({
-                        "role": "user",
-                        "content": format!("Translate to {}:\n{}", target_language, chunk)
-                    }));
-                }
-                
-                if !api_key.is_empty() {
-                    let payload = serde_json::json!({
-                        "model": model_name,
-                        "messages": messages,
-                        "stream": true,
-                        "max_tokens": 512
-                    });
-                    
-                    match UREQ_AGENT.post(&url)
-                        .set("Authorization", &format!("Bearer {}", api_key))
-                        .set("Content-Type", "application/json")
-                        .send_json(payload)
-                    {
-                        Ok(resp) => {
-                            let reader = std::io::BufReader::new(resp.into_reader());
-                            let mut full_translation = String::new();
-                            
-                            for line in reader.lines().flatten() {
-                                if stop_signal.load(Ordering::Relaxed) { break; }
-                                
-                                if line.starts_with("data: ") {
-                                    let json_str = &line["data: ".len()..];
-                                    if json_str.trim() == "[DONE]" { break; }
-                                    
-                                    if let Ok(chunk_resp) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                        if let Some(choices) = chunk_resp.get("choices").and_then(|c| c.as_array()) {
-                                            if let Some(first) = choices.first() {
-                                                if let Some(delta) = first.get("delta") {
-                                                    if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                                                        full_translation.push_str(content);
-                                                        
-                                                        // Update display in real-time
-                                                        // Uncommitted was already cleared before API call,
-                                                        // so just append each streaming chunk
-                                                        let display_text = if let Ok(mut s) = state.lock() {
-                                                            s.append_translation(content);
-                                                            s.display_translation.clone()
-                                                        } else {
-                                                            String::new()
-                                                        };
+                // Determine current model strategy
+                let current_model = translation_model.as_str();
+                let mut primary_failed = false;
 
-                                                        if !display_text.is_empty() {
-                                                            update_translation_text(translation_hwnd, &display_text);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // After successful translation, commit any finished sentences
-                            if has_finished && !full_translation.is_empty() {
-                                if let Ok(mut s) = state.lock() {
-                                    // commit_finished_sentences now handles history internally
-                                    // using only the committed segments (prevents context poisoning)
-                                    s.commit_finished_sentences();
-                                }
-                            }
+                // --- 1. PRIMARY ATTEMPT ---
+                if current_model == "google-gtx" {
+                    // Strategy: Google GTX (Unlimited, No Key)
+                    if let Some(text) = translate_with_google_gtx(&chunk, &target_language) {
+                        if let Ok(mut s) = state.lock() {
+                            s.append_translation(&text);
+                            let display = s.display_translation.clone();
+                            update_translation_text(translation_hwnd, &display);
+                            if has_finished { s.commit_finished_sentences(); }
                         }
-                        Err(e) => {
-                            let error_str = e.to_string();
-                            
-                            // Check if it's a rate limit error (429)
-                            if error_str.contains("429") {
-                                // Switch to the OTHER model and retry
-                                let alternate_model = if is_google { "groq-llama" } else { "google-gemma" };
-                                let alt_is_google = alternate_model == "google-gemma";
-                                
-                                // Get the alternate API key
-                                let alt_api_key = if alt_is_google { gemini_key.clone() } else { groq_key.clone() };
-                                
-                                if !alt_api_key.is_empty() {
-                                    // Update config to persist the switch
-                                    {
-                                        let mut app = APP.lock().unwrap();
-                                        app.config.realtime_translation_model = alternate_model.to_string();
-                                        crate::config::save_config(&app.config);
-                                    }
-                                    
-                                    // Signal UI to animate the model switch
-                                    unsafe {
-                                        // WPARAM: 1 = google-gemma, 0 = groq-llama
-                                        let model_flag = if alt_is_google { 1 } else { 0 };
-                                        let _ = PostMessageW(translation_hwnd, WM_MODEL_SWITCH, WPARAM(model_flag), LPARAM(0));
-                                    }
-                                    
-                                    // Build alternate request
-                                    let (alt_url, alt_model_name) = if alt_is_google {
-                                        (
-                                            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
-                                            "gemma-3-27b-it".to_string()
-                                        )
-                                    } else {
-                                        (
-                                            "https://api.groq.com/openai/v1/chat/completions".to_string(),
-                                            "llama-3.1-8b-instant".to_string()
-                                        )
-                                    };
-                                    
-                                    // Rebuild messages for alternate model
-                                    let mut alt_messages: Vec<serde_json::Value> = Vec::new();
-                                    let alt_system = format!(
-                                        "You are a professional translator. Translate text to {} while maintaining consistent style, tone, and atmosphere. Output ONLY the translation, nothing else.",
-                                        target_language
-                                    );
-                                    
-                                    if alt_is_google {
-                                        alt_messages.extend(history_messages.clone());
-                                        alt_messages.push(serde_json::json!({
-                                            "role": "user",
-                                            "content": format!("{}\n\nTranslate to {}:\n{}", alt_system, target_language, chunk)
-                                        }));
-                                    } else {
-                                        alt_messages.push(serde_json::json!({
-                                            "role": "system",
-                                            "content": alt_system
-                                        }));
-                                        alt_messages.extend(history_messages.clone());
-                                        alt_messages.push(serde_json::json!({
-                                            "role": "user",
-                                            "content": format!("Translate to {}:\n{}", target_language, chunk)
-                                        }));
-                                    }
-                                    
-                                    let alt_payload = serde_json::json!({
-                                        "model": alt_model_name,
-                                        "messages": alt_messages,
-                                        "stream": true,
-                                        "max_tokens": 512
-                                    });
-                                    
-                                    // Retry with alternate model
-                                    if let Ok(alt_resp) = UREQ_AGENT.post(&alt_url)
-                                        .set("Authorization", &format!("Bearer {}", alt_api_key))
-                                        .set("Content-Type", "application/json")
-                                        .send_json(alt_payload)
-                                    {
-                                        let alt_reader = std::io::BufReader::new(alt_resp.into_reader());
-                                        let mut retry_translation = String::new();
-                                        
-                                        for line in alt_reader.lines().flatten() {
-                                            if stop_signal.load(Ordering::Relaxed) { break; }
-                                            
-                                            if line.starts_with("data: ") {
-                                                let json_str = &line["data: ".len()..];
-                                                if json_str.trim() == "[DONE]" { break; }
-                                                
-                                                if let Ok(chunk_resp) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                                    if let Some(choices) = chunk_resp.get("choices").and_then(|c| c.as_array()) {
-                                                        if let Some(first) = choices.first() {
-                                                            if let Some(delta) = first.get("delta") {
-                                                                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                                                                    retry_translation.push_str(content);
-                                                                    
-                                                                    // Uncommitted was already cleared at start of translation cycle
-                                                                    if let Ok(mut s) = state.lock() {
-                                                                        s.append_translation(content);
-                                                                        let display = s.display_translation.clone();
-                                                                        update_translation_text(translation_hwnd, &display);
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        
-                                        // Commit if finished (history handled internally by commit_finished_sentences)
-                                        if has_finished && !retry_translation.is_empty() {
-                                            if let Ok(mut s) = state.lock() {
-                                                s.commit_finished_sentences();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // Other API errors - skip silently
-                        }
+                    } else {
+                        primary_failed = true;
                     }
                 } else {
-                    // No API key available
+                    // Strategy: LLM (Groq or Gemma)
+                    let is_google = current_model == "google-gemma";
+                    let (url, model_name, api_key) = if is_google {
+                        (
+                            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
+                            "gemma-3-27b-it".to_string(),
+                            gemini_key.clone()
+                        )
+                    } else {
+                        (
+                            "https://api.groq.com/openai/v1/chat/completions".to_string(),
+                            "llama-3.1-8b-instant".to_string(),
+                            groq_key.clone()
+                        )
+                    };
+
+                    // Construct messages
+                    let mut messages: Vec<serde_json::Value> = Vec::new();
+                    let system_instruction = format!(
+                        "You are a professional translator. Translate text to {} while maintaining consistent style, tone, and atmosphere. Output ONLY the translation, nothing else.",
+                        target_language
+                    );
+
+                    if is_google {
+                        // Google Gemma manual instruction embedding
+                        messages.extend(history_messages.clone());
+                        messages.push(serde_json::json!({
+                            "role": "user",
+                            "content": format!("{}\n\nTranslate to {}:\n{}", system_instruction, target_language, chunk)
+                        }));
+                    } else {
+                        // Groq/Others standard system role
+                        messages.push(serde_json::json!({ "role": "system", "content": system_instruction }));
+                        messages.extend(history_messages.clone());
+                        messages.push(serde_json::json!({
+                            "role": "user",
+                            "content": format!("Translate to {}:\n{}", target_language, chunk)
+                        }));
+                    }
+
+                    if !api_key.is_empty() {
+                        let payload = serde_json::json!({
+                            "model": model_name,
+                            "messages": messages,
+                            "stream": true,
+                            "max_tokens": 512
+                        });
+
+                        match UREQ_AGENT.post(&url)
+                            .set("Authorization", &format!("Bearer {}", api_key))
+                            .set("Content-Type", "application/json")
+                            .send_json(payload) 
+                        {
+                            Ok(resp) => {
+                                // Streaming Loop
+                                let reader = std::io::BufReader::new(resp.into_reader());
+                                let mut full_translation = String::new();
+                                for line in reader.lines().flatten() {
+                                    if stop_signal.load(Ordering::Relaxed) { break; }
+                                    if line.starts_with("data: ") {
+                                        let json_str = &line["data: ".len()..];
+                                        if json_str.trim() == "[DONE]" { break; }
+                                        if let Ok(chunk_resp) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                            if let Some(content) = chunk_resp.get("choices").and_then(|c| c.as_array())
+                                                .and_then(|a| a.first()).and_then(|f| f.get("delta"))
+                                                .and_then(|d| d.get("content")).and_then(|t| t.as_str()) 
+                                            {
+                                                full_translation.push_str(content);
+                                                if let Ok(mut s) = state.lock() {
+                                                    s.append_translation(content);
+                                                    let display = s.display_translation.clone();
+                                                    update_translation_text(translation_hwnd, &display);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if has_finished && !full_translation.is_empty() {
+                                    if let Ok(mut s) = state.lock() { s.commit_finished_sentences(); }
+                                }
+                            }
+                            Err(_) => { primary_failed = true; }
+                        }
+                    } else {
+                        primary_failed = true; // No key
+                    }
+                }
+
+                // --- 2. RETRY WITH RANDOM FALLBACK ---
+                if primary_failed {
+                    // Fallback Logic: Groq<->GTX, Gemini->Random
+                    let alt_model = if current_model == "groq-llama" {
+                        "google-gtx"
+                    } else if current_model == "google-gtx" {
+                        "groq-llama"
+                    } else {
+                        let pool = ["groq-llama", "google-gtx"];
+                        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+                        pool[(nanos as usize) % pool.len()]
+                    };
+                    
+                    if true {
+
+                        // Config update & UI Signal
+                        {
+                            let mut app = APP.lock().unwrap();
+                            app.config.realtime_translation_model = alt_model.to_string();
+                            crate::config::save_config(&app.config);
+                        }
+                        unsafe {
+                            let flag = match alt_model { "google-gemma" => 1, "google-gtx" => 2, _ => 0 };
+                            let _ = PostMessageW(translation_hwnd, WM_MODEL_SWITCH, WPARAM(flag), LPARAM(0));
+                        }
+
+                        // Execute Retry
+                        if alt_model == "google-gtx" {
+                            if let Some(text) = translate_with_google_gtx(&chunk, &target_language) {
+                                if let Ok(mut s) = state.lock() {
+                                    s.append_translation(&text);
+                                    let display = s.display_translation.clone();
+                                    update_translation_text(translation_hwnd, &display);
+                                    if has_finished { s.commit_finished_sentences(); }
+                                }
+                            }
+                        } else {
+                            // Retry with LLM (Groq/Gemma)
+                            let alt_is_google = alt_model == "google-gemma";
+                            let (alt_url, alt_model_name, alt_key) = if alt_is_google {
+                                ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(), "gemma-3-27b-it".to_string(), gemini_key.clone())
+                            } else {
+                                ("https://api.groq.com/openai/v1/chat/completions".to_string(), "llama-3.1-8b-instant".to_string(), groq_key.clone())
+                            };
+
+                            if !alt_key.is_empty() {
+                                let mut alt_msgs = Vec::new();
+                                let alt_sys = format!("You are a professional translator. Translate text to {} while maintaining consistent style, tone, and atmosphere. Output ONLY the translation, nothing else.", target_language);
+                                
+                                if alt_is_google {
+                                    alt_msgs.extend(history_messages.clone());
+                                    alt_msgs.push(serde_json::json!({
+                                        "role": "user", 
+                                        "content": format!("{}\n\nTranslate to {}:\n{}", alt_sys, target_language, chunk)
+                                    }));
+                                } else {
+                                    alt_msgs.push(serde_json::json!({ "role": "system", "content": alt_sys }));
+                                    alt_msgs.extend(history_messages.clone());
+                                    alt_msgs.push(serde_json::json!({ "role": "user", "content": format!("Translate to {}:\n{}", target_language, chunk) }));
+                                }
+
+                                let payload = serde_json::json!({ "model": alt_model_name, "messages": alt_msgs, "stream": true, "max_tokens": 512 });
+                                
+                                if let Ok(resp) = UREQ_AGENT.post(&alt_url).set("Authorization", &format!("Bearer {}", alt_key)).set("Content-Type", "application/json").send_json(payload) {
+                                    let reader = std::io::BufReader::new(resp.into_reader());
+                                    let mut full_t = String::new();
+                                    for line in reader.lines().flatten() {
+                                        if stop_signal.load(Ordering::Relaxed) { break; }
+                                        if line.starts_with("data: ") {
+                                            let json_str = &line["data: ".len()..];
+                                            if json_str.trim() == "[DONE]" { break; }
+                                            if let Ok(c) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                                if let Some(txt) = c.get("choices").and_then(|a| a.as_array()).and_then(|v| v.first()).and_then(|f| f.get("delta")).and_then(|d| d.get("content")).and_then(|s| s.as_str()) {
+                                                    full_t.push_str(txt);
+                                                    if let Ok(mut s) = state.lock() {
+                                                        s.append_translation(txt);
+                                                        let d = s.display_translation.clone();
+                                                        update_translation_text(translation_hwnd, &d);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if has_finished && !full_t.is_empty() {
+                                        if let Ok(mut s) = state.lock() { s.commit_finished_sentences(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             
@@ -1336,50 +1305,45 @@ pub fn get_translation_display_text() -> String {
     TRANSLATION_DISPLAY_TEXT.lock().map(|s| s.clone()).unwrap_or_default()
 }
 
-/// Free translation fallback for when primary APIs hit rate limits
-/// Uses MyMemory API - free, no API key needed, 1000 words/day limit
-fn translate_with_libretranslate(text: &str, target_lang: &str) -> Option<String> {
-    // Convert full language name to ISO 639-1 code using isolang
+/// Unofficial Google Translate (GTX) fallback
+/// "Unlimited" for personal desktop use (IP-based rate limits are very high)
+fn translate_with_google_gtx(text: &str, target_lang: &str) -> Option<String> {
+    // Convert full language name to ISO code
     let target_code = isolang::Language::from_name(target_lang)
         .and_then(|lang| lang.to_639_1())
         .map(|code| code.to_string())
-        .unwrap_or_else(|| {
-            // Fallback for common variations
-            match target_lang.to_lowercase().as_str() {
-                "chinese" | "chinese (simplified)" => "zh-CN".to_string(),
-                "chinese (traditional)" => "zh-TW".to_string(),
-                _ => "en".to_string() // Default to English
-            }
-        });
-    
-    // Use MyMemory API - free, no API key required
-    // Format: https://api.mymemory.translated.net/get?q=text&langpair=auto|target
+        .unwrap_or_else(|| "en".to_string());
+
     let encoded_text = urlencoding::encode(text);
     let url = format!(
-        "https://api.mymemory.translated.net/get?q={}&langpair=autodetect|{}",
-        encoded_text, target_code
+        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={}&dt=t&q={}",
+        target_code, encoded_text
     );
-    
+
     match UREQ_AGENT.get(&url)
+        .set("User-Agent", "Mozilla/5.0") // Mimic browser
         .timeout(std::time::Duration::from_secs(10))
         .call()
     {
         Ok(resp) => {
             if let Ok(json) = resp.into_json::<serde_json::Value>() {
-                // MyMemory returns: { "responseData": { "translatedText": "..." } }
-                if let Some(translated) = json
-                    .get("responseData")
-                    .and_then(|d| d.get("translatedText"))
-                    .and_then(|t| t.as_str())
-                {
-                    return Some(translated.to_string());
+                // Response is [[["Translated","Source",...], ...], ...]
+                if let Some(sentences) = json.get(0).and_then(|v| v.as_array()) {
+                    let mut full_text = String::new();
+                    for sentence_node in sentences {
+                        if let Some(segment) = sentence_node.get(0).and_then(|s| s.as_str()) {
+                            full_text.push_str(segment);
+                        }
+                    }
+                    if !full_text.is_empty() {
+                        return Some(full_text);
+                    }
                 }
             }
         }
-        Err(_) => {
-            // API failed silently
-        }
+        Err(_) => {}
     }
-    
     None
 }
+
+

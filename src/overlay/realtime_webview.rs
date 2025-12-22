@@ -127,19 +127,24 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         )
     } else {
         // Language selector and model toggle for translation window
-        let is_gemma = translation_model == "google-gemma";
+        let gemma_active = if translation_model == "google-gemma" { "active" } else { "" };
+        let groq_active = if translation_model == "groq-llama" { "active" } else { "" };
+        let gtx_active = if translation_model == "google-gtx" { "active" } else { "" };
+
         format!(r#"
             <div class="btn-group">
-                <span class="material-symbols-rounded model-icon {gemma_active}" id="model-toggle" data-value="google-gemma" title="AI Translation (Gemma)">auto_awesome</span>
-                <span class="material-symbols-rounded model-icon {fallback_active}" data-value="groq-llama" title="Fast Translation (Groq)">speed</span>
+                <span class="material-symbols-rounded model-icon {gemma_active}" data-value="google-gemma" title="AI Translation (Gemma)">auto_awesome</span>
+                <span class="material-symbols-rounded model-icon {groq_active}" data-value="groq-llama" title="Fast Translation (Groq)">speed</span>
+                <span class="material-symbols-rounded model-icon {gtx_active}" data-value="google-gtx" title="Unlimited Translation (Google)">language</span>
             </div>
             <select id="language-select" title="Target Language">
                 {lang_options}
             </select>
         "#,
             lang_options = lang_options,
-            gemma_active = if is_gemma { "active" } else { "" },
-            fallback_active = if !is_gemma { "active" } else { "" }
+            gemma_active = gemma_active,
+            groq_active = groq_active,
+            gtx_active = gtx_active
         )
     };
     
@@ -812,13 +817,13 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         window.updateVolume = updateVolume;
         
         // Model switch animation (called when 429 fallback switches models)
-        function switchModel(isGemma) {{
+        function switchModel(modelName) {{
             const icons = document.querySelectorAll('.model-icon');
             if (!icons.length) return;
             
             icons.forEach(icon => {{
                 const val = icon.getAttribute('data-value');
-                const shouldBeActive = (isGemma && val === 'google-gemma') || (!isGemma && val === 'groq-llama');
+                const shouldBeActive = val === modelName;
                 
                 // Update active state
                 icon.classList.remove('active');
@@ -1347,10 +1352,14 @@ unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam: WPA
         }
         WM_MODEL_SWITCH => {
             // Animate the model switch in the UI
-            // WPARAM: 1 = google-gemma, 0 = groq-llama
-            let is_gemma = wparam.0 == 1;
+            // WPARAM: 0 = groq-llama, 1 = google-gemma, 2 = google-gtx
+            let model_name = match wparam.0 {
+                1 => "google-gemma",
+                2 => "google-gtx",
+                _ => "groq-llama"
+            };
             let hwnd_key = hwnd.0 as isize;
-            let script = format!("if(window.switchModel) window.switchModel({});", is_gemma);
+            let script = format!("if(window.switchModel) window.switchModel('{}');", model_name);
             
             REALTIME_WEBVIEWS.with(|wvs| {
                 if let Some(webview) = wvs.borrow().get(&hwnd_key) {
