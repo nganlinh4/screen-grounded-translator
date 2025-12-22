@@ -152,16 +152,19 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
 <html>
 <head>
     <meta charset="UTF-8">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,slnt,wdth,wght,ROND@6..144,-10..0,25..151,100..1000,100&display=swap" />
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         html, body {{
             height: 100%;
             overflow: hidden;
             background: rgba(26, 26, 26, 0.95);
-            font-family: 'Segoe UI', sans-serif;
+            font-family: 'Google Sans Flex', sans-serif;
             color: #fff;
-            border-radius: 12px;
+            border-radius: 8px;
             border: 1px solid {glow_color}40;
             box-shadow: 0 0 20px {glow_color}30;
         }}
@@ -332,6 +335,8 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             color: #ff9633;
         }}
         select {{
+            font-family: 'Google Sans Flex', sans-serif;
+            font-variation-settings: 'wght' 600, 'ROND' 100;
             background: rgba(30, 30, 30, 0.9);
             color: #ccc;
             border: 1px solid rgba(255,255,255,0.15);
@@ -357,6 +362,7 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             box-shadow: 0 0 6px {glow_color}30;
         }}
         select option {{
+            font-family: 'Google Sans Flex', sans-serif;
             background: #2a2a2a;
             color: #ccc;
             padding: 4px 8px;
@@ -390,10 +396,18 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             padding-bottom: 5px;
         }}
         .old {{
-            color: #888;
+            font-family: 'Google Sans Flex', sans-serif !important;
+            font-optical-sizing: auto;
+            color: #9aa0a6;
+            font-variation-settings: 'wght' 300, 'wdth' 100, 'slnt' 0, 'GRAD' 0, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
+            transition: all 0.8s cubic-bezier(0.2, 0.0, 0.2, 1);
         }}
         .new {{
-            color: #fff;
+            font-family: 'Google Sans Flex', sans-serif !important;
+            font-optical-sizing: auto;
+            color: #ffffff;
+            font-variation-settings: 'wght' 400, 'wdth' 98, 'slnt' 0, 'GRAD' 150, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
+            transition: all 0.5s cubic-bezier(0.2, 0.0, 0.2, 1);
         }}
         .placeholder {{
             color: #666;
@@ -728,12 +742,6 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             }}
         }}
         
-        function escapeHtml(text) {{
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }}
-        
         function updateText(oldText, newText) {{
             const hasContent = oldText || newText;
             
@@ -741,6 +749,7 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
                 content.innerHTML = '';
                 isFirstText = false;
                 minContentHeight = 0;
+                currentOldTextLength = 0;
             }}
             
             if (!hasContent) {{
@@ -751,42 +760,79 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
                 targetScrollTop = 0;
                 currentScrollTop = 0;
                 viewport.scrollTop = 0;
+                currentOldTextLength = 0;
                 return;
             }}
             
-            let html = '';
-            if (oldText) {{
-                html += '<span class="old">' + escapeHtml(oldText) + '</span>';
-                if (newText) html += ' ';
+            // Handle history rewrite or shrink (e.g. restart)
+            if (oldText.length < currentOldTextLength) {{
+                content.innerHTML = '';
+                if (oldText) {{
+                    const span = document.createElement('span');
+                    span.className = 'old';
+                    span.textContent = oldText;
+                    content.appendChild(span);
+                }}
+                currentOldTextLength = oldText.length;
             }}
+            
+            // 1. Handle Old Text Growth (Committing)
+            if (oldText.length > currentOldTextLength) {{
+                const committedText = oldText.substring(currentOldTextLength);
+                
+                // Find the existing 'new' span to promote
+                const newSpan = content.querySelector('.new');
+                
+                if (newSpan) {{
+                    // Promote the new span to old to trigger transition
+                    newSpan.className = 'old';
+                    newSpan.textContent = committedText; 
+                }} else {{
+                    // Fallback if no new span existed (rare)
+                    const span = document.createElement('span');
+                    span.className = 'old';
+                    span.textContent = committedText;
+                    content.appendChild(span);
+                }}
+                currentOldTextLength = oldText.length;
+            }}
+
+            // 2. Handle Current New Text
+            let newSpan = content.querySelector('.new');
+            
             if (newText) {{
-                html += '<span class="new">' + escapeHtml(newText) + '</span>';
+                if (!newSpan) {{
+                    newSpan = document.createElement('span');
+                    newSpan.className = 'new';
+                    content.appendChild(newSpan);
+                }}
+                if (newSpan.textContent !== newText) {{
+                    newSpan.textContent = newText;
+                }}
+            }} else {{
+                // Remove empty new span if it exists (e.g. after commit)
+                if (newSpan) newSpan.remove();
             }}
-            content.innerHTML = html;
             
+            // Scroll logic
             const naturalHeight = content.offsetHeight;
-            
             if (naturalHeight > minContentHeight) {{
                 minContentHeight = naturalHeight;
             }}
-            
             content.style.minHeight = minContentHeight + 'px';
-            
             const viewportHeight = viewport.offsetHeight;
-            
             if (minContentHeight > viewportHeight) {{
                 const maxScroll = minContentHeight - viewportHeight;
-                
                 if (maxScroll > targetScrollTop) {{
                     targetScrollTop = maxScroll;
                 }}
             }}
-            
             if (!animationFrame) {{
                 animationFrame = requestAnimationFrame(animateScroll);
             }}
         }}
-        
+
+        let currentOldTextLength = 0;
         window.updateText = updateText;
         
         // Volume visualizer with history buffer (like recording.rs)
@@ -1278,9 +1324,16 @@ unsafe extern "system" fn realtime_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM
                     // Everything after is "new" (current sentence)
                     let full = &state.full_transcript;
                     let pos = state.last_committed_pos.min(full.len());
-                    let old = &full[..pos];
-                    let new = &full[pos..];
-                    (old.trim().to_string(), new.trim().to_string())
+                    let old_raw = &full[..pos];
+                    let new_raw = &full[pos..];
+                    
+                    let old = old_raw.trim_end();
+                    let new = new_raw.trim_start();
+                    if !old.is_empty() && !new.is_empty() {
+                        (old.to_string(), format!(" {}", new))
+                    } else {
+                        (old.to_string(), new.to_string())
+                    }
                 } else {
                     (String::new(), String::new())
                 }
@@ -1339,10 +1392,13 @@ unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam: WPA
             // Get old (committed) and new (uncommitted) translation from state
             let (old_text, new_text) = {
                 if let Ok(state) = REALTIME_STATE.lock() {
-                    (
-                        state.committed_translation.clone(),
-                        state.uncommitted_translation.clone()
-                    )
+                    let old = state.committed_translation.trim_end();
+                    let new = state.uncommitted_translation.trim_start();
+                    if !old.is_empty() && !new.is_empty() {
+                        (old.to_string(), format!(" {}", new))
+                    } else {
+                        (old.to_string(), new.to_string())
+                    }
                 } else {
                     (String::new(), String::new())
                 }
