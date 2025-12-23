@@ -207,7 +207,21 @@ fn connect_tts_websocket(api_key: &str) -> Result<tungstenite::WebSocket<native_
 }
 
 /// Send TTS setup message - configures for audio output only, no input transcription
-fn send_tts_setup(socket: &mut tungstenite::WebSocket<native_tls::TlsStream<TcpStream>>) -> Result<()> {
+fn send_tts_setup(socket: &mut tungstenite::WebSocket<native_tls::TlsStream<TcpStream>>, voice_name: &str, speed: &str) -> Result<()> {
+    
+    // System instruction based on speed
+
+
+    // System instruction based on speed
+    let mut system_text = "You are a text-to-speech reader. Your ONLY job is to read the user's text out loud, exactly as written, word for word. Do NOT respond conversationally. Do NOT add commentary. Do NOT ask questions. ".to_string();
+    
+    match speed {
+        "Slow" => system_text.push_str("Speak slowly, clearly, and with deliberate pacing. "),
+        "Fast" => system_text.push_str("Speak quickly, efficiently, and with a brisk pace. "),
+        _ => system_text.push_str("Simply read the provided text aloud naturally and clearly. "),
+    }
+    system_text.push_str("Start reading immediately.");
+
     let setup = serde_json::json!({
         "setup": {
             "model": format!("models/{}", TTS_MODEL),
@@ -216,7 +230,7 @@ fn send_tts_setup(socket: &mut tungstenite::WebSocket<native_tls::TlsStream<TcpS
                 "speechConfig": {
                     "voiceConfig": {
                         "prebuiltVoiceConfig": {
-                            "voiceName": "Aoede"
+                            "voiceName": voice_name
                         }
                     }
                 },
@@ -226,7 +240,7 @@ fn send_tts_setup(socket: &mut tungstenite::WebSocket<native_tls::TlsStream<TcpS
             },
             "systemInstruction": {
                 "parts": [{
-                    "text": "You are a text-to-speech reader. Your ONLY job is to read the user's text out loud, exactly as written, word for word. Do NOT respond conversationally. Do NOT add commentary. Do NOT ask questions. Simply read the provided text aloud naturally and clearly. Start reading immediately."
+                    "text": system_text
                 }]
             }
         }
@@ -361,8 +375,14 @@ fn run_tts_worker() {
             }
         };
         
+        // Read config for setup
+        let (current_voice, current_speed) = {
+             let app = APP.lock().unwrap();
+             (app.config.tts_voice.clone(), app.config.tts_speed.clone())
+        };
+
         // Send setup
-        if let Err(e) = send_tts_setup(&mut socket) {
+        if let Err(e) = send_tts_setup(&mut socket, &current_voice, &current_speed) {
             eprintln!("TTS: Failed to send setup: {}", e);
             let _ = socket.close(None);
             std::thread::sleep(Duration::from_secs(2));
@@ -456,6 +476,19 @@ fn run_tts_worker() {
             }
             
             if let Some(req) = request {
+                // Check if config changed
+                let (new_voice, new_speed) = {
+                    let app = APP.lock().unwrap();
+                    (app.config.tts_voice.clone(), app.config.tts_speed.clone())
+                };
+
+                if new_voice != current_voice || new_speed != current_speed {
+                   // Config changed - force reconnect
+                   // Push request back to front of queue so it's processed after reconnect
+                   manager.request_queue.lock().unwrap().push_front(req); 
+                   break 'connection_loop;
+                }
+
                 manager.stop_current.store(false, Ordering::SeqCst);
                 manager.current_request_id.store(req.id, Ordering::SeqCst);
                 

@@ -236,7 +236,16 @@ pub struct Config {
     pub ollama_vision_model: String,
     #[serde(default)]
     pub ollama_text_model: String,
+
+    // --- TTS Settings ---
+    #[serde(default = "default_tts_voice")]
+    pub tts_voice: String,
+    #[serde(default = "default_tts_speed")]
+    pub tts_speed: String, // "Normal", "Slow", "Fast"
 }
+
+fn default_tts_voice() -> String { "Aoede".to_string() }
+fn default_tts_speed() -> String { "Normal".to_string() }
 
 fn default_realtime_translation_model() -> String { "groq-llama".to_string() }
 fn default_realtime_font_size() -> u32 { 16 }
@@ -1127,6 +1136,8 @@ impl Default for Config {
             ollama_base_url: "http://localhost:11434".to_string(),
             ollama_vision_model: String::new(),
             ollama_text_model: String::new(),
+            tts_voice: default_tts_voice(),
+            tts_speed: default_tts_speed(),
         }
     }
 }

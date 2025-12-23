@@ -133,6 +133,13 @@ pub struct LocaleText {
      pub realtime_translation: &'static str,
      pub realtime_mic: &'static str,
      pub ollama_url_guide: &'static str,
+     pub tts_settings_button: &'static str,
+     pub tts_settings_title: &'static str,
+     pub tts_speed_label: &'static str,
+     pub tts_speed_normal: &'static str,
+     pub tts_speed_slow: &'static str,
+     pub tts_speed_fast: &'static str,
+     pub tts_voice_label: &'static str,
      }
 
 impl LocaleText {
@@ -287,6 +294,13 @@ impl LocaleText {
                 realtime_translation: "Bản dịch",
                 realtime_mic: "Micro",
                 ollama_url_guide: "Xem hướng dẫn tại ollama.com",
+                tts_settings_button: "Cài đặt giọng đọc",
+                tts_settings_title: "Thiết lập Giọng Đọc",
+                tts_speed_label: "Tốc độ đọc:",
+                tts_speed_normal: "Bình thường",
+                tts_speed_slow: "Chậm",
+                tts_speed_fast: "Nhanh",
+                tts_voice_label: "Giọng đọc:",
                 },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -437,6 +451,13 @@ impl LocaleText {
                 realtime_translation: "번역",
                 realtime_mic: "마이크",
                 ollama_url_guide: "올라마 설명서 보기",
+                tts_settings_button: "TTS 설정",
+                tts_settings_title: "TTS 설정",
+                tts_speed_label: "읽기 속도:",
+                tts_speed_normal: "보통",
+                tts_speed_slow: "느림",
+                tts_speed_fast: "빠름",
+                tts_voice_label: "목소리:",
                 },
                 _ => Self {
                  history_btn: "History",
@@ -587,6 +608,13 @@ impl LocaleText {
                 realtime_translation: "Translation",
                 realtime_mic: "Mic",
                 ollama_url_guide: "View guide at ollama.com",
+                tts_settings_button: "Voice Settings",
+                tts_settings_title: "TTS Settings",
+                tts_speed_label: "Reading Speed:",
+                tts_speed_normal: "Normal",
+                tts_speed_slow: "Slow",
+                tts_speed_fast: "Fast",
+                tts_voice_label: "Voice:",
                 },
                 }
                 }

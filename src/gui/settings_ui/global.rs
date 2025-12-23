@@ -24,6 +24,7 @@ pub fn render_global_settings(
     current_admin_state: bool, 
     text: &LocaleText,
     show_usage_modal: &mut bool,
+    show_tts_modal: &mut bool,
 ) -> bool {
     let mut changed = false;
     
@@ -137,7 +138,7 @@ pub fn render_global_settings(
 
     ui.add_space(10.0);
     
-    // === USAGE STATISTICS BUTTON ===
+    // === USAGE STATISTICS & TTS SETTINGS BUTTONS ===
     let is_dark = ui.visuals().dark_mode;
     let stats_bg = if is_dark { 
         egui::Color32::from_rgb(50, 100, 110)  // Teal for dark mode
@@ -145,18 +146,36 @@ pub fn render_global_settings(
         egui::Color32::from_rgb(90, 160, 170)  // Lighter teal for light mode
     };
     
-    if ui.add(egui::Button::new(egui::RichText::new(format!("📊 {}", text.usage_statistics_title)).color(egui::Color32::WHITE).strong())
-        .fill(stats_bg)
-        .corner_radius(10.0))
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(text.usage_statistics_tooltip)
-        .clicked() 
-    {
-        *show_usage_modal = true;
-    }
+    ui.horizontal(|ui| {
+        if ui.add(egui::Button::new(egui::RichText::new(format!("📊 {}", text.usage_statistics_title)).color(egui::Color32::WHITE).strong())
+            .fill(stats_bg)
+            .corner_radius(10.0))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(text.usage_statistics_tooltip)
+            .clicked() 
+        {
+            *show_usage_modal = true;
+        }
+
+        ui.add_space(10.0);
+
+        if ui.add(egui::Button::new(egui::RichText::new(format!("🔊 {}", text.tts_settings_button)).color(egui::Color32::WHITE).strong())
+            .fill(stats_bg)
+            .corner_radius(10.0))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            *show_tts_modal = true;
+        }
+    });
     
     // === USAGE STATISTICS MODAL ===
     render_usage_modal(ui, usage_stats, text, show_usage_modal, config.use_groq, config.use_gemini, config.use_openrouter, config.use_ollama);
+
+    // === TTS SETTINGS MODAL ===
+    if render_tts_settings_modal(ui, config, text, show_tts_modal) {
+        changed = true;
+    }
 
     ui.add_space(10.0);
 
@@ -486,6 +505,95 @@ fn render_usage_modal(
                 }
             });
         });
+}
+
+fn render_tts_settings_modal(
+    ui: &mut egui::Ui,
+    config: &mut Config,
+    text: &LocaleText,
+    show_modal: &mut bool,
+) -> bool {
+    if !*show_modal {
+        return false;
+    }
+    
+    let mut changed = false;
+
+    // List of voices (Name, Gender)
+    const VOICES: &[(&str, &str)] = &[
+        ("Achernar", "Female"), ("Achird", "Male"), ("Algenib", "Male"), ("Algieba", "Male"), 
+        ("Alnilam", "Male"), ("Aoede", "Female"), ("Autonoe", "Female"), ("Callirrhoe", "Female"), 
+        ("Charon", "Male"), ("Despina", "Female"), ("Enceladus", "Male"), ("Erinome", "Female"), 
+        ("Fenrir", "Male"), ("Gacrux", "Female"), ("Iapetus", "Male"), ("Kore", "Female"), 
+        ("Laomedeia", "Female"), ("Leda", "Female"), ("Orus", "Male"), ("Pulcherrima", "Female"), 
+        ("Puck", "Male"), ("Rasalgethi", "Male"), ("Sadachbia", "Male"), ("Sadaltager", "Male"), 
+        ("Schedar", "Male"), ("Sulafat", "Female"), ("Umbriel", "Male"), ("Vindemiatrix", "Female"), 
+        ("Zephyr", "Female"), ("Zubenelgenubi", "Male"),
+    ];
+
+    egui::Window::new(format!("🔊 {}", text.tts_settings_title))
+        .collapsible(false)
+        .resizable(true)
+        .title_bar(false)
+        .default_width(400.0)
+        .max_height(600.0)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("🔊 {}", text.tts_settings_title)).strong().size(14.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if icon_button(ui, Icon::Close).clicked() {
+                        *show_modal = false;
+                    }
+                });
+            });
+            ui.separator();
+            ui.add_space(8.0);
+            
+            ui.label(egui::RichText::new(text.tts_speed_label).strong());
+            ui.horizontal(|ui| {
+                if ui.radio_value(&mut config.tts_speed, "Slow".to_string(), text.tts_speed_slow).clicked() { changed = true; }
+                if ui.radio_value(&mut config.tts_speed, "Normal".to_string(), text.tts_speed_normal).clicked() { changed = true; }
+                if ui.radio_value(&mut config.tts_speed, "Fast".to_string(), text.tts_speed_fast).clicked() { changed = true; }
+            });
+            
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+            
+            ui.label(egui::RichText::new(text.tts_voice_label).strong());
+            
+            egui::ScrollArea::vertical()
+                .max_height(350.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("tts_voice_grid").striped(true).spacing(egui::vec2(10.0, 8.0)).show(ui, |ui| {
+                         for (name, gender) in VOICES {
+                             let is_selected = config.tts_voice == *name;
+                             if ui.radio(is_selected, "").clicked() {
+                                 config.tts_voice = name.to_string();
+                                 changed = true;
+                             }
+                             if ui.button("🔊").on_hover_text("Preview").clicked() {
+                                 config.tts_voice = name.to_string();
+                                 changed = true;
+                                 
+                                 let preview_text = match config.ui_language.as_str() {
+                                     "vi" => "Xin chào, đây là giọng đọc.",
+                                     "ko" => "안녕하세요, 음성 미리듣기입니다.",
+                                     _ => "Hello, this is a voice preview.",
+                                 };
+                                 crate::api::tts::TTS_MANAGER.speak(preview_text, 0);
+                             }
+                             ui.label(egui::RichText::new(*name).strong());
+                             ui.label(egui::RichText::new(format!("({})", gender)).italics().color(egui::Color32::GRAY));
+                             ui.end_row();
+                         }
+                    });
+                });
+        });
+        
+    changed
 }
 
 fn render_update_section_content(ui: &mut egui::Ui, updater: &Option<Updater>, status: &UpdateStatus, text: &LocaleText) {

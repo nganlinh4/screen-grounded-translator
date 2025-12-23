@@ -98,8 +98,11 @@ pub struct SettingsApp {
     
     // --- USAGE MODAL STATE ---
     show_usage_modal: bool,
+    // --- TTS SETTINGS MODAL STATE ---
+    show_tts_modal: bool,
     // --------------------
 }
+
 
 impl SettingsApp {
     pub fn new(mut config: Config, app_state: Arc<Mutex<crate::AppState>>, tray_menu: Menu, ctx: egui::Context) -> Self {
@@ -292,6 +295,8 @@ impl SettingsApp {
             
             // --- USAGE MODAL INIT ---
             show_usage_modal: false,
+            // --- TTS SETTINGS MODAL INIT ---
+            show_tts_modal: false,
             // -----------------------
         }
     }
@@ -781,6 +786,7 @@ impl eframe::App for SettingsApp {
                                 self.current_admin_state, // <-- Pass current admin state
                                 &text,
                                 &mut self.show_usage_modal,
+                                &mut self.show_tts_modal,
                             ) {
                                 self.save_and_sync();
                             }
