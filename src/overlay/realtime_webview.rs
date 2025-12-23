@@ -243,6 +243,9 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             transition: all 0.25s ease-out;
             overflow: hidden;
             max-height: 40px;
+            background: rgba(26, 26, 26, 0.6);
+            backdrop-filter: blur(8px);
+            border-radius: 6px;
         }}
         #header.collapsed {{
             max-height: 0;
@@ -345,6 +348,30 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             color: #4caf50 !important;
             border-color: #4caf50;
             box-shadow: 0 0 8px #4caf5040;
+        }}
+        .pill-group {{
+            display: flex;
+            align-items: center;
+            background: rgba(30,30,30,0.8);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 2px;
+            gap: 1px;
+            transition: all 0.2s;
+        }}
+        .pill-group:hover {{
+            border-color: {glow_color}60;
+            box-shadow: 0 0 10px {glow_color}20;
+        }}
+        .pill-group .ctrl-btn {{
+            background: transparent;
+            border: none;
+            width: 22px;
+            height: 22px;
+        }}
+        .pill-group .ctrl-btn:hover {{
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: none;
         }}
         .vis-btn {{
             font-size: 14px;
@@ -574,7 +601,7 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             <div id="controls">
                 {audio_selector}
                 <span class="ctrl-btn" id="copy-btn" title="Copy text"><span class="material-symbols-rounded">content_copy</span></span>
-                <div class="btn-group">
+                <div class="pill-group">
                     <span class="ctrl-btn" id="font-decrease" title="Decrease font size"><span class="material-symbols-rounded">remove</span></span>
                     <span class="ctrl-btn" id="font-increase" title="Increase font size"><span class="material-symbols-rounded">add</span></span>
                 </div>
