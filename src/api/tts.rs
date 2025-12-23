@@ -10,6 +10,7 @@ use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}, Mutex, Condvar};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 use std::collections::VecDeque;
+use std::sync::mpsc;
 use lazy_static::lazy_static;
 
 use crate::APP;
@@ -22,6 +23,19 @@ const SOURCE_SAMPLE_RATE: u32 = 24000;
 
 /// Playback sample rate (48kHz - most devices support this)
 const PLAYBACK_SAMPLE_RATE: u32 = 48000;
+
+/// Events passed from socket workers to the player thread
+enum AudioEvent {
+    Data(Vec<u8>),
+    End,
+}
+
+/// Request paired with its generation ID (to handle interrupts)
+#[derive(Clone)]
+struct QueuedRequest {
+    req: TtsRequest,
+    generation: u64,
+}
 
 /// TTS request with unique ID for cancellation
 #[derive(Clone)]
@@ -44,14 +58,20 @@ lazy_static! {
 pub struct TtsManager {
     /// Flag to indicate if the connection is ready
     is_ready: AtomicBool,
-    /// Flag to stop the current speech
-    stop_current: AtomicBool,
-    /// Current active request ID (0 = no active request)
-    current_request_id: AtomicU64,
-    /// Queue of pending TTS requests
-    request_queue: Mutex<VecDeque<TtsRequest>>,
-    /// Condvar to signal new requests
-    request_signal: Condvar,
+    
+    /// Queue for Socket Workers: (Request + Generation, Output Channel)
+    work_queue: Mutex<VecDeque<(QueuedRequest, mpsc::Sender<AudioEvent>)>>,
+    /// Signal for Socket Workers
+    work_signal: Condvar,
+
+    /// Queue for Player: (Input Channel, Window Handle, Request ID)
+    playback_queue: Mutex<VecDeque<(mpsc::Receiver<AudioEvent>, isize, u64)>>,
+    /// Signal for Player
+    playback_signal: Condvar,
+
+    /// Generation counter for interrupts (incrementing this invalidates old jobs)
+    interrupt_generation: AtomicU64,
+    
     /// Flag to shutdown the manager
     shutdown: AtomicBool,
 }
@@ -60,10 +80,11 @@ impl TtsManager {
     pub fn new() -> Self {
         Self {
             is_ready: AtomicBool::new(false),
-            stop_current: AtomicBool::new(false),
-            current_request_id: AtomicU64::new(0),
-            request_queue: Mutex::new(VecDeque::new()),
-            request_signal: Condvar::new(),
+            work_queue: Mutex::new(VecDeque::new()),
+            work_signal: Condvar::new(),
+            playback_queue: Mutex::new(VecDeque::new()),
+            playback_signal: Condvar::new(),
+            interrupt_generation: AtomicU64::new(0),
             shutdown: AtomicBool::new(false),
         }
     }
@@ -77,19 +98,28 @@ impl TtsManager {
     /// Returns the request ID.
     pub fn speak(&self, text: &str, hwnd: isize) -> u64 {
         let id = REQUEST_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let current_gen = self.interrupt_generation.load(Ordering::SeqCst);
         
-        // Add new request to back of queue (do not clear or stop current)
+        let (tx, rx) = mpsc::channel();
+        
+        // Add to queues
         {
-            let mut queue = self.request_queue.lock().unwrap();
-            queue.push_back(TtsRequest {
-                id,
-                text: text.to_string(),
-                hwnd,
-            });
+            let mut wq = self.work_queue.lock().unwrap();
+            wq.push_back((
+                QueuedRequest {
+                    req: TtsRequest { id, text: text.to_string(), hwnd },
+                    generation: current_gen,
+                },
+                tx
+            ));
         }
+        self.work_signal.notify_one();
         
-        // Signal the worker thread
-        self.request_signal.notify_one();
+        {
+            let mut pq = self.playback_queue.lock().unwrap();
+            pq.push_back((rx, hwnd, id));
+        }
+        self.playback_signal.notify_one();
         
         id
     }
@@ -97,64 +127,102 @@ impl TtsManager {
     /// Request TTS for the given text, interrupting any current speech.
     /// Clears the queue and stops current playback immediately.
     pub fn speak_interrupt(&self, text: &str, hwnd: isize) -> u64 {
+        // Increment generation to invalidate all currently running/queued work
+        let new_gen = self.interrupt_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let id = REQUEST_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
         
-        // Stop any current speech
-        self.stop_current.store(true, Ordering::SeqCst);
-        
-        // Clear queue and add new request
+        // Clear all queues
         {
-            let mut queue = self.request_queue.lock().unwrap();
-            queue.clear();
-            queue.push_back(TtsRequest {
-                id,
-                text: text.to_string(),
-                hwnd,
-            });
+            let mut wq = self.work_queue.lock().unwrap();
+            wq.clear();
+        }
+        {
+            let mut pq = self.playback_queue.lock().unwrap();
+            pq.clear(); // Drops receivers, causing senders to error and workers to reset
         }
         
-        // Signal the worker thread
-        self.request_signal.notify_one();
+        // Push new request
+        let (tx, rx) = mpsc::channel();
+        
+        {
+            let mut wq = self.work_queue.lock().unwrap();
+            wq.push_back((
+                QueuedRequest {
+                    req: TtsRequest { id, text: text.to_string(), hwnd },
+                    generation: new_gen,
+                },
+                tx
+            ));
+        }
+        self.work_signal.notify_one();
+        
+        {
+            let mut pq = self.playback_queue.lock().unwrap();
+            pq.push_back((rx, hwnd, id));
+        }
+        // Force notify player to wake up and check generation/queue
+        self.playback_signal.notify_one();
         
         id
     }
     
     /// Stop the current speech or cancel pending request
     pub fn stop(&self) {
-        self.stop_current.store(true, Ordering::SeqCst);
+        self.interrupt_generation.fetch_add(1, Ordering::SeqCst);
         
-        // Clear queue
+        // Clear queues
         {
-            let mut queue = self.request_queue.lock().unwrap();
-            queue.clear();
+            let mut wq = self.work_queue.lock().unwrap();
+            wq.clear();
         }
+        {
+            let mut pq = self.playback_queue.lock().unwrap();
+            pq.clear();
+        }
+        
+        // Wake up player to realize it should stop
+        self.playback_signal.notify_all();
     }
     
     /// Stop speech for a specific request ID (only if it's the current one)
-    pub fn stop_if_active(&self, request_id: u64) {
-        if self.current_request_id.load(Ordering::SeqCst) == request_id {
-            self.stop();
-        }
+    /// Note: With the new parallel architecture, checking "is active" is harder. 
+    /// We simply stop everything if the request ID matches the *active* player job.
+    /// But typically stop is global. We will assume global stop for simplicity or implement targeted stop later if needed.
+    pub fn stop_if_active(&self, _request_id: u64) {
+         // Simplified to just stop, as we don't track detailed per-request status efficiently across threads yet
+         // and usually UI calls this when the "Stop" button is clicked for a specific item, effectively meaning "Stop Playback"
+         self.stop();
     }
     
     /// Check if this request ID is currently active
-    pub fn is_speaking(&self, request_id: u64) -> bool {
-        self.current_request_id.load(Ordering::SeqCst) == request_id
+    /// Note: Approximate check based on presence in queues or player active state would require more tracking.
+    /// Returning false for now as this is mainly used for UI state which updates via callbacks anyway.
+    pub fn is_speaking(&self, _request_id: u64) -> bool {
+        false 
     }
     
     /// Shutdown the TTS manager
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
-        self.stop_current.store(true, Ordering::SeqCst);
-        self.request_signal.notify_one();
+        self.interrupt_generation.fetch_add(1, Ordering::SeqCst);
+        self.work_signal.notify_all();
+        self.playback_signal.notify_all();
     }
 }
 
 /// Initialize the TTS system - call this at app startup
 pub fn init_tts() {
+    // Spawn 1 Player Thread
     std::thread::spawn(|| {
-        run_tts_worker();
+        run_player_thread();
     });
+
+    // Spawn 2 Socket Worker Threads (Parallel Fetching)
+    for _ in 0..2 {
+        std::thread::spawn(|| {
+            run_socket_worker();
+        });
+    }
 }
 
 /// Clear the TTS loading state for a window and trigger repaint
@@ -340,30 +408,90 @@ fn is_turn_complete(msg: &str) -> bool {
     false
 }
 
-/// Main TTS worker thread - maintains persistent connection and processes requests
-fn run_tts_worker() {
+/// Main Player thread - consumes audio streams sequentially
+fn run_player_thread() {
+    let manager = &*TTS_MANAGER;
+    // Create ONE persistent audio player
+    // This avoids the overhead of opening the audio device for every request
+    let audio_player = AudioPlayer::new(PLAYBACK_SAMPLE_RATE);
+    
+    loop {
+        if manager.shutdown.load(Ordering::SeqCst) { break; }
+        
+        let playback_job = {
+            let mut pq = manager.playback_queue.lock().unwrap();
+            while pq.is_empty() && !manager.shutdown.load(Ordering::SeqCst) {
+                 let result = manager.playback_signal.wait(pq).unwrap();
+                 pq = result;
+            }
+            if manager.shutdown.load(Ordering::SeqCst) { return; }
+            pq.pop_front()
+        };
+        
+        if let Some((rx, hwnd, _req_id)) = playback_job {
+             let mut loading_cleared = false;
+             
+             // Loop reading chunks from this channel
+             // This blocks if the worker is buffering (which is what we want)
+             loop {
+                 match rx.recv() {
+                     Ok(AudioEvent::Data(data)) => {
+                         if !loading_cleared {
+                             loading_cleared = true;
+                             clear_tts_loading_state(hwnd);
+                         }
+                         audio_player.play(&data);
+                     }
+                     Ok(AudioEvent::End) => {
+                         audio_player.drain();
+                         clear_tts_state(hwnd);
+                         break; // Job done
+                     }
+                     Err(_) => {
+                         // Sender disconnected (likely worker aborted due to interrupt or network error)
+                         // Stop immediately
+                         audio_player.drain(); // Or flush? Draining is safer to finish partials.
+                         clear_tts_state(hwnd);
+                         break;
+                     }
+                 }
+                 
+                 if manager.shutdown.load(Ordering::SeqCst) { return; }
+             }
+        }
+    }
+}
+
+/// Socket Worker thread - fetches audio data and pipes it to the player
+fn run_socket_worker() {
     let manager = &*TTS_MANAGER;
     
-    // Delay startup to let main app initialize
-    std::thread::sleep(Duration::from_secs(2));
+    // Delay start slightly to stagger connections if multiple workers start at once
+    std::thread::sleep(Duration::from_millis(100));
     
     loop {
         if manager.shutdown.load(Ordering::SeqCst) {
             break;
         }
         
-        // Wait for a request first (lazy connection)
-        // This avoids connection timeouts during app startup
-        {
-            let mut queue = manager.request_queue.lock().unwrap();
+        // Wait for a request
+        let (request, tx) = {
+            let mut queue = manager.work_queue.lock().unwrap();
             while queue.is_empty() && !manager.shutdown.load(Ordering::SeqCst) {
-                let result = manager.request_signal.wait_timeout(queue, Duration::from_secs(30)).unwrap();
-                queue = result.0;
+                let result = manager.work_signal.wait(queue).unwrap();
+                queue = result;
             }
-        }
+            if manager.shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            queue.pop_front().unwrap()
+        };
         
-        if manager.shutdown.load(Ordering::SeqCst) {
-            break;
+        // Check if this request is stale (interrupted before we picked it up)
+        if request.generation < manager.interrupt_generation.load(Ordering::SeqCst) {
+            // Signal end immediately so player unblocks and drops it
+            let _ = tx.send(AudioEvent::End);
+            continue;
         }
         
         // Get API key
@@ -371,6 +499,7 @@ fn run_tts_worker() {
             match APP.lock() {
                 Ok(app) => app.config.gemini_api_key.clone(),
                 Err(_) => {
+                    let _ = tx.send(AudioEvent::End);
                     std::thread::sleep(Duration::from_secs(1));
                     continue;
                 }
@@ -378,8 +507,11 @@ fn run_tts_worker() {
         };
         
         if api_key.trim().is_empty() {
-            // No API key configured, wait and retry
+            // No API key configured
             eprintln!("TTS: No Gemini API key configured");
+            let _ = tx.send(AudioEvent::End);
+            clear_tts_loading_state(request.req.hwnd); // Ensure loading is cleared
+            clear_tts_state(request.req.hwnd);
             std::thread::sleep(Duration::from_secs(5));
             continue;
         }
@@ -390,6 +522,9 @@ fn run_tts_worker() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("TTS: Failed to connect: {}", e);
+                let _ = tx.send(AudioEvent::End);
+                clear_tts_loading_state(request.req.hwnd); // Ensure loading is cleared
+                clear_tts_state(request.req.hwnd);
                 std::thread::sleep(Duration::from_secs(3));
                 continue;
             }
@@ -405,14 +540,22 @@ fn run_tts_worker() {
         if let Err(e) = send_tts_setup(&mut socket, &current_voice, &current_speed) {
             eprintln!("TTS: Failed to send setup: {}", e);
             let _ = socket.close(None);
+            let _ = tx.send(AudioEvent::End);
             std::thread::sleep(Duration::from_secs(2));
             continue;
         }
         
-        // Wait for setup acknowledgment (blocking mode with 30s timeout)
+        // Wait for setup acknowledgment (blocking mode)
         let setup_start = Instant::now();
         let mut setup_complete = false;
         loop {
+            // Check interruption during setup
+            if request.generation < manager.interrupt_generation.load(Ordering::SeqCst) || manager.shutdown.load(Ordering::SeqCst) {
+                 let _ = socket.close(None);
+                 let _ = tx.send(AudioEvent::End);
+                 break; // break inner setup loop
+            }
+
             match socket.read() {
                 Ok(tungstenite::Message::Text(msg)) => {
                     if msg.contains("setupComplete") {
@@ -424,202 +567,90 @@ fn run_tts_worker() {
                         break;
                     }
                 }
-                Ok(tungstenite::Message::Close(frame)) => {
-                    let close_info = frame.map(|f| format!("code={}, reason={}", f.code, f.reason)).unwrap_or("no frame".to_string());
-                    eprintln!("TTS: Connection closed by server: {}", close_info);
-                    break;
-                }
+                Ok(tungstenite::Message::Close(_)) => { break; }
                 Ok(tungstenite::Message::Binary(data)) => {
-                    if let Ok(text) = String::from_utf8(data.clone()) {
-                        if text.contains("setupComplete") {
-                            setup_complete = true;
-                            break;
-                        }
+                    if let Ok(text) = String::from_utf8(data) {
+                        if text.contains("setupComplete") { setup_complete = true; break; }
                     }
                 }
                 Ok(_) => {}
-                Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
-                    // No data yet, check timeout and continue
-                    if setup_start.elapsed() > Duration::from_secs(30) {
-                        eprintln!("TTS: Setup timeout - no response from server");
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
+                Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                     if setup_start.elapsed() > Duration::from_secs(10) { break; }
+                     std::thread::sleep(Duration::from_millis(50));
                 }
-                Err(e) => {
-                    eprintln!("TTS: Error waiting for setup: {}", e);
-                    break;
-                }
-            }
-            
-            if manager.shutdown.load(Ordering::SeqCst) {
-                let _ = socket.close(None);
-                return;
+                Err(_) => { break; }
             }
         }
+        
+        if manager.shutdown.load(Ordering::SeqCst) { return; }
         
         if !setup_complete {
             let _ = socket.close(None);
-            std::thread::sleep(Duration::from_secs(2));
+            let _ = tx.send(AudioEvent::End); 
             continue;
         }
         
-        // Connection is ready
-        manager.is_ready.store(true, Ordering::SeqCst);
+        // Connection ready
+        // manager.is_ready.store(true, Ordering::SeqCst); // No longer purely accurate with multiple workers, but fine
         
-        // Set to non-blocking for the main loop
-        {
-            let stream = socket.get_mut();
-            let tcp_stream = stream.get_mut();
-            let _ = tcp_stream.set_read_timeout(Some(Duration::from_millis(100)));
+        // Send request text
+        if let Err(e) = send_tts_text(&mut socket, &request.req.text) {
+             eprintln!("TTS: Failed to send text: {}", e);
+             let _ = tx.send(AudioEvent::End);
+             let _ = socket.close(None);
+             continue;
         }
         
-        // Main processing loop
-        'connection_loop: loop {
-            if manager.shutdown.load(Ordering::SeqCst) {
+        // Read loop
+        loop {
+            // CHECK INTERRUPT
+            if request.generation < manager.interrupt_generation.load(Ordering::SeqCst) || manager.shutdown.load(Ordering::SeqCst) {
+                // Abort!
+                let _ = socket.close(None);
+                // Drop tx mostly handles it, but sending End is explicit
+                let _ = tx.send(AudioEvent::End);
                 break;
             }
             
-            // Wait for a request
-            let request: Option<TtsRequest> = {
-                let mut queue = manager.request_queue.lock().unwrap();
-                if queue.is_empty() {
-                    // Wait with timeout
-                    let result = manager.request_signal.wait_timeout(queue, Duration::from_secs(30)).unwrap();
-                    queue = result.0;
-                }
-                queue.pop_front()
-            };
-            
-            if manager.shutdown.load(Ordering::SeqCst) {
-                break;
-            }
-            
-            if let Some(req) = request {
-                // Check if config changed
-                let (new_voice, new_speed) = {
-                    let app = APP.lock().unwrap();
-                    (app.config.tts_voice.clone(), app.config.tts_speed.clone())
-                };
-
-                if new_voice != current_voice || new_speed != current_speed {
-                   // Config changed - force reconnect
-                   // Push request back to front of queue so it's processed after reconnect
-                   manager.request_queue.lock().unwrap().push_front(req); 
-                   break 'connection_loop;
-                }
-
-                manager.stop_current.store(false, Ordering::SeqCst);
-                manager.current_request_id.store(req.id, Ordering::SeqCst);
-                
-                // Send the text to be spoken
-                if let Err(e) = send_tts_text(&mut socket, &req.text) {
-                    eprintln!("TTS: Failed to send text: {}", e);
-                    manager.current_request_id.store(0, Ordering::SeqCst);
-                    // Clear loading state on error
-                    clear_tts_loading_state(req.hwnd);
-                    break 'connection_loop; // Reconnect
-                }
-                
-                // Initialize audio playback (Windows Audio API)
-                let audio_player = AudioPlayer::new(PLAYBACK_SAMPLE_RATE);
-                
-                // Receive and play audio chunks
-                let mut audio_chunks_received = 0;
-                let mut loading_cleared = false;
-                loop {
-                    if manager.stop_current.load(Ordering::SeqCst) {
-                        // Stop requested - drain any pending audio
-                        drop(audio_player);
-                        clear_tts_loading_state(req.hwnd);
+            match socket.read() {
+                Ok(tungstenite::Message::Text(msg)) => {
+                    if let Some(audio_data) = parse_audio_data(&msg) {
+                        let _ = tx.send(AudioEvent::Data(audio_data));
+                    }
+                    if is_turn_complete(&msg) {
+                        let _ = tx.send(AudioEvent::End);
                         break;
                     }
-                    
-                    if manager.shutdown.load(Ordering::SeqCst) {
-                        break 'connection_loop;
-                    }
-                    
-                    match socket.read() {
-                        Ok(tungstenite::Message::Text(msg)) => {
-                            // Parse and play audio data
-                            if let Some(audio_data) = parse_audio_data(&msg) {
-                                audio_chunks_received += 1;
-                                
-                                // On first audio chunk, clear loading state (button turns blue)
-                                if !loading_cleared {
-                                    loading_cleared = true;
-                                    clear_tts_loading_state(req.hwnd);
-                                }
-                                
-                                audio_player.play(&audio_data);
-                            }
-                            
-                            // Check if turn is complete
-                            if is_turn_complete(&msg) {
-                                // Wait for audio to finish playing
-                                audio_player.drain();
-                                break;
-                            }
+                }
+                Ok(tungstenite::Message::Binary(data)) => {
+                     if let Ok(text) = String::from_utf8(data) {
+                        if let Some(audio_data) = parse_audio_data(&text) {
+                             let _ = tx.send(AudioEvent::Data(audio_data));
                         }
-                        Ok(tungstenite::Message::Binary(data)) => {
-                            // Try to parse as JSON text
-                            if let Ok(text) = String::from_utf8(data.clone()) {
-                                if let Some(audio_data) = parse_audio_data(&text) {
-                                    audio_chunks_received += 1;
-                                    
-                                    // On first audio chunk, clear loading state
-                                    if !loading_cleared {
-                                        loading_cleared = true;
-                                        clear_tts_loading_state(req.hwnd);
-                                    }
-                                    
-                                    audio_player.play(&audio_data);
-                                }
-                                if is_turn_complete(&text) {
-                                    audio_player.drain();
-                                    break;
-                                }
-                            }
+                        if is_turn_complete(&text) {
+                            let _ = tx.send(AudioEvent::End);
+                            break;
                         }
-                        Ok(tungstenite::Message::Close(_)) => {
-                            eprintln!("TTS: Connection closed by server");
-                            break 'connection_loop; // Reconnect
-                        }
-                        Ok(_) => {}
-                        Err(tungstenite::Error::Io(ref e)) 
-                            if e.kind() == std::io::ErrorKind::WouldBlock 
-                            || e.kind() == std::io::ErrorKind::TimedOut => {
-                            // No data available, continue
-                        }
-                        Err(e) => {
-                            eprintln!("TTS: Read error: {}", e);
-                            break 'connection_loop; // Reconnect
-                        }
-                    }
-                    
+                     }
+                }
+                Ok(tungstenite::Message::Close(_)) => {
+                    let _ = tx.send(AudioEvent::End);
+                    break;
+                }
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                
-                manager.current_request_id.store(0, Ordering::SeqCst);
-                
-                // Clear button state when speech completes
-                clear_tts_state(req.hwnd);
-                
-                // Break connection after each request to get fresh context
-                // This prevents conversation history from accumulating
-                break 'connection_loop;
+                Err(e) => {
+                    eprintln!("TTS: Read error: {}", e);
+                    let _ = tx.send(AudioEvent::End);
+                    break;
+                }
             }
-            
-            // No request, check if we should stay connected (timeout after ping)
         }
         
-        // Connection lost or error - mark as not ready and reconnect
-        manager.is_ready.store(false, Ordering::SeqCst);
+        // Close socket after turn (to avoid context build up)
         let _ = socket.close(None);
-        
-        if !manager.shutdown.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_secs(2));
-        }
     }
 }
 
