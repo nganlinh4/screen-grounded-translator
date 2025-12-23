@@ -23,11 +23,7 @@ use crate::api::realtime_audio::{
     WM_REALTIME_UPDATE, WM_TRANSLATION_UPDATE, WM_VOLUME_UPDATE, WM_MODEL_SWITCH, REALTIME_RMS,
 };
 
-// Window dimensions
-const OVERLAY_WIDTH: i32 = 500;
-const OVERLAY_HEIGHT: i32 = 180;
-const TRANSLATION_WIDTH: i32 = 500;
-const TRANSLATION_HEIGHT: i32 = 180;
+// Gap between realtime and translation overlays
 const GAP: i32 = 20;
 
 lazy_static::lazy_static! {
@@ -81,7 +77,7 @@ impl HasWindowHandle for HwndWrapper {
 
 /// CSS and HTML for the realtime overlay with smooth scrolling
 fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[String], current_language: &str, translation_model: &str, font_size: u32, text: &LocaleText) -> String {
-    let title_icon = if is_translation { "translate" } else { "graphic_eq" };
+    let _title_icon = if is_translation { "translate" } else { "graphic_eq" };
     let title_text = if is_translation { text.realtime_translation } else { text.realtime_listening };
     let glow_color = if is_translation { "#ff9633" } else { "#00c8ff" };
     
@@ -94,8 +90,8 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         format!(r#"<div class="volume-bars" id="volume-bars">{}</div>"#, bars)
     };
     
-    let mic_text = text.realtime_mic;
-    let device_text = text.realtime_device;
+    let _mic_text = text.realtime_mic;
+    let _device_text = text.realtime_device;
     let placeholder_text = text.realtime_waiting;
     
     // Build language options HTML - show full name in dropdown, but store code for display

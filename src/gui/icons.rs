@@ -18,7 +18,6 @@ pub enum Icon {
     Text, // NEW: 'T' icon for text presets
     Delete, // Renders as Trash Can (used for presets)
     DeleteLarge, // NEW: Centered, larger Trash Can (used for history items)
-    Info,
 
     Folder, // NEW: For "Open Media"
     Copy,   // NEW: For "Copy Text"
@@ -261,20 +260,6 @@ fn paint_internal(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: 
             let p4 = egui::pos2(c.x + w_can_top/2.0, lid_y);
             painter.add(egui::Shape::line(vec![p1, p2, p3, p4], stroke));
         }
-
-        Icon::Info => {
-            let c = center - egui::vec2(0.0, 1.0 * scale);
-            painter.circle_stroke(c, 5.0 * scale, stroke);
-            painter.circle_filled(c - egui::vec2(0.0, 1.8 * scale), 0.6 * scale, color);
-            painter.rect_filled(
-                egui::Rect::from_center_size(c + egui::vec2(0.0, 1.0 * scale), egui::vec2(1.0 * scale, 2.5 * scale)),
-                0.4 * scale, color,
-            );
-        }
-
-
-
-
 
         Icon::Folder => {
             // Folder Icon

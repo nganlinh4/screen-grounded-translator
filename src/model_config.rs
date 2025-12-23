@@ -417,18 +417,6 @@ pub fn get_all_models_with_ollama() -> Vec<ModelConfig> {
     models
 }
 
-/// Get model by ID, checking both static and Ollama models
-pub fn get_model_by_id_with_ollama(id: &str) -> Option<ModelConfig> {
-    // First check static models
-    if let Some(model) = get_model_by_id(id) {
-        return Some(model);
-    }
-    
-    // Check cached Ollama models
-    let cached = OLLAMA_MODEL_CACHE.lock().unwrap();
-    cached.iter().find(|m| m.id == id).cloned()
-}
-
 // === OLLAMA MODEL CACHE ===
 
 use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
@@ -449,12 +437,6 @@ lazy_static::lazy_static! {
 /// Check if Ollama model scan is in progress
 pub fn is_ollama_scan_in_progress() -> bool {
     OLLAMA_SCAN_IN_PROGRESS.load(Ordering::SeqCst)
-}
-
-/// Check if we have any cached Ollama models
-pub fn has_cached_ollama_models() -> bool {
-    let cached = OLLAMA_MODEL_CACHE.lock().unwrap();
-    !cached.is_empty()
 }
 
 /// Trigger background scan for Ollama models (non-blocking)
@@ -559,10 +541,4 @@ pub fn trigger_ollama_model_scan() {
         
         OLLAMA_SCAN_IN_PROGRESS.store(false, Ordering::SeqCst);
     });
-}
-
-/// Clear the Ollama model cache
-pub fn clear_ollama_model_cache() {
-    let mut cache = OLLAMA_MODEL_CACHE.lock().unwrap();
-    cache.clear();
 }

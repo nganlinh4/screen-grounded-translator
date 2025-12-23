@@ -27,19 +27,6 @@ const TRANSLATION_INTERVAL_MS: u64 = 1500;
 /// Model for realtime audio transcription
 const REALTIME_MODEL: &str = "gemini-2.5-flash-native-audio-preview-12-2025";
 
-/// Safely truncate a string to max_bytes, respecting UTF-8 character boundaries
-fn safe_truncate(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    // Find the last valid char boundary at or before max_bytes
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
-
 /// Shared state for realtime transcription
 pub struct RealtimeState {
     /// Full transcript (used for translation and display)
@@ -1404,16 +1391,6 @@ fn update_translation_text(hwnd: HWND, text: &str) {
     unsafe {
         let _ = PostMessageW(hwnd, WM_TRANSLATION_UPDATE, WPARAM(0), LPARAM(0));
     }
-}
-
-/// Get current realtime display text (called by overlay paint)
-pub fn get_realtime_display_text() -> String {
-    REALTIME_DISPLAY_TEXT.lock().map(|s| s.clone()).unwrap_or_default()
-}
-
-/// Get current translation display text (called by overlay paint)
-pub fn get_translation_display_text() -> String {
-    TRANSLATION_DISPLAY_TEXT.lock().map(|s| s.clone()).unwrap_or_default()
 }
 
 /// Unofficial Google Translate (GTX) fallback

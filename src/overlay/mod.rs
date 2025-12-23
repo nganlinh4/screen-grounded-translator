@@ -8,7 +8,7 @@ pub mod paint_utils;
 pub mod text_selection;
 pub mod text_input; // NEW MODULE
 pub mod preset_wheel; // MASTER preset wheel
-mod realtime_overlay; // Old GDI-based (kept for reference)
+// realtime_overlay module removed (was old GDI-based, now using realtime_webview)
 pub mod realtime_webview; // New WebView2-based with smooth scrolling
 
 pub use selection::{show_selection_overlay, is_selection_overlay_active_and_dismiss};

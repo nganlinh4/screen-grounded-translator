@@ -5,7 +5,7 @@ use eframe::egui;
 use egui_snarl::{Snarl, InPin, InPinId, OutPin, OutPinId, NodeId};
 use egui_snarl::ui::{SnarlStyle, PinInfo, SnarlViewer};
 use crate::config::{ProcessingBlock, get_all_languages};
-use crate::model_config::{get_all_models, get_all_models_with_ollama, ModelType, get_model_by_id, trigger_ollama_model_scan, is_ollama_scan_in_progress};
+use crate::model_config::{get_all_models_with_ollama, ModelType, get_model_by_id, trigger_ollama_model_scan, is_ollama_scan_in_progress};
 use crate::gui::icons::{Icon, icon_button};
 use std::collections::HashMap;
 

@@ -5,7 +5,7 @@ use anyhow::Result;
 use image::{ImageBuffer, Rgba};
 use base64::{Engine as _, engine::general_purpose};
 use std::io::{Cursor, BufRead, BufReader};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use super::client::UREQ_AGENT;
 use crate::gui::locale::LocaleText;
 
@@ -13,41 +13,24 @@ use crate::gui::locale::LocaleText;
 #[derive(Deserialize, Debug)]
 pub struct OllamaStreamChunk {
     #[serde(default)]
-    pub model: String,
-    #[serde(default)]
     pub response: String,
     #[serde(default)]
     pub thinking: Option<String>,
     #[serde(default)]
     pub done: bool,
-    #[serde(default)]
-    pub done_reason: Option<String>,
 }
 
 /// Ollama non-streaming response
 #[derive(Deserialize, Debug)]
 pub struct OllamaGenerateResponse {
     #[serde(default)]
-    pub model: String,
-    #[serde(default)]
     pub response: String,
-    #[serde(default)]
-    pub done: bool,
-    #[serde(default)]
-    pub total_duration: u64,
-    #[serde(default)]
-    pub eval_count: u32,
 }
 
 /// Ollama model info from /api/tags
 #[derive(Deserialize, Debug, Clone)]
 pub struct OllamaModel {
     pub name: String,
-    pub model: String,
-    #[serde(default)]
-    pub modified_at: String,
-    #[serde(default)]
-    pub size: u64,
 }
 
 /// Response from /api/tags
@@ -150,15 +133,6 @@ pub fn fetch_ollama_models_with_caps(base_url: &str) -> Result<Vec<OllamaModelWi
     Ok(result)
 }
 
-/// Test connection to Ollama server
-pub fn test_ollama_connection(base_url: &str) -> Result<String> {
-    let models = fetch_ollama_models(base_url)?;
-    if models.is_empty() {
-        Ok("Connected, but no models installed".to_string())
-    } else {
-        Ok(format!("Connected! {} model(s) available", models.len()))
-    }
-}
 
 /// Generate text with Ollama (text-only, no image)
 pub fn ollama_generate_text<F>(
