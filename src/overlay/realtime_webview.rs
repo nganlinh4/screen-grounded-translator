@@ -144,9 +144,9 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
     };
     
     let loading_icon = if is_translation {
-        r##"<svg class="loading-svg" viewBox="0 0 24 24" fill="none" stroke="#ff9633" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"></path><path d="m4 14 6-6 2-3"></path><path d="M2 5h12"></path><path d="M7 2h1"></path><path d="m22 22-5-10-5 10"></path><path d="M14 18h6"></path></svg>"##
+        r##"<svg class="loading-svg" viewBox="0 -6 24 36" fill="none" stroke="#ff9633" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><g class="trans-part-1"><path d="m5 8 6 6"></path><path d="m4 14 6-6 2-3"></path><path d="M2 5h12"></path><path d="M7 2h1"></path></g><g class="trans-part-2"><path d="m22 22-5-10-5 10"></path><path d="M14 18h6"></path></g></svg>"##
     } else {
-        r##"<svg class="loading-svg" viewBox="0 0 24 24" fill="none" stroke="#00c8ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v1a7 7 0 0 1-14 0v-1"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg>"##
+        r##"<svg class="loading-svg" viewBox="0 -12 24 48" fill="none" stroke="#00c8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><line class="wave-line delay-1" x1="4" y1="8" x2="4" y2="16"></line><line class="wave-line delay-2" x1="9" y1="4" x2="9" y2="20"></line><line class="wave-line delay-3" x1="14" y1="6" x2="14" y2="18"></line><line class="wave-line delay-4" x1="19" y1="8" x2="19" y2="16"></line></svg>"##
     };
 
     format!(r#"<!DOCTYPE html>
@@ -590,6 +590,39 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             animation: model-switch-pulse 2s ease-out;
             color: #ff9633 !important;
             background: rgba(255,150,51,0.3) !important;
+        }}
+
+        /* Waveform animation for listening state */
+        .wave-line {{
+             transform-box: fill-box;
+             transform-origin: center;
+             animation: wave-animation 1.2s ease-in-out infinite;
+        }}
+        .wave-line.delay-1 {{ animation-delay: 0s; }}
+        .wave-line.delay-2 {{ animation-delay: 0.15s; }}
+        .wave-line.delay-3 {{ animation-delay: 0.3s; }}
+        .wave-line.delay-4 {{ animation-delay: 0.1s; }}
+        
+        @keyframes wave-animation {{
+            0%, 100% {{
+                transform: scaleY(1);
+            }}
+            50% {{
+                transform: scaleY(1.8);
+            }}
+        }}
+
+        /* Translation animation */
+        .trans-part-1 {{
+            animation: lang-bounce 2s ease-in-out infinite;
+        }}
+        .trans-part-2 {{
+            animation: lang-bounce 2s ease-in-out infinite;
+            animation-delay: 1s;
+        }}
+        @keyframes lang-bounce {{
+            0%, 100% {{ transform: translateY(0); opacity: 0.8; }}
+            50% {{ transform: translateY(-3px); opacity: 1; }}
         }}
     </style>
 </head>
