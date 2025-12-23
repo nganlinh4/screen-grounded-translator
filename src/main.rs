@@ -8,6 +8,7 @@ mod icon_gen;
 mod model_config;
 mod updater;
 mod history;
+pub mod win_types;
 
 use std::sync::{Arc, Mutex};
 use std::panic;
@@ -35,15 +36,18 @@ const MOD_CONTROL: u32 = 0x0002;
 const MOD_SHIFT: u32 = 0x0004;
 const MOD_WIN: u32 = 0x0008;
 
+// Wrappers for thread-safe types now imported from win_types
+use crate::win_types::{SendHwnd, SendHandle, SendHhook};
+
 // Global event for inter-process restore signaling (manual-reset event)
 lazy_static! {
-    pub static ref RESTORE_EVENT: Option<windows::Win32::Foundation::HANDLE> = unsafe {
-        CreateEventW(None, true, false, w!("Global\\ScreenGoatedToolboxRestoreEvent")).ok()
+    pub static ref RESTORE_EVENT: Option<SendHandle> = unsafe {
+        CreateEventW(None, true, false, w!("Global\\ScreenGoatedToolboxRestoreEvent")).ok().map(SendHandle)
     };
     // Global handle for the listener window (for the mouse hook to post messages to)
-    static ref LISTENER_HWND: Mutex<HWND> = Mutex::new(HWND(0));
+    static ref LISTENER_HWND: Mutex<SendHwnd> = Mutex::new(SendHwnd::default());
     // Global handle for the mouse hook
-    static ref MOUSE_HOOK: Mutex<HHOOK> = Mutex::new(HHOOK(0));
+    static ref MOUSE_HOOK: Mutex<SendHhook> = Mutex::new(SendHhook::default());
 }
 
 // 1. Define a wrapper for the GDI Handle to ensure we clean it up
@@ -60,8 +64,8 @@ unsafe impl Sync for GdiCapture {}
 impl Drop for GdiCapture {
     fn drop(&mut self) {
         unsafe {
-            if self.hbitmap.0 != 0 {
-                DeleteObject(self.hbitmap);
+            if !self.hbitmap.is_invalid() {
+                let _ = DeleteObject(self.hbitmap.into());
             }
         }
     }
@@ -75,7 +79,7 @@ pub struct AppState {
     // New: Track API usage limits (Key: Model Full Name, Value: "Remaining / Total")
     pub model_usage_stats: HashMap<String, String>,
     pub history: Arc<HistoryManager>, // NEW
-    pub last_active_window: Option<HWND>, // NEW: Store window handle for auto-paste focus restoration
+    pub last_active_window: Option<SendHwnd>, // NEW: Store window handle for auto-paste focus restoration
 }
 
 lazy_static! {
@@ -184,7 +188,7 @@ fn main() -> eframe::Result<()> {
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 // Another instance is running - signal it to restore
                 if let Some(event) = RESTORE_EVENT.as_ref() {
-                    let _ = SetEvent(*event);
+                    let _ = SetEvent(event.0);
                 }
                 let _ = CloseHandle(handle);
                 return Ok(());
@@ -291,7 +295,7 @@ fn register_all_hotkeys(hwnd: HWND) {
 
             let id = (p_idx as i32 * 1000) + (h_idx as i32) + 1;
             unsafe {
-                RegisterHotKey(hwnd, id, HOT_KEY_MODIFIERS(hotkey.modifiers), hotkey.code);
+                RegisterHotKey(Some(hwnd), id, HOT_KEY_MODIFIERS(hotkey.modifiers), hotkey.code);
             }
             registered_ids.push(id);
         }
@@ -302,7 +306,7 @@ fn register_all_hotkeys(hwnd: HWND) {
 fn unregister_all_hotkeys(hwnd: HWND) {
     let app = APP.lock().unwrap();
     for &id in &app.registered_hotkey_ids {
-        unsafe { UnregisterHotKey(hwnd, id); }
+        unsafe { let _ = UnregisterHotKey(Some(hwnd), id); }
     }
 }
 
@@ -347,16 +351,17 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
 
             if let Some(id) = found_id {
                 if let Ok(hwnd_target) = LISTENER_HWND.lock() {
-                    if hwnd_target.0 != 0 {
+                    if !hwnd_target.0.is_invalid() {
                         // Post WM_HOTKEY to the listener window logic
-                        PostMessageW(*hwnd_target, WM_HOTKEY, WPARAM(id as usize), LPARAM(0));
+                        let _ = PostMessageW(Some(hwnd_target.0), WM_HOTKEY, WPARAM(id as usize), LPARAM(0));
                         return LRESULT(1); // Consume/Block input
                     }
                 }
             }
         }
+
     }
-    CallNextHookEx(HHOOK(0), code, wparam, lparam)
+    CallNextHookEx(None, code, wparam, lparam)
 }
 
 const WM_RELOAD_HOTKEYS: u32 = WM_USER + 101;
@@ -376,7 +381,7 @@ fn run_hotkey_listener() {
         
         let wc = WNDCLASSW {
             lpfnWndProc: Some(hotkey_proc),
-            hInstance: instance,
+            hInstance: instance.into(),
             lpszClassName: class_name,
             ..Default::default()
         };
@@ -390,24 +395,24 @@ fn run_hotkey_listener() {
             w!("Listener"),
             WS_OVERLAPPEDWINDOW,
             0, 0, 0, 0,
-            None, None, instance, None
-        );
+            None, None, Some(instance.into()), None
+        ).unwrap_or_default();
         
         // Error handling: hwnd is invalid if creation failed
-        if hwnd.0 == 0 {
+        if hwnd.is_invalid() {
             eprintln!("Error: Failed to create hotkey listener window");
             return;
         }
 
         // Store HWND for the hook
         if let Ok(mut guard) = LISTENER_HWND.lock() {
-            *guard = hwnd;
+            *guard = SendHwnd(hwnd);
         }
 
         // Install Mouse Hook
-        if let Ok(hhook) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), instance, 0) {
+        if let Ok(hhook) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), Some(instance.into()), 0) {
             if let Ok(mut hook_guard) = MOUSE_HOOK.lock() {
-                *hook_guard = hhook;
+                *hook_guard = SendHhook(hhook);
             }
         } else {
             eprintln!("Warning: Failed to install low-level mouse hook");
@@ -417,7 +422,7 @@ fn run_hotkey_listener() {
 
         let mut msg = MSG::default();
         loop {
-            if GetMessageW(&mut msg, None, 0, 0).into() {
+            if GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 if msg.message == WM_RELOAD_HOTKEYS {
                     unregister_all_hotkeys(hwnd);
                     register_all_hotkeys(hwnd);
@@ -477,7 +482,7 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     let target_window = crate::overlay::utils::get_target_window_for_paste();
 
                     if let Ok(mut app) = APP.lock() {
-                        app.last_active_window = target_window;
+                        app.last_active_window = target_window.map(crate::win_types::SendHwnd);
                     }
                 }
 
@@ -586,6 +591,7 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             }
             LRESULT(0)
         }
+
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
@@ -603,28 +609,28 @@ fn capture_screen_fast() -> anyhow::Result<GdiCapture> {
         }
 
         let hdc_screen = GetDC(None);
-        if hdc_screen.0 == 0 {
+        if hdc_screen.is_invalid() {
             return Err(anyhow::anyhow!("GDI Error: Failed to get screen device context"));
         }
         
-        let hdc_mem = CreateCompatibleDC(hdc_screen);
-        if hdc_mem.0 == 0 {
-            ReleaseDC(None, hdc_screen);
+        let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
+        if hdc_mem.is_invalid() {
+            let _ = ReleaseDC(None, hdc_screen);
             return Err(anyhow::anyhow!("GDI Error: Failed to create compatible device context"));
         }
         
         let hbitmap = CreateCompatibleBitmap(hdc_screen, width, height);
         
-        if hbitmap.0 == 0 {
-             DeleteDC(hdc_mem);
-             ReleaseDC(None, hdc_screen);
+        if hbitmap.is_invalid() {
+             let _ = DeleteDC(hdc_mem);
+             let _ = ReleaseDC(None, hdc_screen);
              return Err(anyhow::anyhow!("GDI Error: Failed to create compatible bitmap."));
         }
         
-        SelectObject(hdc_mem, hbitmap);
+        SelectObject(hdc_mem, hbitmap.into());
 
         // This is the only "heavy" part, but it's purely GPU/GDI memory move. Very fast.
-        BitBlt(hdc_mem, 0, 0, width, height, hdc_screen, x, y, SRCCOPY).ok()?;
+        BitBlt(hdc_mem, 0, 0, width, height, Some(hdc_screen), x, y, SRCCOPY)?;
 
         // Cleanup DCs, but KEEP the HBITMAP
         DeleteDC(hdc_mem);

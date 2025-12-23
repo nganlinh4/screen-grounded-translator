@@ -41,7 +41,7 @@ static REGISTER_RESULT_CLASS: Once = Once::new();
 unsafe fn set_rounded_edit_region(h_edit: HWND, w: i32, h: i32) {
     // radius (12, 12) matches the overlay style
     let rgn = CreateRoundRectRgn(0, 0, w, h, 12, 12);
-    SetWindowRgn(h_edit, rgn, true);
+    let _ = SetWindowRgn(h_edit, Some(rgn), true);
 }
 
 pub fn create_result_window(
@@ -63,11 +63,11 @@ pub fn create_result_window(
         REGISTER_RESULT_CLASS.call_once(|| {
             let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(result_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap(); 
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS; 
-            wc.hbrBackground = HBRUSH(0);
+            wc.hbrBackground = HBRUSH::default();
             let _ = RegisterClassW(&wc);
         });
 
@@ -100,8 +100,8 @@ pub fn create_result_window(
             w!(""),
             base_style, 
             x, y, width, height,
-            None, None, instance, None
-        );
+            None, None, Some(instance.into()), None
+        ).unwrap_or_default();
         
         // FOR MARKDOWN MODE: Create WebView IMMEDIATELY after window creation
         // See docs/WEBVIEW2_INITIALIZATION.md for why this is necessary
@@ -125,14 +125,14 @@ pub fn create_result_window(
             w!(""),
             edit_style,
             0, 0, 0, 0, // Sized dynamically
-            hwnd,
-            HMENU(101),
-            instance,
+            Some(hwnd),
+            Some(HMENU(101 as *mut core::ffi::c_void)),
+            Some(instance.into()),
             None
-        );
+        ).unwrap_or_default();
         
-        let hfont = CreateFontW(14, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
-        SendMessageW(h_edit, WM_SETFONT, WPARAM(hfont.0 as usize), LPARAM(1));
+        let hfont = CreateFontW(14, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
+        SendMessageW(h_edit, WM_SETFONT, Some(WPARAM(hfont.0 as usize)), Some(LPARAM(1)));
 
         let mut physics = CursorPhysics::default();
         physics.initialized = true;
@@ -175,12 +175,12 @@ pub fn create_result_window(
                 has_moved_significantly: false,
                 font_cache_dirty: true,
                 cached_font_size: 72,
-                content_bitmap: HBITMAP(0),
+                content_bitmap: HBITMAP::default(),
                 last_w: 0,
                 last_h: 0,
                 pending_text: None,
                 last_text_update_time: 0,
-                bg_bitmap: HBITMAP(0),
+                bg_bitmap: HBITMAP::default(),
                 bg_w: 0,
                 bg_h: 0,
                 edit_font: hfont,
@@ -218,22 +218,22 @@ pub fn create_result_window(
             // Initial positioning for the edit box
             let edit_w = width - 20;
             let edit_h = 40;
-            SetWindowPos(h_edit, HWND_TOP, 10, 10, edit_w, edit_h, SWP_SHOWWINDOW);
+            SetWindowPos(h_edit, Some(HWND_TOP), 10, 10, edit_w, edit_h, SWP_SHOWWINDOW);
             set_rounded_edit_region(h_edit, edit_w, edit_h);
             
             // FIX: Activate window so Edit control can receive focus immediately
             // WS_EX_NOACTIVATE prevents click-activation, so we must force it here.
-            SetForegroundWindow(hwnd);
-            SetFocus(h_edit);
+            let _ = SetForegroundWindow(hwnd);
+            let _ = SetFocus(Some(h_edit));
         }
         
-        SetTimer(hwnd, 3, 16, None);
+        SetTimer(Some(hwnd), 3, 16, None);
         if render_mode == "markdown" {
-            SetTimer(hwnd, 2, 30, None);
+            SetTimer(Some(hwnd), 2, 30, None);
             // WebView was already created immediately after window creation (see above)
         }
         
-        InvalidateRect(hwnd, None, false);
+        InvalidateRect(Some(hwnd), None, false);
         UpdateWindow(hwnd);
         
         hwnd
@@ -241,7 +241,7 @@ pub fn create_result_window(
 }
 
 pub fn update_window_text(hwnd: HWND, text: &str) {
-    if !unsafe { IsWindow(hwnd).as_bool() } { return; }
+    if !unsafe { IsWindow(Some(hwnd)).as_bool() } { return; }
     
     let mut states = WINDOW_STATES.lock().unwrap();
     if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {

@@ -262,14 +262,14 @@ pub fn record_audio_and_transcribe(
 
     if let Err(e) = stream_res {
         eprintln!("Failed to build stream: {}", e);
-        unsafe { PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+        unsafe { PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         return;
     }
     let stream = stream_res.unwrap();
 
     if let Err(e) = stream.play() {
         eprintln!("Failed to play stream: {}", e);
-        unsafe { PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+        unsafe { PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         return;
     }
 
@@ -321,7 +321,7 @@ pub fn record_audio_and_transcribe(
         
         std::thread::sleep(std::time::Duration::from_millis(50));
         if !preset.hide_recording_ui {
-             if !unsafe { IsWindow(overlay_hwnd).as_bool() } {
+             if !unsafe { IsWindow(Some(overlay_hwnd)).as_bool() } {
                 return;
             }
         }
@@ -332,8 +332,8 @@ pub fn record_audio_and_transcribe(
     if abort_signal.load(Ordering::SeqCst) {
         println!("Audio recording aborted by user.");
         unsafe {
-            if IsWindow(overlay_hwnd).as_bool() {
-                 PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+            if IsWindow(Some(overlay_hwnd)).as_bool() {
+                 PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         }
         return;
@@ -350,7 +350,7 @@ pub fn record_audio_and_transcribe(
     if samples.is_empty() {
         println!("Warning: Recorded audio buffer is empty.");
         unsafe {
-            PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+            PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
         return;
     }
@@ -385,8 +385,8 @@ pub fn record_audio_and_transcribe(
         } else {
             // User dismissed wheel - close overlay and cancel
             unsafe {
-                if IsWindow(overlay_hwnd).as_bool() {
-                    PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                if IsWindow(Some(overlay_hwnd)).as_bool() {
+                    PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
             }
             return;
@@ -400,7 +400,7 @@ pub fn record_audio_and_transcribe(
         Some(b) => b.clone(),
         None => {
             eprintln!("Error: Audio preset has no blocks configured");
-            unsafe { PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             return;
         }
     };
@@ -410,7 +410,7 @@ pub fn record_audio_and_transcribe(
         Some(c) => c,
         None => {
             eprintln!("Error: Model config not found for audio model: {}", audio_block.model);
-            unsafe { PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             return;
         }
     };
@@ -462,8 +462,8 @@ pub fn record_audio_and_transcribe(
     // Check if user aborted during the API call
     if abort_signal.load(Ordering::SeqCst) {
         unsafe {
-            if IsWindow(overlay_hwnd).as_bool() {
-                 PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+            if IsWindow(Some(overlay_hwnd)).as_bool() {
+                 PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         }
         return;
@@ -511,8 +511,8 @@ pub fn record_audio_and_transcribe(
             eprintln!("Transcription error: {}", e);
             // Close overlay on error
             unsafe {
-                if IsWindow(overlay_hwnd).as_bool() {
-                     PostMessageW(overlay_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                if IsWindow(Some(overlay_hwnd)).as_bool() {
+                     PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
             }
         }

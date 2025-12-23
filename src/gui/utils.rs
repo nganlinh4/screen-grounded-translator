@@ -1,10 +1,11 @@
-use windows::Win32::Foundation::{BOOL, LPARAM, WPARAM, RECT, HWND, HANDLE};
+use windows::Win32::Foundation::{LPARAM, WPARAM, RECT, HWND, HANDLE};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR, GetMonitorInfoW, MONITORINFOEXW};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXSMICON, SM_CYSMICON, SM_CXICON, SM_CYICON,
     SendMessageW, WM_SETICON, ICON_SMALL, ICON_BIG, CreateIcon, FindWindowW,
 };
-use windows::core::{w, PCWSTR}; // Fixed: PCWSTR is in windows::core
+use windows::core::w;
+use windows_core::BOOL;
 use eframe::egui;
 use std::process::Command;
 
@@ -24,44 +25,33 @@ unsafe extern "system" fn monitor_enum_proc(hmonitor: HMONITOR, _hdc: HDC, _lprc
         let trimmed_name = device_name.trim_matches(char::from(0)).to_string();
         context.monitors.push(trimmed_name);
     }
-    BOOL(1)
+    BOOL::from(true)
 }
 
 pub fn get_monitor_names() -> Vec<String> {
     let mut ctx = MonitorEnumContext { monitors: Vec::new() };
     unsafe {
-        EnumDisplayMonitors(HDC(0), None, Some(monitor_enum_proc), LPARAM(&mut ctx as *mut _ as isize));
+        let _ = EnumDisplayMonitors(None, None, Some(monitor_enum_proc), LPARAM(&mut ctx as *mut _ as isize));
     }
     ctx.monitors
 }
 
 // --- Clipboard Helper (Existing Code) ---
 pub fn copy_to_clipboard_text(text: &str) {
-    crate::overlay::utils::copy_to_clipboard(text, HWND(0));
+    crate::overlay::utils::copy_to_clipboard(text, HWND::default());
 }
 
 // --- Admin Check (Existing Code) ---
 
 #[cfg(target_os = "windows")]
 pub fn is_running_as_admin() -> bool {
-    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
-    use windows::Win32::System::Threading::GetCurrentProcess;
+    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     
     unsafe {
         let mut h_token = HANDLE::default();
         
-        // Use raw windows API - ctypes compatible
-        extern "system" {
-            fn OpenProcessToken(
-                ProcessHandle: HANDLE,
-                DesiredAccess: u32,
-                TokenHandle: *mut HANDLE,
-            ) -> windows::Win32::Foundation::BOOL;
-        }
-        
-        const TOKEN_READ: u32 = 0x20008;
-        
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_READ, &mut h_token).as_bool() {
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut h_token).is_ok() {
             let mut elevation: TOKEN_ELEVATION = std::mem::zeroed();
             let mut return_length: u32 = 0;
             let size = std::mem::size_of::<TOKEN_ELEVATION>() as u32;
@@ -72,7 +62,7 @@ pub fn is_running_as_admin() -> bool {
                 Some(&mut elevation as *mut _ as *mut std::ffi::c_void),
                 size,
                 &mut return_length
-            ).as_bool() {
+            ).is_ok() {
                  return elevation.TokenIsElevated != 0;
             }
         }
@@ -232,8 +222,8 @@ unsafe fn create_hicon_from_bytes(bytes: &[u8], target_w: i32, target_h: i32) ->
     
     match hicon_result {
         Ok(hicon) => {
-             // Fixed: Unwrap HICON and cast to HANDLE
-             if hicon.is_invalid() { None } else { Some(HANDLE(hicon.0)) }
+             // Fixed: Unwrap HICON and cast to HANDLE - in windows 0.62 HICON wraps *mut c_void
+             if hicon.is_invalid() { None } else { Some(std::mem::transmute::<_, HANDLE>(hicon)) }
         },
         Err(_) => None
     }
@@ -251,13 +241,13 @@ pub fn update_window_icon_native(is_dark_mode: bool) {
         let class_name = w!("eframe");
         let title_name = w!("Screen Goated Toolbox (SGT by nganlinh4)");
         
-        let mut hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), PCWSTR(title_name.as_ptr()));
+        let mut hwnd = FindWindowW(class_name, title_name).unwrap_or_default();
         
-        if hwnd.0 == 0 {
-             hwnd = FindWindowW(None, PCWSTR(title_name.as_ptr()));
+        if hwnd.is_invalid() {
+             hwnd = FindWindowW(None, title_name).unwrap_or_default();
         }
 
-        if hwnd.0 != 0 {
+        if !hwnd.is_invalid() {
             let small_w = GetSystemMetrics(SM_CXSMICON);
             let small_h = GetSystemMetrics(SM_CYSMICON);
             
@@ -265,11 +255,11 @@ pub fn update_window_icon_native(is_dark_mode: bool) {
             let big_h = GetSystemMetrics(SM_CYICON);
 
             if let Some(hicon_small) = create_hicon_from_bytes(icon_bytes, small_w, small_h) {
-                SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(hicon_small.0));
+                let _ = SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_SMALL as usize)), Some(LPARAM(hicon_small.0 as isize)));
             }
 
             if let Some(hicon_big) = create_hicon_from_bytes(icon_bytes, big_w, big_h) {
-                SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(hicon_big.0));
+                let _ = SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_BIG as usize)), Some(LPARAM(hicon_big.0 as isize)));
             }
         }
     }

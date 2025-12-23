@@ -8,9 +8,9 @@ use crate::overlay::paint_utils::{sd_rounded_box, hsv_to_rgb};
 use super::state::{WINDOW_STATES, ResizeEdge};
 
 // Helper: Measure text dimensions (Height AND Width)
-unsafe fn measure_text_bounds(hdc: windows::Win32::Graphics::Gdi::CreatedHDC, text: &mut [u16], font_size: i32, max_width: i32) -> (i32, i32) {
-    let hfont = CreateFontW(font_size, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
-    let old_font = SelectObject(hdc, hfont);
+unsafe fn measure_text_bounds(hdc: windows::Win32::Graphics::Gdi::HDC, text: &mut [u16], font_size: i32, max_width: i32) -> (i32, i32) {
+    let hfont = CreateFontW(font_size, 0, 0, 0, FW_MEDIUM.0 as i32, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
+    let old_font = SelectObject(hdc, hfont.into());
     
     // We start with the max width constraint.
     // DT_CALCRECT will expand the 'right' value if a single word is wider than max_width (unless we handle it),
@@ -21,7 +21,7 @@ unsafe fn measure_text_bounds(hdc: windows::Win32::Graphics::Gdi::CreatedHDC, te
     DrawTextW(hdc, text, &mut calc_rect, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL);
     
     SelectObject(hdc, old_font);
-    DeleteObject(hfont);
+    DeleteObject(hfont.into());
     
     // Return (Height, Width)
     (calc_rect.bottom, calc_rect.right)
@@ -37,7 +37,7 @@ pub fn create_bitmap_from_pixels(pixels: &[u32], w: i32, h: i32) -> HBITMAP {
             }, ..Default::default()
         };
         let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
-        let hbm = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+        let hbm = CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
         if !bits.is_null() {
             std::ptr::copy_nonoverlapping(pixels.as_ptr() as *const u8, bits as *mut u8, pixels.len() * 4);
         }
@@ -96,8 +96,8 @@ pub fn paint_window(hwnd: HWND) {
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
                 
                 // 1.1 Update Background Cache if needed
-                if state.bg_bitmap.0 == 0 || state.bg_w != width || state.bg_h != height {
-                    if state.bg_bitmap.0 != 0 { DeleteObject(state.bg_bitmap); }
+                if state.bg_bitmap.is_invalid() || state.bg_w != width || state.bg_h != height {
+                    if !state.bg_bitmap.is_invalid() { DeleteObject(state.bg_bitmap.into()); }
 
                     let bmi = BITMAPINFO {
                         bmiHeader: BITMAPINFOHEADER {
@@ -107,7 +107,7 @@ pub fn paint_window(hwnd: HWND) {
                     };
                     
                     let mut p_bg_bits: *mut core::ffi::c_void = std::ptr::null_mut();
-                    let hbm_bg = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &mut p_bg_bits, None, 0).unwrap();
+                    let hbm_bg = CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut p_bg_bits, None, 0).unwrap();
                     
                     if !p_bg_bits.is_null() {
                         let pixels = std::slice::from_raw_parts_mut(p_bg_bits as *mut u32, (width * height) as usize);
@@ -193,12 +193,12 @@ pub fn paint_window(hwnd: HWND) {
                     state.input_text.clone()
                 )
             } else {
-                (0, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, None, Vec::new(), HBITMAP(0), 72, true, HBITMAP(0), false, false, 0.0, 0, 0, 0, 0, "standard".to_string(), String::new(), String::new())
+                (0, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, None, Vec::new(), HBITMAP::default(), 72, true, HBITMAP::default(), false, false, 0.0, 0, 0, 0, 0, "standard".to_string(), String::new(), String::new())
             }
         };
 
         // --- PHASE 2: COMPOSITOR SETUP ---
-        let mem_dc = CreateCompatibleDC(hdc);
+        let mem_dc = CreateCompatibleDC(Some(hdc));
         
         let bmi_scratch = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
@@ -207,30 +207,30 @@ pub fn paint_window(hwnd: HWND) {
             }, ..Default::default()
         };
         let mut scratch_bits: *mut core::ffi::c_void = std::ptr::null_mut();
-        let scratch_bitmap = CreateDIBSection(hdc, &bmi_scratch, DIB_RGB_COLORS, &mut scratch_bits, None, 0).unwrap();
-        let old_scratch = SelectObject(mem_dc, scratch_bitmap);
+        let scratch_bitmap = CreateDIBSection(Some(hdc), &bmi_scratch, DIB_RGB_COLORS, &mut scratch_bits, None, 0).unwrap();
+        let old_scratch = SelectObject(mem_dc, scratch_bitmap.into());
 
         // 2.1 Copy Background
-        if cached_bg_bm.0 != 0 {
-            let cache_dc = CreateCompatibleDC(hdc);
-            let old_cbm = SelectObject(cache_dc, cached_bg_bm);
-            let _ = BitBlt(mem_dc, 0, 0, width, height, cache_dc, 0, 0, SRCCOPY).ok();
+        if !cached_bg_bm.is_invalid() {
+            let cache_dc = CreateCompatibleDC(Some(hdc));
+            let old_cbm = SelectObject(cache_dc, cached_bg_bm.into());
+            let _ = BitBlt(mem_dc, 0, 0, width, height, Some(cache_dc), 0, 0, SRCCOPY).ok();
             SelectObject(cache_dc, old_cbm);
             DeleteDC(cache_dc);
         }
 
         if !is_markdown_mode {
-            if cache_dirty || cached_text_bm.0 == 0 {
-                if cached_text_bm.0 != 0 { DeleteObject(cached_text_bm); }
+            if cache_dirty || cached_text_bm.is_invalid() {
+                if !cached_text_bm.is_invalid() { DeleteObject(cached_text_bm.into()); }
 
                 cached_text_bm = CreateCompatibleBitmap(hdc, width, height);
-                let cache_dc = CreateCompatibleDC(hdc);
-                let old_cache_bm = SelectObject(cache_dc, cached_text_bm);
+                let cache_dc = CreateCompatibleDC(Some(hdc));
+                let old_cache_bm = SelectObject(cache_dc, cached_text_bm.into());
 
                 let dark_brush = CreateSolidBrush(COLORREF(bg_color_u32));
                 let fill_rect = RECT { left: 0, top: 0, right: width, bottom: height };
                 FillRect(cache_dc, &fill_rect, dark_brush);
-                DeleteObject(dark_brush);
+                DeleteObject(dark_brush.into());
 
                 SetBkMode(cache_dc, TRANSPARENT);
                 SetTextColor(cache_dc, COLORREF(0x00FFFFFF));
@@ -281,8 +281,8 @@ pub fn paint_window(hwnd: HWND) {
                 let font_size_val = best_fit;
 
                 let font_weight = if is_refining { FW_NORMAL } else { FW_MEDIUM };
-                let hfont = CreateFontW(font_size_val, 0, 0, 0, font_weight.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
-                let old_font = SelectObject(cache_dc, hfont);
+                let hfont = CreateFontW(font_size_val, 0, 0, 0, font_weight.0 as i32, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
+                let old_font = SelectObject(cache_dc, hfont.into());
 
                 let mut measure_rect = RECT { left: 0, top: 0, right: available_w, bottom: 0 };
                 DrawTextW(cache_dc, &mut buf, &mut measure_rect, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL);
@@ -300,7 +300,7 @@ pub fn paint_window(hwnd: HWND) {
                 DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, draw_flags);
 
                 SelectObject(cache_dc, old_font);
-                DeleteObject(hfont);
+                DeleteObject(hfont.into());
                 SelectObject(cache_dc, old_cache_bm);
                 DeleteDC(cache_dc);
 
@@ -312,10 +312,10 @@ pub fn paint_window(hwnd: HWND) {
                 }
             }
 
-            if cached_text_bm.0 != 0 {
-                let cache_dc = CreateCompatibleDC(hdc);
-                let old_cbm = SelectObject(cache_dc, cached_text_bm);
-                let _ = BitBlt(mem_dc, 0, 0, width, height, cache_dc, 0, 0, SRCCOPY).ok();
+            if !cached_text_bm.is_invalid() {
+                let cache_dc = CreateCompatibleDC(Some(hdc));
+                let old_cbm = SelectObject(cache_dc, cached_text_bm.into());
+                let _ = BitBlt(mem_dc, 0, 0, width, height, Some(cache_dc), 0, 0, SRCCOPY).ok();
                 SelectObject(cache_dc, old_cbm);
                 DeleteDC(cache_dc);
             }
@@ -781,9 +781,9 @@ pub fn paint_window(hwnd: HWND) {
         } else { None };
 
         if let Some((px, py, hbm)) = broom_bitmap_data {
-             if hbm.0 != 0 {
-                let broom_dc = CreateCompatibleDC(hdc);
-                let old_hbm_broom = SelectObject(broom_dc, hbm);
+             if !hbm.is_invalid() {
+                let broom_dc = CreateCompatibleDC(Some(hdc));
+                let old_hbm_broom = SelectObject(broom_dc, hbm.into());
                 let mut bf = BLENDFUNCTION::default();
                 bf.BlendOp = AC_SRC_OVER as u8;
                 bf.SourceConstantAlpha = 255;
@@ -793,15 +793,15 @@ pub fn paint_window(hwnd: HWND) {
                 GdiAlphaBlend(mem_dc, draw_x, draw_y, BROOM_W, BROOM_H, broom_dc, 0, 0, BROOM_W, BROOM_H, bf);
                 SelectObject(broom_dc, old_hbm_broom);
                 DeleteDC(broom_dc);
-                DeleteObject(hbm);
+                DeleteObject(hbm.into());
             }
         }
 
         // --- PHASE 6: FINAL BLIT ---
-        let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY).ok();
+        let _ = BitBlt(hdc, 0, 0, width, height, Some(mem_dc), 0, 0, SRCCOPY).ok();
 
         SelectObject(mem_dc, old_scratch);
-        DeleteObject(scratch_bitmap);
+        DeleteObject(scratch_bitmap.into());
         DeleteDC(mem_dc);
         
         EndPaint(hwnd, &mut ps);

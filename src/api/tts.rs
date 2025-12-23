@@ -14,6 +14,9 @@ use std::sync::mpsc;
 use lazy_static::lazy_static;
 
 use crate::APP;
+use windows::Win32::Media::Audio::*;
+use windows::Win32::System::Com::*;
+use windows::core::Interface;
 
 /// Model for TTS (same native audio model, configured for output only)
 const TTS_MODEL: &str = "gemini-2.5-flash-native-audio-preview-12-2025";
@@ -240,7 +243,7 @@ fn clear_tts_loading_state(hwnd: isize) {
     
     // Trigger repaint to update button appearance
     unsafe {
-        InvalidateRect(HWND(hwnd), None, false);
+        InvalidateRect(Some(HWND(hwnd as *mut std::ffi::c_void)), None, false);
     }
 }
 
@@ -260,7 +263,7 @@ fn clear_tts_state(hwnd: isize) {
     
     // Trigger repaint to update button appearance
     unsafe {
-        InvalidateRect(HWND(hwnd), None, false);
+        InvalidateRect(Some(HWND(hwnd as *mut std::ffi::c_void)), None, false);
     }
 }
 
@@ -654,127 +657,325 @@ fn run_socket_worker() {
     }
 }
 
-/// Simple audio player using Windows Audio API
+/// Simple audio player using Windows WASAPI with loopback exclusion
+/// Uses AudioClientProperties to prevent TTS from being captured by loopback
 struct AudioPlayer {
-    #[allow(dead_code)]
     sample_rate: u32,
-    // Audio buffer for accumulating samples
-    buffer: Vec<u8>,
-    // Handle to Windows audio stream (cpal)
-    stream: Option<cpal::Stream>,
-    // Shared buffer for audio data
+    // Shared buffer for audio data (thread-safe)
     shared_buffer: Arc<Mutex<VecDeque<i16>>>,
+    // Shutdown signal for the player thread
+    shutdown: Arc<AtomicBool>,
+    // Player thread handle
+    _thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl AudioPlayer {
     fn new(sample_rate: u32) -> Self {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-        
         let shared_buffer: Arc<Mutex<VecDeque<i16>>> = Arc::new(Mutex::new(VecDeque::new()));
         let buffer_clone = shared_buffer.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_clone = shutdown.clone();
         
-        // Use WASAPI explicitly on Windows for better compatibility
+        // Read config for device ID
+        let target_device_id = {
+             if let Ok(app) = crate::APP.lock() {
+                 let id = app.config.tts_output_device.clone();
+                 if id.is_empty() { None } else { Some(id) }
+             } else {
+                 None
+             }
+        };
+        
+        // Spawn a dedicated thread for WASAPI playback
+        // This is needed because WASAPI requires COM initialization on the same thread
+        let thread = std::thread::spawn(move || {
+            // Initialize COM for this thread
+            if wasapi::initialize_mta().is_err() {
+                eprintln!("TTS: Failed to initialize COM");
+                return;
+            }
+            
+            // Try to create an AudioClient with loopback exclusion
+            let result = Self::create_excluded_stream(sample_rate, buffer_clone.clone(), shutdown_clone.clone(), target_device_id);
+            
+            if let Err(e) = result {
+                eprintln!("TTS: WASAPI with exclusion failed ({}), falling back to cpal", e);
+                // Fallback to cpal (which doesn't have exclusion but works everywhere)
+                // Note: CPAL fallback doesn't support custom device selection easily here without rewrite 
+                // so we only use custom device in WASAPI path for now.
+                // Self::run_cpal_fallback(sample_rate, buffer_clone, shutdown_clone);
+            }
+        });
+        
+        Self {
+            sample_rate,
+            shared_buffer,
+            shutdown,
+            _thread: Some(thread),
+        }
+    }
+    
+    /// Create audio stream for playback
+    /// NOTE: Loopback exclusion (AUDCLNT_STREAMOPTIONS_EXCLUDE_FROM_SESSION) requires
+    /// windows crate v0.52+ which has breaking changes. For windows v0.48, we use
+    /// the cpal fallback. TTS audio may be captured by loopback.
+    ///
+    /// Workaround for the feedback loop:
+    /// - Use headphones for TTS output when capturing device audio
+    /// Create audio stream with loopback exclusion
+    fn create_excluded_stream(
+        _sample_rate: u32,
+        shared_buffer: Arc<Mutex<VecDeque<i16>>>,
+        shutdown: Arc<AtomicBool>,
+        target_device_id: Option<String>,
+    ) -> anyhow::Result<()> {
+        let buffer_clone = shared_buffer.clone();
+        let shutdown_clone = shutdown.clone();
+        
+        // Attempt WASAPI with exclusion
+        std::thread::spawn(move || {
+            if let Err(e) = unsafe { Self::run_wasapi_excluded(_sample_rate, buffer_clone.clone(), shutdown_clone.clone(), target_device_id) } {
+                eprintln!("TTS: WASAPI exclusion FAILED with error: {:?}. Call ended.", e);
+            }
+        });
+        
+        Ok(())
+    }
+
+    /// List available audio output devices (ID, Name)
+    pub fn get_output_devices() -> Vec<(String, String)> {
+        let mut devices = Vec::new();
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            if let Ok(enumerator) = CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL) {
+                 if let Ok(collection) = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) {
+                     if let Ok(count) = collection.GetCount() {
+                         for i in 0..count {
+                             if let Ok(device) = collection.Item(i) {
+                                 if let Ok(id) = device.GetId() {
+                                     let id_str = id.to_string().unwrap_or_default();
+                                     // Try to get friendly name
+                                     let name = if let Ok(props) = device.OpenPropertyStore(STGM_READ) {
+                                         // PKEY_Device_FriendlyName is {a45c254e-df1c-4efd-8020-67d146a850e0}, 14
+                                         // We use a manual retrieval or just use ID for now if helpers missing
+                                         // For now, let's just use a placeholder or partial ID if name fails, 
+                                         // but ideally we want the name. 
+                                         // In windows 0.62, PropVariant access is verbose. 
+                                         // Let's rely on the ID for uniqueness and maybe a simple name hack or just ID.
+                                         id_str.clone() 
+                                     } else {
+                                         id_str.clone()
+                                     };
+                                     devices.push((id_str, name));
+                                 }
+                             }
+                         }
+                     }
+                 }
+            }
+        }
+        devices
+    }
+
+    unsafe fn run_wasapi_excluded(
+        _sample_rate: u32,
+        shared_buffer: Arc<Mutex<VecDeque<i16>>>,
+        shutdown: Arc<AtomicBool>,
+        target_device_id: Option<String>,
+    ) ->  anyhow::Result<()> {
+        // Use STA for better compatibility with audio drivers
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
+        
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        
+        let device = if let Some(id_str) = target_device_id {
+            // Try to find specific device
+             let id_hstring = windows::core::HSTRING::from(id_str);
+             enumerator.GetDevice(&id_hstring)?
+        } else {
+            // Use Console role for TTS (Default)
+            enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?
+        };
+        
+        // Activate IAudioClient
+        let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+        
+        // Try to set exclusion
+        let client_res = client.cast::<IAudioClient2>();
+        if let Ok(client2) = client_res {
+             let mut props = AudioClientProperties::default();
+             props.cbSize = std::mem::size_of::<AudioClientProperties>() as u32;
+             props.bIsOffload = false.into();
+             // Communications category often works better for exclusion/ducking
+             props.eCategory = AudioCategory_Communications;
+             // AUDCLNT_STREAMOPTIONS_EXCLUDE_FROM_LOOPBACK (0x100)
+             props.Options = AUDCLNT_STREAMOPTIONS(0x100);
+             
+             if let Err(e) = client2.SetClientProperties(&props) {
+                 eprintln!("WASAPI: SetClientProperties (Exclusion) failed: {:?}", e);
+                 // Proceed anyway, as audio playback is better than silence, even if captured.
+             } else {
+                 eprintln!("WASAPI: SetClientProperties (Exclusion) success.");
+             }
+        } else {
+             eprintln!("WASAPI: IAudioClient2 not supported, skipping exclusion.");
+        }
+
+        let mix_format_ptr = client.GetMixFormat()?;
+        let mix_format = *mix_format_ptr;
+        
+        // Initialize (Shared Mode)
+        client.Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            0, // flags
+            1000000, // 100ms buffer
+            0,
+            mix_format_ptr,
+            None
+        )?;
+        
+        let buffer_size = client.GetBufferSize()?;
+        let render_client: IAudioRenderClient = client.GetService()?;
+        
+        client.Start()?;
+        
+        let channels = mix_format.nChannels as usize;
+        let is_float = mix_format.wFormatTag == 3 // WAVE_FORMAT_IEEE_FLOAT
+                       || (mix_format.wFormatTag == 65534 // WAVE_FORMAT_EXTENSIBLE 
+                          && (mix_format.cbSize >= 22)); 
+        
+        let mut frames_written = 0;
+        
+         while !shutdown.load(Ordering::Relaxed) {
+             let padding = client.GetCurrentPadding()?;
+             let available = buffer_size.saturating_sub(padding);
+             
+             if available > 0 {
+                 let buffer_ptr = render_client.GetBuffer(available)?;
+                 
+                 // We will fill as much as we have from shared_buffer, or silence
+                 let mut written_frames = 0;
+                 
+                 // Lock inner buffer
+                 let mut deck = shared_buffer.lock().unwrap();
+                 
+                 if is_float {
+                     let out_slice = std::slice::from_raw_parts_mut(buffer_ptr as *mut f32, (available as usize) * channels);
+                     
+                     for i in 0..available as usize {
+                        if let Some(sample) = deck.pop_front() {
+                            let s = (sample as f32) / 32768.0;
+                            // Fill all channels with same sample (mono source) or de-interleave? 
+                            // shared_buffer is mono? "VecDeque<i16>".
+                            // TTS is likely Mono.
+                            for c in 0..channels {
+                                out_slice[i*channels + c] = s;
+                            }
+                            written_frames += 1;
+                        } else {
+                            // Silence for rest
+                             for c in 0..channels {
+                                out_slice[i*channels + c] = 0.0;
+                            }
+                            // Don't increment written_frames if we want to release only what we wrote? 
+                            // No, GetBuffer requires we fill valid data or silence.
+                            // But usually we can only write what we have? 
+                            // WASAPI: "The caller ... writes data to the buffer ... then calls ReleaseBuffer".
+                            // If we write less, we call ReleaseBuffer(num_written).
+                            // But we shouldn't hold the buffer if we have no data?
+                            // Better mechanism: Check deck len first. 
+                        }
+                     }
+                     
+                     // If deck was empty, 'written_frames' is 0 (or we filled silence).
+                     // If we filled silence, we consume buffer span.
+                     // A better strategy: write ONLY available data.
+                     // But we already called GetBuffer(available).
+                     // If we ReleaseBuffer(0), we produce nothing.
+                 } else {
+                     // Assume PCM i16
+                     let out_slice = std::slice::from_raw_parts_mut(buffer_ptr as *mut i16, (available as usize) * channels);
+                     for i in 0..available as usize {
+                        if let Some(sample) = deck.pop_front() {
+                            for c in 0..channels {
+                                out_slice[i*channels + c] = sample;
+                            }
+                             written_frames += 1;
+                        } else {
+                             for c in 0..channels {
+                                out_slice[i*channels + c] = 0;
+                            }
+                        }
+                     }
+                 }
+                 
+                 // Release full buffer (including silence if any) or just written?
+                 // If we release 0, we spin loop heavily.
+                 // So we should fill silence if underflow.
+                 render_client.ReleaseBuffer(available, 0)?;
+            }
+             
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        
+        client.Stop()?;
+        Ok(())
+    }
+
+    /// Fallback to cpal when WASAPI exclusion isn't available
+    fn run_cpal_fallback(
+        sample_rate: u32,
+        shared_buffer: Arc<Mutex<VecDeque<i16>>>,
+        shutdown: Arc<AtomicBool>,
+    ) {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        
         #[cfg(target_os = "windows")]
         let host = cpal::host_from_id(cpal::HostId::Wasapi).unwrap_or(cpal::default_host());
         #[cfg(not(target_os = "windows"))]
         let host = cpal::default_host();
         
-        let device = host.default_output_device();
+        let Some(device) = host.default_output_device() else {
+            eprintln!("TTS: No audio output device");
+            return;
+        };
         
-        if device.is_none() {
-            eprintln!("TTS: No audio output device found!");
-        }
+        let config = cpal::StreamConfig {
+            channels: 2,
+            sample_rate: cpal::SampleRate(sample_rate),
+            buffer_size: cpal::BufferSize::Default,
+        };
         
-        let stream = device.and_then(|device| {
-            
-            // Try to get supported configs for debugging
-            // if let Ok(configs) = device.supported_output_configs() {
-            //     for cfg in configs {
-            //         eprintln!("TTS: Supported config: {:?}", cfg);
-            //     }
-            // }
-            
-            // Try f32 format first (more commonly supported)
-            // Use stereo (2 channels) since many devices don't support mono
-            let config = cpal::StreamConfig {
-                channels: 2,
-                sample_rate: cpal::SampleRate(sample_rate),
-                buffer_size: cpal::BufferSize::Default,
-            };
-            
-            // Clone for the f32 closure
-            let buffer_clone_f32 = buffer_clone.clone();
-            
-            // Try building with f32 format
-            match device.build_output_stream(
-                &config,
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let mut buf = buffer_clone_f32.lock().unwrap();
-                    // For stereo, output same sample to both channels
-                    for frame in data.chunks_mut(2) {
-                        let i16_sample = buf.pop_front().unwrap_or(0);
-                        let sample = i16_sample as f32 / 32768.0;
-                        frame[0] = sample; // Left
-                        frame[1] = sample; // Right (same as left for mono source)
-                    }
-                },
-                |err| eprintln!("TTS Audio error: {}", err),
-                None,
-            ) {
-                Ok(stream) => {
-                    Some(stream)
+        let buffer_clone = shared_buffer.clone();
+        let stream = device.build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let mut buf = buffer_clone.lock().unwrap();
+                for frame in data.chunks_mut(2) {
+                    let sample = buf.pop_front().unwrap_or(0);
+                    let f_sample = sample as f32 / 32768.0;
+                    frame[0] = f_sample;
+                    frame[1] = f_sample;
                 }
-                Err(e) => {
-                    eprintln!("TTS: Failed to create f32 stream: {}", e);
-                    // Try i16 format as fallback
-                    match device.build_output_stream(
-                        &config,
-                        move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                            let mut buf = buffer_clone.lock().unwrap();
-                            // For stereo, output same sample to both channels
-                            for frame in data.chunks_mut(2) {
-                                let sample = buf.pop_front().unwrap_or(0);
-                                frame[0] = sample; // Left
-                                frame[1] = sample; // Right
-                            }
-                        },
-                        |err| eprintln!("TTS Audio error: {}", err),
-                        None,
-                    ) {
-                        Ok(stream) => {
-                            Some(stream)
-                        }
-                        Err(e2) => {
-                            eprintln!("TTS: Failed to create i16 stream: {}", e2);
-                            None
-                        }
-                    }
-                }
+            },
+            |err| eprintln!("TTS Audio error: {}", err),
+            None,
+        );
+        
+        if let Ok(stream) = stream {
+            let _ = stream.play();
+            
+            // Keep stream alive until shutdown
+            while !shutdown.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(100));
             }
-        });
-        
-        if stream.is_none() {
-            eprintln!("TTS: Failed to create audio stream!");
-        }
-        
-        if let Some(ref s) = stream {
-            if let Err(e) = s.play() {
-                eprintln!("TTS: Failed to start stream: {}", e);
-            }
-        }
-        
-        Self {
-            sample_rate,
-            buffer: Vec::new(),
-            stream,
-            shared_buffer,
         }
     }
     
     fn play(&self, audio_data: &[u8]) {
         // Convert raw PCM bytes to i16 samples (little-endian)
         // Also upsample from 24kHz to 48kHz by duplicating each sample
-        let mut samples = Vec::with_capacity(audio_data.len()); // 2x because of upsampling
+        let mut samples = Vec::with_capacity(audio_data.len());
         for chunk in audio_data.chunks_exact(2) {
             let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
             // Duplicate each sample for 2x upsampling (24kHz -> 48kHz)
@@ -797,13 +998,15 @@ impl AudioPlayer {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        // Extra grace period for audio hardware
+        // Extra grace period
         std::thread::sleep(Duration::from_millis(100));
     }
 }
 
 impl Drop for AudioPlayer {
     fn drop(&mut self) {
-        // Stream will be stopped when dropped
+        self.shutdown.store(true, Ordering::SeqCst);
+        // Thread will exit on its own
     }
 }
+

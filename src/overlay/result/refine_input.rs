@@ -30,6 +30,8 @@ struct RefineInputState {
     pub text: String,     // Submitted text
 }
 
+unsafe impl Send for RefineInputState {}
+
 // Thread-local storage for WebViews (not Send)
 thread_local! {
     static REFINE_WEBVIEWS: std::cell::RefCell<HashMap<isize, wry::WebView>> = std::cell::RefCell::new(HashMap::new());
@@ -60,6 +62,7 @@ unsafe extern "system" fn refine_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             apply_pending_text();
             LRESULT(0)
         }
+
         _ => DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 }
@@ -316,9 +319,9 @@ pub fn show_refine_input(parent_hwnd: HWND, placeholder: &str) -> bool {
             let class_name = w!("SGT_RefineInput");
             let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(refine_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.lpszClassName = class_name;
-            wc.hbrBackground = HBRUSH(0);
+            wc.hbrBackground = HBRUSH::default();
             CLASS_ATOM = RegisterClassW(&wc);
         }
         
@@ -328,16 +331,17 @@ pub fn show_refine_input(parent_hwnd: HWND, placeholder: &str) -> bool {
             w!(""),
             WS_CHILD | WS_VISIBLE,
             2, 2, width, input_height, // Position at top with small margin
-            parent_hwnd,
-            None, instance, None
+            Some(parent_hwnd),
+            None, Some(instance.into()), None
         );
         
-        if child_hwnd.0 == 0 {
+        if child_hwnd.is_err() {
             return false;
         }
         
         // Create WebView inside the child window
         let html = get_refine_html(placeholder);
+        let child_hwnd = child_hwnd.unwrap();
         let wrapper = HwndWrapper(child_hwnd);
         
         let parent_key_for_ipc = parent_key;
@@ -391,7 +395,7 @@ pub fn show_refine_input(parent_hwnd: HWND, placeholder: &str) -> bool {
                 true
             }
             Err(_) => {
-                DestroyWindow(child_hwnd);
+                let _ = DestroyWindow(child_hwnd);
                 false
             }
         }
@@ -462,8 +466,8 @@ pub fn bring_to_top(parent_hwnd: HWND) {
     let states = REFINE_STATES.lock().unwrap();
     if let Some(state) = states.get(&parent_key) {
         unsafe {
-            SetWindowPos(state.hwnd, HWND_TOP, 0, 0, 0, 0, 
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            let _ = SetWindowPos(state.hwnd, Some(HWND_TOP), 0, 0, 0, 0, 
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
     }
 }
@@ -478,7 +482,7 @@ pub fn is_any_refine_active() -> bool {
 /// Get the parent HWND of any active refine input
 pub fn get_active_refine_parent() -> Option<HWND> {
     let states = REFINE_STATES.lock().unwrap();
-    states.keys().next().map(|&k| HWND(k as isize))
+    states.keys().next().map(|&k| HWND(k as *mut std::ffi::c_void))
 }
 
 /// Set text in the refine input (cross-thread safe)
@@ -498,7 +502,7 @@ pub fn set_refine_text(parent_hwnd: HWND, text: &str) {
         
         // Post message to the child window to trigger the injection
         unsafe {
-            PostMessageW(hwnd, WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
+            PostMessageW(Some(hwnd), WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -523,9 +527,9 @@ pub fn resize_refine_input(parent_hwnd: HWND) {
             let width = parent_rect.right - 4; // 2px margin each side
             
             // Resize the child window
-            SetWindowPos(
+            let _ = SetWindowPos(
                 hwnd, 
-                HWND::default(), 
+                Some(HWND::default()), 
                 2, 2, width, input_height,
                 SWP_NOZORDER | SWP_NOACTIVATE
             );

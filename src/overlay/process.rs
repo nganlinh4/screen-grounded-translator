@@ -1,5 +1,6 @@
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
+use crate::win_types::SendHwnd;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::core::*;
@@ -32,6 +33,7 @@ struct ProcessingState {
 }
 
 unsafe impl Send for ProcessingState {}
+unsafe impl Sync for ProcessingState {}
 
 impl ProcessingState {
     fn new(graphics_mode: String) -> Self {
@@ -39,7 +41,7 @@ impl ProcessingState {
             animation_offset: 0.0,
             is_fading_out: false,
             alpha: 255,
-            cache_hbm: HBITMAP(0),
+            cache_hbm: HBITMAP::default(),
             cache_bits: std::ptr::null_mut(),
             scaled_w: 0,
             scaled_h: 0,
@@ -49,9 +51,9 @@ impl ProcessingState {
     }
     
     fn cleanup(&mut self) {
-        if self.cache_hbm.0 != 0 {
-            unsafe { DeleteObject(self.cache_hbm); }
-            self.cache_hbm = HBITMAP(0);
+        if !self.cache_hbm.is_invalid() {
+            unsafe { let _ = DeleteObject(self.cache_hbm.into()); }
+            self.cache_hbm = HBITMAP::default();
             self.cache_bits = std::ptr::null_mut();
         }
     }
@@ -200,7 +202,7 @@ pub fn start_text_processing(
             
             if !is_continuous {
                 // Normal mode: close input window
-                unsafe { PostMessageW(input_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                unsafe { PostMessageW(Some(input_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             } else {
                 // Continuous mode: close previous result overlays before spawning new ones
                 if let Ok(token_guard) = last_cancel_token_clone.lock() {
@@ -268,7 +270,7 @@ pub fn start_text_processing(
         
         text_input::show(guide_text, ui_lang, cancel_hotkey_name, false, move |user_prompt, input_hwnd| {
             // Close the input window
-            unsafe { PostMessageW(input_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { PostMessageW(Some(input_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             
             // Clone preset and modify the first block's prompt with user's input
             let mut modified_preset = (*preset).clone();
@@ -317,7 +319,7 @@ pub fn show_audio_result(
     // 
     // Pass the recording_hwnd as processing_indicator_hwnd - it will keep animating
     // until the first visible block appears (same behavior as image pipeline).
-    let processing_hwnd = if unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(recording_hwnd).as_bool() } {
+    let processing_hwnd = if unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(recording_hwnd)).as_bool() } {
         Some(recording_hwnd)
     } else {
         None
@@ -336,7 +338,7 @@ pub fn show_audio_result(
         Arc::new(Mutex::new(None)),
         RefineContext::None,
         true, // skip_execution: audio already done, just display and chain forward
-        processing_hwnd, // Pass recording overlay - will close when first visible block appears
+        processing_hwnd.map(SendHwnd), // Pass recording overlay - will close when first visible block appears
         Arc::new(AtomicBool::new(false)), // New chains start with cancellation = false
         preset.id.clone()
     );
@@ -368,7 +370,7 @@ pub fn start_processing_pipeline(
         // Use WebView-based text input
         text_input::show(guide_text, ui_lang, cancel_hotkey, false, move |user_prompt, input_hwnd| {
             // Close the input window
-            unsafe { PostMessageW(input_hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { let _ = PostMessageW(Some(input_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             
             // Clone preset and modify the first block's prompt with user's input
             let mut modified_preset = (*preset).clone();
@@ -387,7 +389,7 @@ pub fn start_processing_pipeline(
             
             // Create processing window IMMEDIATELY
             let processing_hwnd = unsafe { create_processing_window(screen_rect, graphics_mode) };
-            unsafe { SendMessageW(processing_hwnd, WM_TIMER, WPARAM(1), LPARAM(0)); }
+            unsafe { let _ = SendMessageW(processing_hwnd, WM_TIMER, Some(WPARAM(1)), Some(LPARAM(0))); }
             
             // Reset position queue for new chain
             reset_window_position_queue();
@@ -397,6 +399,7 @@ pub fn start_processing_pipeline(
             let connections = modified_preset.block_connections.clone();
             let preset_id = modified_preset.id.clone();
             
+            let processing_hwnd_send = SendHwnd(processing_hwnd);
             std::thread::spawn(move || {
                 run_chain_step(
                     0, 
@@ -408,7 +411,7 @@ pub fn start_processing_pipeline(
                     Arc::new(Mutex::new(None)), 
                     context, 
                     false,
-                    Some(processing_hwnd),
+                    Some(processing_hwnd_send),
                     Arc::new(AtomicBool::new(false)),
                     preset_id
                 );
@@ -420,7 +423,7 @@ pub fn start_processing_pipeline(
                 while GetMessageW(&mut msg, None, 0, 0).into() {
                     TranslateMessage(&msg);
                     DispatchMessageW(&msg);
-                    if !IsWindow(processing_hwnd).as_bool() { break; }
+                    if !IsWindow(Some(processing_hwnd)).as_bool() { break; }
                 }
             }
         });
@@ -433,7 +436,7 @@ pub fn start_processing_pipeline(
     // 1. Create Processing Window FIRST (instant, no delay)
     let graphics_mode = config.graphics_mode.clone();
     let processing_hwnd = unsafe { create_processing_window(screen_rect, graphics_mode) };
-    unsafe { SendMessageW(processing_hwnd, WM_TIMER, WPARAM(1), LPARAM(0)); }
+    unsafe { let _ = SendMessageW(processing_hwnd, WM_TIMER, Some(WPARAM(1)), Some(LPARAM(0))); }
     
     // 2. Spawn background thread to encode PNG and start chain execution
     let conf_clone = config.clone();
@@ -441,7 +444,9 @@ pub fn start_processing_pipeline(
     let connections = preset.block_connections.clone();
     let preset_id = preset.id.clone();
     
+    let processing_hwnd_val = processing_hwnd.0 as usize;
     std::thread::spawn(move || {
+        let processing_hwnd = HWND(processing_hwnd_val as *mut std::ffi::c_void);
         // Heavy work: PNG encoding happens here, while animation plays
         let mut png_data = Vec::new();
         let _ = cropped_img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png);
@@ -461,7 +466,7 @@ pub fn start_processing_pipeline(
             Arc::new(Mutex::new(None)), 
             context, 
             false,
-            Some(processing_hwnd), // Pass the handle to be closed later
+            Some(SendHwnd(processing_hwnd)), // Pass the handle to be closed later
             Arc::new(AtomicBool::new(false)), // New chains start with cancellation = false
             preset_id
         );
@@ -473,7 +478,7 @@ pub fn start_processing_pipeline(
         while GetMessageW(&mut msg, None, 0, 0).into() {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
-            if !IsWindow(processing_hwnd).as_bool() { break; }
+            if !IsWindow(Some(processing_hwnd)).as_bool() { break; }
         }
     }
 }
@@ -491,7 +496,7 @@ fn execute_chain_pipeline(
     // This window stays on the current thread (UI thread context for this operation)
     let graphics_mode = config.graphics_mode.clone();
     let processing_hwnd = unsafe { create_processing_window(rect, graphics_mode) };
-    unsafe { SendMessageW(processing_hwnd, WM_TIMER, WPARAM(1), LPARAM(0)); }
+    unsafe { let _ = SendMessageW(processing_hwnd, WM_TIMER, Some(WPARAM(1)), Some(LPARAM(0))); }
 
     // 2. Start the chain execution on a BACKGROUND thread
     // We pass the processing_hwnd so the background thread can close it when appropriate
@@ -500,6 +505,7 @@ fn execute_chain_pipeline(
     let connections = preset.block_connections.clone();
     let preset_id = preset.id.clone();
     
+    let processing_hwnd_send = SendHwnd(processing_hwnd);
     std::thread::spawn(move || {
         // Reset position queue for new chain
         reset_window_position_queue();
@@ -514,7 +520,7 @@ fn execute_chain_pipeline(
             Arc::new(Mutex::new(None)), 
             context, 
             false,
-            Some(processing_hwnd), // Pass the handle to be closed later
+            Some(processing_hwnd_send), // Pass the handle to be closed later
             Arc::new(AtomicBool::new(false)), // New chains start with cancellation = false
             preset_id
         );
@@ -526,7 +532,7 @@ fn execute_chain_pipeline(
         while GetMessageW(&mut msg, None, 0, 0).into() {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
-            if !IsWindow(processing_hwnd).as_bool() { break; }
+            if !IsWindow(Some(processing_hwnd)).as_bool() { break; }
         }
     }
 }
@@ -576,17 +582,17 @@ fn run_chain_step(
     blocks: Vec<ProcessingBlock>,
     connections: Vec<(usize, usize)>, // Graph edges: (from_idx, to_idx)
     config: Config,
-    parent_hwnd: Arc<Mutex<Option<HWND>>>,
+    parent_hwnd: Arc<Mutex<Option<SendHwnd>>>,
     context: RefineContext, // Passed to Block 0 (Image context)
     skip_execution: bool,   // If true, we just display result
-    mut processing_indicator_hwnd: Option<HWND>, // Handle to the "Processing..." overlay
+    mut processing_indicator_hwnd: Option<SendHwnd>, // Handle to the "Processing..." overlay
     cancel_token: Arc<AtomicBool>, // Cancellation flag - if true, stop processing
     preset_id: String,
 ) {
     // Check if cancelled before starting
     if cancel_token.load(Ordering::Relaxed) {
         if let Some(h) = processing_indicator_hwnd {
-            unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         }
         return;
     }
@@ -594,7 +600,7 @@ fn run_chain_step(
     if block_idx >= blocks.len() { 
         // End of chain. If processing overlay is still active (e.g., all blocks were hidden), close it now.
         if let Some(h) = processing_indicator_hwnd {
-             unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+             unsafe { let _ = PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         }
         return; 
     }
@@ -669,7 +675,7 @@ fn run_chain_step(
             
             if let Ok(p_guard) = parent_clone.lock() {
                 if let Some(ph) = *p_guard {
-                    link_windows(ph, hwnd);
+                    link_windows(ph.0, hwnd);
                 }
             }
             
@@ -677,21 +683,21 @@ fn run_chain_step(
             // It will be shown when first data arrives (in the streaming callback)
             // For text blocks: show immediately with refining animation
             if !is_image_block {
-                unsafe { ShowWindow(hwnd, SW_SHOW); }
+                unsafe { let _ = ShowWindow(hwnd, SW_SHOW); }
             }
-            let _ = tx_hwnd.send(hwnd);
+            let _ = tx_hwnd.send(SendHwnd(hwnd));
             
             unsafe { 
                 let mut m = MSG::default(); 
                 while GetMessageW(&mut m, None, 0, 0).into() { 
                     TranslateMessage(&m); 
                     DispatchMessageW(&m); 
-                    if !IsWindow(hwnd).as_bool() { break; } 
+                    if !IsWindow(Some(hwnd)).as_bool() { break; } 
                 } 
             }
         });
         
-        my_hwnd = rx_hwnd.recv().ok();
+        my_hwnd = rx_hwnd.recv().ok().map(|h| h.0);
         
         // Associate cancellation token with this window so destruction stops the chain
         if let Some(h) = my_hwnd {
@@ -727,7 +733,7 @@ fn run_chain_step(
         // For image blocks, we want to keep the beautiful gradient glow animation alive
         if block.block_type != "image" {
             if let Some(h) = processing_indicator_hwnd {
-                unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                unsafe { let _ = PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
                 // Consumed. Don't pass it to next steps.
                 processing_indicator_hwnd = None;
             }
@@ -791,11 +797,11 @@ fn run_chain_step(
                                 let mut shown = window_shown_clone.lock().unwrap();
                                 if !*shown {
                                     *shown = true;
-                                    unsafe { ShowWindow(h, SW_SHOW); }
+                                    unsafe { let _ = ShowWindow(h, SW_SHOW); }
                                     // Close processing indicator
                                     let mut proc_hwnd = processing_hwnd_clone.lock().unwrap();
                                     if let Some(ph) = proc_hwnd.take() {
-                                        unsafe { PostMessageW(ph, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                                        unsafe { let _ = PostMessageW(Some(ph.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
                                     }
                                 }
                             }
@@ -895,7 +901,7 @@ fn run_chain_step(
                 txt_c
             };
             
-            copy_to_clipboard(&final_text, HWND(0));
+            copy_to_clipboard(&final_text, HWND::default());
             
             if should_paste {
                 // Check if text input window is active - if so, set text directly
@@ -912,7 +918,7 @@ fn run_chain_step(
                 }
                 else if let Some(target) = target_window {
                     // Normal paste to last active window
-                    crate::overlay::utils::force_focus_and_paste(target);
+                    crate::overlay::utils::force_focus_and_paste(target.0);
                 }
             }
         });
@@ -959,7 +965,7 @@ fn run_chain_step(
     // Check cancellation before continuing
     if cancel_token.load(Ordering::Relaxed) {
         if let Some(h) = processing_indicator_hwnd {
-            unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         }
         return;
     }
@@ -989,13 +995,13 @@ fn run_chain_step(
         if next_blocks.is_empty() {
             // End of chain
             if let Some(h) = processing_indicator_hwnd {
-                unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                unsafe { PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             }
             return;
         }
         
         let next_parent = if my_hwnd.is_some() {
-            Arc::new(Mutex::new(my_hwnd))
+            Arc::new(Mutex::new(my_hwnd.map(|h| SendHwnd(h))))
         } else {
             parent_hwnd 
         };
@@ -1075,7 +1081,7 @@ fn run_chain_step(
         // Chain stopped unexpectedly (empty result or error)
         // Ensure processing overlay is closed
         if let Some(h) = processing_indicator_hwnd {
-             unsafe { PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+             unsafe { PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         }
     }
 }
@@ -1088,11 +1094,11 @@ unsafe fn create_processing_window(rect: RECT, graphics_mode: String) -> HWND {
     REGISTER_PROC_CLASS.call_once(|| {
         let mut wc = WNDCLASSW::default();
         wc.lpfnWndProc = Some(processing_wnd_proc);
-        wc.hInstance = instance;
+        wc.hInstance = instance.into();
         wc.hCursor = LoadCursorW(None, IDC_WAIT).unwrap();
         wc.lpszClassName = class_name;
         wc.style = CS_HREDRAW | CS_VREDRAW;
-        wc.hbrBackground = HBRUSH(0); 
+        wc.hbrBackground = HBRUSH(std::ptr::null_mut()); 
         RegisterClassW(&wc);
     });
 
@@ -1103,12 +1109,12 @@ unsafe fn create_processing_window(rect: RECT, graphics_mode: String) -> HWND {
 
     let hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE, 
-        class_name, w!("Processing"), WS_POPUP, rect.left, rect.top, w, h, None, None, instance, None
-    );
+        class_name, w!("Processing"), WS_POPUP, rect.left, rect.top, w, h, None, None, Some(instance.into()), None
+    ).unwrap_or_default();
     let mut states = PROC_STATES.lock().unwrap();
     states.insert(hwnd.0 as isize, ProcessingState::new(graphics_mode));
     drop(states);
-    SetTimer(hwnd, 1, timer_interval, None);
+    SetTimer(Some(hwnd), 1, timer_interval, None);
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     hwnd
 }
@@ -1121,8 +1127,8 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             if !state.is_fading_out {
                 state.is_fading_out = true;
                 if !state.timer_killed {
-                    KillTimer(hwnd, 1); state.timer_killed = true;
-                    SetTimer(hwnd, 2, 25, None);
+                    KillTimer(Some(hwnd), 1); state.timer_killed = true;
+                    SetTimer(Some(hwnd), 2, 25, None);
                 }
             }
             LRESULT(0)
@@ -1140,7 +1146,7 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 (destroy_flag, state.animation_offset, state.alpha, state.is_fading_out)
             };
             if should_destroy { 
-                KillTimer(hwnd, 1); KillTimer(hwnd, 2); 
+                KillTimer(Some(hwnd), 1); KillTimer(Some(hwnd), 2); 
                 DestroyWindow(hwnd); 
                 return LRESULT(0); 
             }
@@ -1155,11 +1161,11 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 } else { 1.0 };
                 let buf_w = ((w as f32) * scale_factor).ceil() as i32;
                 let buf_h = ((h as f32) * scale_factor).ceil() as i32;
-                if state.cache_hbm.0 == 0 || state.scaled_w != buf_w || state.scaled_h != buf_h {
+                if state.cache_hbm.is_invalid() || state.scaled_w != buf_w || state.scaled_h != buf_h {
                     state.cleanup();
                     let screen_dc = GetDC(None);
                     let bmi = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: buf_w, biHeight: -buf_h, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0 as u32, ..Default::default() }, ..Default::default() };
-                    let res = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut state.cache_bits, None, 0);
+                    let res = CreateDIBSection(Some(screen_dc), &bmi, DIB_RGB_COLORS, &mut state.cache_bits, None, 0);
                     ReleaseDC(None, screen_dc);
                     if let Ok(hbm) = res { if !hbm.is_invalid() && !state.cache_bits.is_null() { state.cache_hbm = hbm; state.scaled_w = buf_w; state.scaled_h = buf_h; } else { return LRESULT(0); } } else { return LRESULT(0); }
                 }
@@ -1170,25 +1176,25 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 let screen_dc = GetDC(None);
                 let needs_scaling = state.scaled_w != w || state.scaled_h != h;
                 let (final_hbm, final_w, final_h) = if needs_scaling {
-                    let scaled_dc = CreateCompatibleDC(screen_dc); SelectObject(scaled_dc, state.cache_hbm);
+                    let scaled_dc = CreateCompatibleDC(Some(screen_dc)); SelectObject(scaled_dc, state.cache_hbm.into());
                     let dest_bmi = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: w, biHeight: -h, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0 as u32, ..Default::default() }, ..Default::default() };
                     let mut dest_bits: *mut core::ffi::c_void = std::ptr::null_mut();
-                    let dest_hbm = CreateDIBSection(screen_dc, &dest_bmi, DIB_RGB_COLORS, &mut dest_bits, None, 0);
+                    let dest_hbm = CreateDIBSection(Some(screen_dc), &dest_bmi, DIB_RGB_COLORS, &mut dest_bits, None, 0);
                     if let Ok(hbm) = dest_hbm {
                         if !hbm.is_invalid() {
-                            let dest_dc = CreateCompatibleDC(screen_dc); SelectObject(dest_dc, hbm);
-                            SetStretchBltMode(dest_dc, HALFTONE); StretchBlt(dest_dc, 0, 0, w, h, scaled_dc, 0, 0, state.scaled_w, state.scaled_h, SRCCOPY);
+                            let dest_dc = CreateCompatibleDC(Some(screen_dc)); SelectObject(dest_dc, hbm.into());
+                            SetStretchBltMode(dest_dc, HALFTONE); StretchBlt(dest_dc, 0, 0, w, h, Some(scaled_dc), 0, 0, state.scaled_w, state.scaled_h, SRCCOPY);
                             DeleteDC(scaled_dc); (Some((dest_dc, hbm)), w, h)
                         } else { DeleteDC(scaled_dc); (None, state.scaled_w, state.scaled_h) }
                     } else { DeleteDC(scaled_dc); (None, state.scaled_w, state.scaled_h) }
                 } else { (None, w, h) };
                 
-                let (mem_dc, old_hbm, temp_res) = if let Some((dc, hbm)) = final_hbm { (dc, HGDIOBJ::default(), Some(hbm)) } else { let dc = CreateCompatibleDC(screen_dc); let old = SelectObject(dc, state.cache_hbm); (dc, old, None) };
+                let (mem_dc, old_hbm, temp_res) = if let Some((dc, hbm)) = final_hbm { (dc, HGDIOBJ::default(), Some(hbm)) } else { let dc = CreateCompatibleDC(Some(screen_dc)); let old = SelectObject(dc, state.cache_hbm.into()); (dc, old, None) };
                 let pt_src = POINT { x: 0, y: 0 }; let size = SIZE { cx: final_w, cy: final_h };
                 let mut blend = BLENDFUNCTION::default(); blend.BlendOp = AC_SRC_OVER as u8; blend.SourceConstantAlpha = alpha; blend.AlphaFormat = AC_SRC_ALPHA as u8;
-                UpdateLayeredWindow(hwnd, None, None, Some(&size), mem_dc, Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
+                UpdateLayeredWindow(hwnd, None, None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
                 
-                if temp_res.is_some() { DeleteDC(mem_dc); if let Some(hbm) = temp_res { DeleteObject(hbm); } } else { SelectObject(mem_dc, old_hbm); DeleteDC(mem_dc); }
+                if temp_res.is_some() { DeleteDC(mem_dc); if let Some(hbm) = temp_res { DeleteObject(hbm.into()); } } else { SelectObject(mem_dc, old_hbm); DeleteDC(mem_dc); }
                 ReleaseDC(None, screen_dc);
             }
             LRESULT(0)

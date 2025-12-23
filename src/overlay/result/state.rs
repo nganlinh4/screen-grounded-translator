@@ -224,7 +224,7 @@ pub fn close_windows_with_token(token: &Arc<AtomicBool>) {
         for (&h_val, state) in states.iter() {
             if let Some(ref t) = state.cancellation_token {
                 if Arc::ptr_eq(token, t) {
-                    to_close.push(HWND(h_val as isize));
+                    to_close.push(HWND(h_val as *mut std::ffi::c_void));
                 }
             }
         }
@@ -233,8 +233,8 @@ pub fn close_windows_with_token(token: &Arc<AtomicBool>) {
     // Close them
     for hwnd in to_close {
         unsafe {
-            if IsWindow(hwnd).as_bool() {
-                let _ = PostMessageW(hwnd, WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
+            if IsWindow(Some(hwnd)).as_bool() {
+                let _ = PostMessageW(Some(hwnd), WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
             }
         }
     }

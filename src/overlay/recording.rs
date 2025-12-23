@@ -1,12 +1,14 @@
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
+use crate::win_types::SendHwnd;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::core::*;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering, AtomicU32}, Once, Mutex};
 use crate::APP;
 
-static mut RECORDING_HWND: HWND = HWND(0);
+
+static mut RECORDING_HWND: SendHwnd = SendHwnd(HWND(std::ptr::null_mut()));
 static mut IS_RECORDING: bool = false;
 static mut IS_PAUSED: bool = false;
 static mut ANIMATION_OFFSET: f32 = 0.0;
@@ -49,15 +51,15 @@ static mut WARMUP_COUNTER: i32 = 0;
 static REGISTER_RECORDING_CLASS: Once = Once::new();
 
 pub fn is_recording_overlay_active() -> bool {
-    unsafe { IS_RECORDING && RECORDING_HWND.0 != 0 }
+    unsafe { IS_RECORDING && !RECORDING_HWND.is_invalid() }
 }
 
 pub fn stop_recording_and_submit() {
     unsafe {
-        if IS_RECORDING && RECORDING_HWND.0 != 0 {
+        if IS_RECORDING && !RECORDING_HWND.is_invalid() {
             AUDIO_STOP_SIGNAL.store(true, Ordering::SeqCst);
             // Force immediate update to show "Processing"
-            PostMessageW(RECORDING_HWND, WM_TIMER, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(RECORDING_HWND.0), WM_TIMER, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -92,7 +94,7 @@ pub fn show_recording_overlay(preset_idx: usize) {
         REGISTER_RECORDING_CLASS.call_once(|| {
             let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(recording_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap(); 
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -110,20 +112,22 @@ pub fn show_recording_overlay(preset_idx: usize) {
             w!("SGT Recording"),
             WS_POPUP,
             x, y, UI_WIDTH, UI_HEIGHT,
-            None, None, instance, None
-        );
+            None, None, Some(instance.into()), None
+        ).unwrap_or_default();
 
-        RECORDING_HWND = hwnd;
+        RECORDING_HWND = SendHwnd(hwnd);
         
-        SetTimer(hwnd, 1, 16, None); 
+        SetTimer(Some(hwnd), 1, 16, None); 
 
         if !preset.hide_recording_ui {
             // Initially 0 alpha, will fade in via timer
             paint_layered_window(hwnd, UI_WIDTH, UI_HEIGHT, 0);
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
 
+        let hwnd_val = hwnd.0 as usize;
         std::thread::spawn(move || {
+            let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
             // FIX: Pass AUDIO_ABORT_SIGNAL to the worker thread
             crate::api::record_audio_and_transcribe(
                 preset, 
@@ -135,14 +139,14 @@ pub fn show_recording_overlay(preset_idx: usize) {
         });
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            let _ = DispatchMessageW(&msg);
             if msg.message == WM_QUIT { break; }
         }
 
         IS_RECORDING = false;
-        RECORDING_HWND = HWND(0);
+        RECORDING_HWND = SendHwnd::default();
     }
 }
 
@@ -163,10 +167,10 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
     };
     
     let mut p_bits: *mut core::ffi::c_void = std::ptr::null_mut();
-    let bitmap = CreateDIBSection(screen_dc, &bmi, windows::Win32::Graphics::Gdi::DIB_RGB_COLORS, &mut p_bits, None, 0).unwrap();
+    let bitmap = CreateDIBSection(Some(screen_dc), &bmi, windows::Win32::Graphics::Gdi::DIB_RGB_COLORS, &mut p_bits, None, 0).unwrap();
     
-    let mem_dc = CreateCompatibleDC(screen_dc);
-    let old_bitmap = SelectObject(mem_dc, bitmap);
+    let mem_dc = CreateCompatibleDC(Some(screen_dc));
+    let old_bitmap = SelectObject(mem_dc, bitmap.into());
 
     let is_processing = AUDIO_STOP_SIGNAL.load(Ordering::SeqCst); // API processing after stop
     let warmup_complete = AUDIO_WARMUP_COMPLETE.load(Ordering::SeqCst);
@@ -436,8 +440,8 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
 
     // --- MAIN STATUS TEXT ---
     // Moved up significantly to be optically centered in top half
-    let hfont_main = CreateFontW(19, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
-    let old_font = SelectObject(mem_dc, hfont_main);
+    let hfont_main = CreateFontW(19, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
+    let old_font = SelectObject(mem_dc, hfont_main.into());
 
     let src_text = if is_processing {
         "Đang xử lý..."
@@ -456,13 +460,13 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
     let mut tr = RECT { left: 0, top: 0, right: width, bottom: 45 };
     DrawTextW(mem_dc, &mut text_w, &mut tr, DT_CENTER | DT_BOTTOM | DT_SINGLELINE);
 
-    SelectObject(mem_dc, old_font);
-    DeleteObject(hfont_main);
+    let _ = SelectObject(mem_dc, old_font);
+    let _ = DeleteObject(hfont_main.into());
 
     // Only show sub-text if not processing
     if !is_waiting {
-        let hfont_sub = CreateFontW(14, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
-        SelectObject(mem_dc, hfont_sub);
+        let hfont_sub = CreateFontW(14, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
+        SelectObject(mem_dc, hfont_sub.into());
         SetTextColor(mem_dc, COLORREF(0x00DDDDDD)); 
 
         let sub_text = "Bấm hotkey lần nữa để xử lý âm thanh";
@@ -470,8 +474,8 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
         let mut tr_sub = RECT { left: 0, top: 47, right: width, bottom: height };
         DrawTextW(mem_dc, &mut sub_text_w, &mut tr_sub, DT_CENTER | DT_TOP | DT_SINGLELINE);
 
-        SelectObject(mem_dc, old_font);
-        DeleteObject(hfont_sub);
+        let _ = SelectObject(mem_dc, old_font);
+        let _ = DeleteObject(hfont_sub.into());
     }
     
     // --- TEXT ALPHA FIX ---
@@ -503,12 +507,12 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
     blend.SourceConstantAlpha = alpha; // Use the fading alpha
     blend.AlphaFormat = AC_SRC_ALPHA as u8;
 
-    UpdateLayeredWindow(hwnd, HDC(0), None, Some(&size), mem_dc, Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
+    UpdateLayeredWindow(hwnd, Some(HDC::default()), None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
 
-    SelectObject(mem_dc, old_bitmap);
-    DeleteObject(bitmap);
-    DeleteDC(mem_dc);
-    ReleaseDC(None, screen_dc);
+    let _ = SelectObject(mem_dc, old_bitmap);
+    let _ = DeleteObject(bitmap.into());
+    let _ = DeleteDC(mem_dc);
+    let _ = ReleaseDC(None, screen_dc);
 }
 
 unsafe extern "system" fn recording_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -519,9 +523,9 @@ unsafe extern "system" fn recording_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             
             if hit_test == HTCLIENT as i32 {
                 if is_processing {
-                    SetCursor(LoadCursorW(None, IDC_APPSTARTING).unwrap());
+                    SetCursor(Some(LoadCursorW(None, IDC_APPSTARTING).unwrap()));
                 } else {
-                    SetCursor(LoadCursorW(None, IDC_HAND).unwrap());
+                    SetCursor(Some(LoadCursorW(None, IDC_HAND).unwrap()));
                 }
                 LRESULT(1)
             } else {
@@ -567,7 +571,7 @@ unsafe extern "system" fn recording_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                 // FIX: Clicked "X" button -> ABORT, NOT SUBMIT
                 AUDIO_ABORT_SIGNAL.store(true, Ordering::SeqCst); 
                 AUDIO_STOP_SIGNAL.store(true, Ordering::SeqCst); // Stop loop
-                PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             } 
             // Only allow Pause button if not processing
             else if !is_processing {
@@ -622,10 +626,10 @@ unsafe extern "system" fn recording_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
              LRESULT(0)
          }
         WM_CLOSE => {
-            // FIX: Ensure clean stop even if Alt+F4
+             // FIX: Ensure clean stop even if Alt+F4
             AUDIO_ABORT_SIGNAL.store(true, Ordering::SeqCst);
             AUDIO_STOP_SIGNAL.store(true, Ordering::SeqCst);
-            DestroyWindow(hwnd);
+            let _ = DestroyWindow(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }

@@ -28,7 +28,7 @@ pub fn copy_to_clipboard(text: &str, hwnd: HWND) {
     unsafe {
         // Retry loop to handle temporary clipboard locks
         for attempt in 0..5 {
-            if OpenClipboard(hwnd).as_bool() {
+            if OpenClipboard(Some(hwnd)).is_ok() {
                 EmptyClipboard();
                 
                 // Convert text to UTF-16
@@ -43,7 +43,7 @@ pub fn copy_to_clipboard(text: &str, hwnd: HWND) {
                     
                     // Set clipboard data (CF_UNICODETEXT = 13)
                     let h_mem_handle = HANDLE(h_mem.0);
-                    let _ = SetClipboardData(13u32, h_mem_handle);
+                    let _ = SetClipboardData(13u32, Some(h_mem_handle));
                 }
                 
                 CloseClipboard();
@@ -66,7 +66,7 @@ pub fn copy_to_clipboard(text: &str, hwnd: HWND) {
 pub fn get_target_window_for_paste() -> Option<HWND> {
     unsafe {
         let hwnd_foreground = GetForegroundWindow();
-        if hwnd_foreground.0 == 0 { return None; }
+        if hwnd_foreground.is_invalid() { return None; }
         
         let thread_id = GetWindowThreadProcessId(hwnd_foreground, None);
         if thread_id == 0 { return None; }
@@ -74,13 +74,13 @@ pub fn get_target_window_for_paste() -> Option<HWND> {
         let mut gui_info = GUITHREADINFO::default();
         gui_info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
         
-        if GetGUIThreadInfo(thread_id, &mut gui_info).as_bool() {
+        if GetGUIThreadInfo(thread_id, &mut gui_info).is_ok() {
             // Check legacy caret
-            let has_caret = gui_info.hwndCaret.0 != 0;
+            let has_caret = !gui_info.hwndCaret.is_invalid();
             let blinking = (gui_info.flags & GUI_CARETBLINKING).0 != 0;
             
             // Check keyboard focus (Fix for Chrome/Electron/WPF)
-            let has_focus = gui_info.hwndFocus.0 != 0;
+            let has_focus = !gui_info.hwndFocus.is_invalid();
 
             if has_caret || blinking || has_focus {
                 return Some(hwnd_foreground);
@@ -94,7 +94,7 @@ pub fn get_target_window_for_paste() -> Option<HWND> {
 pub fn force_focus_and_paste(hwnd_target: HWND) {
     unsafe {
         // 1. Force focus back to the target window
-        if IsWindow(hwnd_target).as_bool() {
+        if IsWindow(Some(hwnd_target)).as_bool() {
             let cur_thread = GetCurrentThreadId();
             let target_thread = GetWindowThreadProcessId(hwnd_target, None);
             
@@ -103,7 +103,7 @@ pub fn force_focus_and_paste(hwnd_target: HWND) {
                 let _ = SetForegroundWindow(hwnd_target);
                 // Important: Bring window to top so it receives input
                 let _ = BringWindowToTop(hwnd_target);
-                let _ = SetFocus(hwnd_target);
+                let _ = SetFocus(Some(hwnd_target));
                 let _ = AttachThreadInput(cur_thread, target_thread, false);
             } else {
                 let _ = SetForegroundWindow(hwnd_target);

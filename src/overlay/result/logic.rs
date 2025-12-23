@@ -83,7 +83,7 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                                 right: client_rect.right,
                                 bottom: client_rect.bottom,
                             };
-                            InvalidateRect(hwnd, Some(&bottom_region), false);
+                            InvalidateRect(Some(hwnd), Some(&bottom_region), false);
                             
                             // Left margin
                             let left_margin = RECT {
@@ -92,7 +92,7 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                                 right: 10,
                                 bottom: edit_bottom,
                             };
-                            InvalidateRect(hwnd, Some(&left_margin), false);
+                            InvalidateRect(Some(hwnd), Some(&left_margin), false);
                             
                             // Right margin  
                             let right_margin = RECT {
@@ -101,9 +101,9 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                                 right: client_rect.right,
                                 bottom: edit_bottom,
                             };
-                            InvalidateRect(hwnd, Some(&right_margin), false);
+                            InvalidateRect(Some(hwnd), Some(&right_margin), false);
                         } else {
-                            InvalidateRect(hwnd, None, false);
+                            InvalidateRect(Some(hwnd), None, false);
                         }
                     }
                 }
@@ -118,18 +118,19 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                     if let Some(state) = states.get(&(hwnd.0 as isize)) { state.linked_window } else { None }
                 };
                 if let Some(linked) = linked_hwnd {
-                    if IsWindow(linked).as_bool() { 
+                    let linked = crate::win_types::SendHwnd(linked).0;
+                    if IsWindow(Some(linked)).as_bool() { 
                         // Also set linked window to invisible
                         SetLayeredWindowAttributes(linked, COLORREF(0), 0, LWA_ALPHA);
-                        PostMessageW(linked, WM_CLOSE, WPARAM(0), LPARAM(0)); 
+                        PostMessageW(Some(linked), WM_CLOSE, WPARAM(0), LPARAM(0)); 
                     }
                 }
-                PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         } 
         else if wparam.0 == 1 {
             // Revert Copy Icon
-            KillTimer(hwnd, 1);
+            KillTimer(Some(hwnd), 1);
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) { 
                 state.copy_success = false; 
@@ -149,7 +150,7 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                     });
                 }
             }
-            InvalidateRect(hwnd, None, false);
+            InvalidateRect(Some(hwnd), None, false);
         }
     }
 }

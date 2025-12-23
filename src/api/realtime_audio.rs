@@ -387,46 +387,62 @@ pub fn start_realtime_transcription(
     translation_hwnd: Option<HWND>,
     state: SharedRealtimeState,
 ) {
+    let overlay_send = crate::win_types::SendHwnd(overlay_hwnd);
+    let translation_send = translation_hwnd.map(crate::win_types::SendHwnd);
+
     std::thread::spawn(move || {
-        use crate::overlay::realtime_webview::{AUDIO_SOURCE_CHANGE, NEW_AUDIO_SOURCE};
+        transcription_thread_entry(preset, stop_signal, overlay_send, translation_send, state);
+    });
+}
+
+fn transcription_thread_entry(
+    preset: Preset,
+    stop_signal: Arc<AtomicBool>,
+    overlay_send: crate::win_types::SendHwnd,
+    translation_send: Option<crate::win_types::SendHwnd>,
+    state: SharedRealtimeState,
+) {
+    let hwnd_overlay = overlay_send.0;
+    let hwnd_translation = translation_send.map(|h| h.0);
+
+    use crate::overlay::realtime_webview::{AUDIO_SOURCE_CHANGE, NEW_AUDIO_SOURCE};
+    
+    let mut current_preset = preset;
+    
+    loop {
+        // Clear any pending audio source change request
+        AUDIO_SOURCE_CHANGE.store(false, Ordering::SeqCst);
         
-        let mut current_preset = preset;
+        // Run transcription - returns when stopped or when restart is needed
+        let result = run_realtime_transcription(
+            current_preset.clone(),
+            stop_signal.clone(),
+            hwnd_overlay,
+            hwnd_translation,
+            state.clone(),
+        );
         
-        loop {
-            // Clear any pending audio source change request
-            AUDIO_SOURCE_CHANGE.store(false, Ordering::SeqCst);
-            
-            // Run transcription - returns when stopped or when restart is needed
-            let result = run_realtime_transcription(
-                current_preset.clone(),
-                stop_signal.clone(),
-                overlay_hwnd,
-                translation_hwnd,
-                state.clone(),
-            );
-            
-            if let Err(e) = result {
-                eprintln!("Realtime transcription error: {}", e);
-            }
-            
-            // Check if we should restart with new audio source
-            if AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
-                if let Ok(new_source) = NEW_AUDIO_SOURCE.lock() {
-                    if !new_source.is_empty() {
-                        current_preset.audio_source = new_source.clone();
-                        
-                        // Don't reset state - continue with same transcript
-                        // Just clear stop signal for restart
-                        stop_signal.store(false, Ordering::SeqCst);
-                        continue; // Restart the loop
-                    }
+        if let Err(e) = result {
+            eprintln!("Realtime transcription error: {}", e);
+        }
+        
+        // Check if we should restart with new audio source
+        if AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
+            if let Ok(new_source) = NEW_AUDIO_SOURCE.lock() {
+                if !new_source.is_empty() {
+                    current_preset.audio_source = new_source.clone();
+                    
+                    // Don't reset state - continue with same transcript
+                    // Just clear stop signal for restart
+                    stop_signal.store(false, Ordering::SeqCst);
+                    continue; // Restart the loop
                 }
             }
-            
-            // Normal exit - don't restart
-            break;
         }
-    });
+        
+        // Normal exit - don't restart
+        break;
+    }
 }
 
 fn run_realtime_transcription(
@@ -656,10 +672,22 @@ fn run_realtime_transcription(
     
     if has_translation {
         let translation_hwnd = translation_hwnd.unwrap();
+        let translation_send = crate::win_types::SendHwnd(translation_hwnd);
         std::thread::spawn(move || {
-            run_translation_loop(translation_preset, translation_stop, translation_hwnd, translation_state);
+            translation_thread_entry(translation_preset, translation_stop, translation_send, translation_state);
         });
     }
+
+
+fn translation_thread_entry(
+    preset: Preset,
+    stop_signal: Arc<AtomicBool>,
+    translation_send: crate::win_types::SendHwnd,
+    state: SharedRealtimeState,
+) {
+    let translation_hwnd = translation_send.0;
+    run_translation_loop(preset, stop_signal, translation_hwnd, state);
+}
     
     // Main loop: send audio chunks and receive transcriptions
     let mut last_send = Instant::now();
@@ -691,7 +719,7 @@ fn run_realtime_transcription(
     
     while !stop_signal.load(Ordering::Relaxed) {
         // Check if overlay window still exists
-        if !unsafe { IsWindow(overlay_hwnd).as_bool() } {
+        if !unsafe { IsWindow(Some(overlay_hwnd)).as_bool() } {
             stop_signal.store(true, Ordering::SeqCst);
             break;
         }
@@ -780,7 +808,7 @@ fn run_realtime_transcription(
             
             // Post volume update to overlay window for visualizer
             unsafe {
-                let _ = PostMessageW(overlay_hwnd, WM_VOLUME_UPDATE, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(overlay_hwnd), WM_VOLUME_UPDATE, WPARAM(0), LPARAM(0));
             }
         }
         
@@ -1037,7 +1065,7 @@ fn run_translation_loop(
     };
     
     while !stop_signal.load(Ordering::Relaxed) {
-        if !unsafe { IsWindow(translation_hwnd).as_bool() } {
+        if !unsafe { IsWindow(Some(translation_hwnd)).as_bool() } {
             break;
         }
         
@@ -1262,7 +1290,7 @@ fn run_translation_loop(
                         }
                         unsafe {
                             let flag = match alt_model { "google-gemma" => 1, "google-gtx" => 2, _ => 0 };
-                            let _ = PostMessageW(translation_hwnd, WM_MODEL_SWITCH, WPARAM(flag), LPARAM(0));
+                            let _ = PostMessageW(Some(translation_hwnd), WM_MODEL_SWITCH, WPARAM(flag), LPARAM(0));
                         }
 
                         // Execute Retry
@@ -1369,7 +1397,7 @@ fn update_overlay_text(hwnd: HWND, text: &str) {
     
     // Post message to trigger repaint
     unsafe {
-        let _ = PostMessageW(hwnd, WM_REALTIME_UPDATE, WPARAM(0), LPARAM(0));
+        let _ = PostMessageW(Some(hwnd), WM_REALTIME_UPDATE, WPARAM(0), LPARAM(0));
     }
 }
 
@@ -1386,7 +1414,7 @@ fn update_translation_text(hwnd: HWND, text: &str) {
     
     // Post message to trigger repaint
     unsafe {
-        let _ = PostMessageW(hwnd, WM_TRANSLATION_UPDATE, WPARAM(0), LPARAM(0));
+        let _ = PostMessageW(Some(hwnd), WM_TRANSLATION_UPDATE, WPARAM(0), LPARAM(0));
     }
 }
 

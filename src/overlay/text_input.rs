@@ -11,8 +11,10 @@ use crate::gui::locale::LocaleText;
 use wry::{WebViewBuilder, Rect};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle, WindowHandle, Win32WindowHandle, HandleError};
 
+use crate::win_types::SendHwnd;
+
 static REGISTER_INPUT_CLASS: Once = Once::new();
-static mut INPUT_HWND: HWND = HWND(0);
+static mut INPUT_HWND: SendHwnd = SendHwnd(HWND(std::ptr::null_mut()));
 // Colors
 const COL_DARK_BG: u32 = 0x202020; // RGB(32, 32, 32)
 
@@ -290,14 +292,14 @@ fn get_editor_html(placeholder: &str) -> String {
 }
 
 pub fn is_active() -> bool {
-    unsafe { INPUT_HWND.0 != 0 && IsWindowVisible(INPUT_HWND).as_bool() }
+    unsafe { !INPUT_HWND.is_invalid() && IsWindowVisible(INPUT_HWND.0).as_bool() }
 }
 
 pub fn cancel_input() {
     unsafe {
-        if INPUT_HWND.0 != 0 {
+        if !INPUT_HWND.is_invalid() {
             // Just hide the window, don't destroy
-            ShowWindow(INPUT_HWND, SW_HIDE);
+            let _ = ShowWindow(INPUT_HWND.0, SW_HIDE);
         }
     }
 }
@@ -310,8 +312,8 @@ pub fn set_editor_text(text: &str) {
         *PENDING_TEXT.lock().unwrap() = Some(text.to_string());
         
         // Post message to the text input window to trigger the injection
-        if INPUT_HWND.0 != 0 {
-            PostMessageW(INPUT_HWND, WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
+        if !INPUT_HWND.is_invalid() {
+            let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -362,9 +364,9 @@ pub fn clear_editor_text() {
 /// Update the UI text (header) and trigger a repaint
 pub fn update_ui_text(header_text: String) {
     unsafe {
-        if INPUT_HWND.0 != 0 {
+        if !INPUT_HWND.is_invalid() {
             *CFG_TITLE.lock().unwrap() = header_text;
-            InvalidateRect(INPUT_HWND, None, true);
+            let _ = InvalidateRect(Some(INPUT_HWND.0), None, true);
         }
     }
 }
@@ -373,14 +375,14 @@ pub fn update_ui_text(header_text: String) {
 /// Call this after closing modal windows like the preset wheel
 pub fn refocus_editor() {
     unsafe {
-        if INPUT_HWND.0 != 0 {
+        if !INPUT_HWND.is_invalid() {
             use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, BringWindowToTop, SetTimer};
             use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
             
             // Aggressive focus: try multiple methods
-            BringWindowToTop(INPUT_HWND);
-            SetForegroundWindow(INPUT_HWND);
-            SetFocus(INPUT_HWND);
+            let _ = BringWindowToTop(INPUT_HWND.0);
+            let _ = SetForegroundWindow(INPUT_HWND.0);
+            let _ = SetFocus(Some(INPUT_HWND.0));
             
             // Focus the webview editor immediately
             TEXT_INPUT_WEBVIEW.with(|webview| {
@@ -394,7 +396,7 @@ pub fn refocus_editor() {
             
             // Schedule another focus attempt after 200ms via timer ID 3
             // This will be handled in WM_TIMER in the same thread
-            SetTimer(INPUT_HWND, 3, 200, None);
+            let _ = SetTimer(Some(INPUT_HWND.0), 3, 200, None);
         }
     }
 }
@@ -402,9 +404,9 @@ pub fn refocus_editor() {
 /// Get the current window rect of the text input window (if active)
 pub fn get_window_rect() -> Option<RECT> {
     unsafe {
-        if INPUT_HWND.0 != 0 {
+        if !INPUT_HWND.is_invalid() {
             let mut rect = RECT::default();
-            if GetWindowRect(INPUT_HWND, &mut rect).as_bool() {
+            if GetWindowRect(INPUT_HWND.0, &mut rect).is_ok() {
                 return Some(rect);
             }
         }
@@ -438,16 +440,16 @@ pub fn show(
         *SHOULD_CLOSE.lock().unwrap() = false;
         *SHOULD_CLEAR_ONLY.lock().unwrap() = false;
 
-        if INPUT_HWND.0 != 0 {
+        if !INPUT_HWND.is_invalid() {
             // Window exists, wake it up
-            PostMessageW(INPUT_HWND, WM_APP_SHOW, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
         } else {
             // Fallback (should normally be warmed up)
             warmup();
             // Sleep a bit and retry (simple handling for race on first cold start)
             std::thread::sleep(std::time::Duration::from_millis(100));
-            if INPUT_HWND.0 != 0 {
-                 PostMessageW(INPUT_HWND, WM_APP_SHOW, WPARAM(0), LPARAM(0));
+            if !INPUT_HWND.is_invalid() {
+                 let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -461,11 +463,11 @@ fn internal_create_window_loop() {
         REGISTER_INPUT_CLASS.call_once(|| {
             let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(input_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
-            wc.hbrBackground = HBRUSH(0);
+            wc.hbrBackground = HBRUSH::default();
             let _ = RegisterClassW(&wc);
         });
 
@@ -483,33 +485,33 @@ fn internal_create_window_loop() {
             w!("Text Input"),
             WS_POPUP, // Start invisible (not WS_VISIBLE)
             x, y, win_w, win_h,
-            None, None, instance, None
-        );
+            None, None, Some(instance.into()), None
+        ).unwrap_or_default();
 
-        INPUT_HWND = hwnd;
+        INPUT_HWND = SendHwnd(hwnd);
 
         // Initialize Layered (Transparent)
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
 
         // Window Region (Rounded)
         let rgn = CreateRoundRectRgn(0, 0, win_w, win_h, 16, 16);
-        SetWindowRgn(hwnd, rgn, true);
+        let _ = SetWindowRgn(hwnd, Some(rgn), true);
 
         // Create webview
         init_webview(hwnd, win_w, win_h);
         
         // Message Loop
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            let _ = DispatchMessageW(&msg);
         }
 
         // Cleanup on exit
         TEXT_INPUT_WEBVIEW.with(|wv| {
             *wv.borrow_mut() = None;
         });
-        INPUT_HWND = HWND(0);
+        INPUT_HWND = SendHwnd::default();
     }
 }
 
@@ -607,7 +609,7 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let h = rect.bottom - rect.top;
             let x = (screen_w - w) / 2;
             let y = (screen_h - h) / 2;
-            SetWindowPos(hwnd, HWND(0), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            SetWindowPos(hwnd, Some(HWND::default()), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
             
             // Reset alpha to 0 before show
             SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
@@ -615,14 +617,14 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             // Show and bring to front
             ShowWindow(hwnd, SW_SHOW);
             SetForegroundWindow(hwnd);
-            SetFocus(hwnd); // CRITICAL: Set keyboard focus to window
+            SetFocus(Some(hwnd)); // CRITICAL: Set keyboard focus to window
             UpdateWindow(hwnd);
             
             // Start Fade Timer
-            SetTimer(hwnd, 1, 16, None);
+            SetTimer(Some(hwnd), 1, 16, None);
             
             // IPC check timer
-            SetTimer(hwnd, 2, 50, None);
+            SetTimer(Some(hwnd), 2, 50, None);
 
             LRESULT(0)
         }
@@ -635,9 +637,9 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
 
         WM_CLOSE => {
             ShowWindow(hwnd, SW_HIDE);
-            KillTimer(hwnd, 1);
-            KillTimer(hwnd, 2);
-            KillTimer(hwnd, 3);
+            KillTimer(Some(hwnd), 1);
+            KillTimer(Some(hwnd), 2);
+            KillTimer(Some(hwnd), 3);
             LRESULT(0)
         }
 
@@ -651,12 +653,12 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                     if FADE_ALPHA > 245 { FADE_ALPHA = 245; }
                     SetLayeredWindowAttributes(hwnd, COLORREF(0), FADE_ALPHA as u8, LWA_ALPHA);
                 } else {
-                    KillTimer(hwnd, 1);
+                    KillTimer(Some(hwnd), 1);
                     
                     // CRITICAL: Focus the editor AFTER fade completes (window fully visible)
                     // WebView2 won't accept focus properly if window is transparent
                     SetForegroundWindow(hwnd);
-                    SetFocus(hwnd);
+                    SetFocus(Some(hwnd));
                     TEXT_INPUT_WEBVIEW.with(|webview| {
                         if let Some(wv) = webview.borrow().as_ref() {
                             // First focus the WebView itself (native focus)
@@ -692,7 +694,7 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             }
             // Timer 3: focus logic (used by refocus_editor after preset wheel)
             if wparam.0 == 3 {
-                KillTimer(hwnd, 3);
+                KillTimer(Some(hwnd), 3);
                 TEXT_INPUT_WEBVIEW.with(|webview| {
                     if let Some(wv) = webview.borrow().as_ref() {
                         let _ = wv.focus();
@@ -715,14 +717,14 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let close_x = w - 30;
             let close_y = 20;
             if (x - close_x).abs() < 15 && (y - close_y).abs() < 15 {
-                 PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                 PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                  return LRESULT(0);
             }
 
             // Title Bar Drag - Use Native Drag (Fix drifting issues)
             if y < 50 {
                 ReleaseCapture();
-                SendMessageW(hwnd, WM_SYSCOMMAND, WPARAM(0xF012), LPARAM(0));
+                SendMessageW(hwnd, WM_SYSCOMMAND, Some(WPARAM(0xF012)), Some(LPARAM(0)));
                 return LRESULT(0);
             }
             LRESULT(0)
@@ -746,14 +748,14 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let w = rect.right;
             let h = rect.bottom;
 
-            let mem_dc = CreateCompatibleDC(hdc);
+            let mem_dc = CreateCompatibleDC(Some(hdc));
             let mem_bmp = CreateCompatibleBitmap(hdc, w, h);
-            let old_bmp = SelectObject(mem_dc, mem_bmp);
+            let old_bmp = SelectObject(mem_dc, mem_bmp.into());
 
             // 1. Draw Background (Dark)
             let brush_bg = CreateSolidBrush(COLORREF(COL_DARK_BG));
             FillRect(mem_dc, &rect, brush_bg);
-            DeleteObject(brush_bg);
+            DeleteObject(brush_bg.into());
 
             // 2. Draw white rounded rectangle
             let edit_x = 20;
@@ -801,8 +803,8 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             SetBkMode(mem_dc, TRANSPARENT);
             SetTextColor(mem_dc, COLORREF(0x00FFFFFF)); 
             
-            let h_font = CreateFontW(19, 0, 0, 0, FW_SEMIBOLD.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
-            let old_font = SelectObject(mem_dc, h_font);
+            let h_font = CreateFontW(19, 0, 0, 0, FW_SEMIBOLD.0 as i32, 0, 0, 0, FONT_CHARSET(DEFAULT_CHARSET.0 as u8), FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8), FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8), FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8), std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32), w!("Segoe UI"));
+            let old_font = SelectObject(mem_dc, h_font.into());
             
             // USE NEW MUTEX CONFIG
             let title_str = CFG_TITLE.lock().unwrap().clone();
@@ -815,8 +817,8 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let mut r_title = RECT { left: 20, top: 15, right: w - 50, bottom: 45 };
             DrawTextW(mem_dc, &mut title_w, &mut r_title, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
             
-            let h_font_small = CreateFontW(13, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
-            SelectObject(mem_dc, h_font_small);
+            let h_font_small = CreateFontW(13, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, FONT_CHARSET(DEFAULT_CHARSET.0 as u8), FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8), FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8), FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8), std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32), w!("Segoe UI"));
+            SelectObject(mem_dc, h_font_small.into());
             SetTextColor(mem_dc, COLORREF(0x00AAAAAA)); 
             
             let esc_text = if cur_cancel.is_empty() { "Esc".to_string() } else { format!("Esc / {}", cur_cancel) };
@@ -826,25 +828,25 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             DrawTextW(mem_dc, &mut hint_w, &mut r_hint, DT_CENTER | DT_SINGLELINE);
 
             SelectObject(mem_dc, old_font);
-            DeleteObject(h_font);
-            DeleteObject(h_font_small);
+            DeleteObject(h_font.into());
+            DeleteObject(h_font_small.into());
 
             // 4. Draw Close Button 'X'
             let c_cx = w - 30;
             let c_cy = 20;
             let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00AAAAAA));
-            let old_pen = SelectObject(mem_dc, pen);
+            let old_pen = SelectObject(mem_dc, pen.into());
             MoveToEx(mem_dc, c_cx - 5, c_cy - 5, None);
             LineTo(mem_dc, c_cx + 5, c_cy + 5);
             MoveToEx(mem_dc, c_cx + 5, c_cy - 5, None);
             LineTo(mem_dc, c_cx - 5, c_cy + 5);
             SelectObject(mem_dc, old_pen);
-            DeleteObject(pen);
+            DeleteObject(pen.into());
 
             // Final Blit
-            BitBlt(hdc, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
+            BitBlt(hdc, 0, 0, w, h, Some(mem_dc), 0, 0, SRCCOPY);
             SelectObject(mem_dc, old_bmp);
-            DeleteObject(mem_bmp);
+            DeleteObject(mem_bmp.into());
             DeleteDC(mem_dc);
             
             EndPaint(hwnd, &mut ps);

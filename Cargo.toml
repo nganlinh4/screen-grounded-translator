@@ -45,14 +45,16 @@ egui-snarl = { path = "libs/egui-snarl", features = ["serde"] }
 tray-icon = "0.19.1"
 cpal = "0.15"
 hound = "3.5"
+wasapi = "0.22"
 
 # Markdown Rendering
 pulldown-cmark = "0.10"
 wry = "0.53"
 raw-window-handle = "0.6"
+windows-core = "0.62"
 
 [dependencies.windows]
-version = "0.48"
+version = "0.62"
 features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

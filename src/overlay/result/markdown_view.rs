@@ -20,7 +20,7 @@ lazy_static::lazy_static! {
 }
 
 // Global hidden window handle for WebView warmup
-static mut WARMUP_HWND: HWND = HWND(0);
+static mut WARMUP_HWND: HWND = HWND(std::ptr::null_mut());
 static REGISTER_WARMUP_CLASS: Once = Once::new();
 
 // Thread-local storage for WebViews since they're not Send
@@ -65,10 +65,10 @@ fn warmup_internal() {
         REGISTER_WARMUP_CLASS.call_once(|| {
             let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(warmup_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
-            wc.hbrBackground = HBRUSH(0);
+            wc.hbrBackground = HBRUSH(std::ptr::null_mut());
             let _ = RegisterClassW(&wc);
         });
 
@@ -79,8 +79,8 @@ fn warmup_internal() {
             w!("MarkdownWarmup"),
             WS_POPUP,
             0, 0, 100, 100,
-            None, None, instance, None
-        );
+            None, None, Some(instance.into()), None
+        ).unwrap_or_default();
 
         WARMUP_HWND = hwnd;
         
@@ -549,7 +549,7 @@ pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hov
                         
                         if state.is_editing {
                             state.is_editing = false;
-                            super::refine_input::hide_refine_input(HWND(hwnd_key_for_nav));
+                            super::refine_input::hide_refine_input(HWND(hwnd_key_for_nav as *mut std::ffi::c_void));
                         }
                     }
                 }
@@ -565,7 +565,7 @@ pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hov
                             state.max_navigation_depth = 0;
                             // Ensure repaint to hide buttons
                             unsafe {
-                                windows::Win32::Graphics::Gdi::InvalidateRect(HWND(hwnd_key_for_nav), None, false);
+                                windows::Win32::Graphics::Gdi::InvalidateRect(Some(HWND(hwnd_key_for_nav as *mut std::ffi::c_void)), None, false);
                             }
                         }
                     }
@@ -628,7 +628,7 @@ pub fn go_back(parent_hwnd: HWND) {
         
         // Trigger repaint to hide navigation buttons
         unsafe {
-            windows::Win32::Graphics::Gdi::InvalidateRect(parent_hwnd, None, false);
+            windows::Win32::Graphics::Gdi::InvalidateRect(Some(parent_hwnd), None, false);
         }
     } else {
         // Normal browser history back for deeper navigation

@@ -245,6 +245,8 @@ pub struct Config {
     pub tts_voice: String,
     #[serde(default = "default_tts_speed")]
     pub tts_speed: String, // "Normal", "Slow", "Fast"
+    #[serde(default)]
+    pub tts_output_device: String, // Device ID
 }
 
 fn default_tts_voice() -> String { "Aoede".to_string() }

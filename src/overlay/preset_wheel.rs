@@ -18,9 +18,10 @@ struct WheelState {
     hovered_button: i32,
     selected_preset_idx: Option<usize>,
 }
+unsafe impl Send for WheelState {}
 
 static WHEEL_STATE: Mutex<WheelState> = Mutex::new(WheelState {
-    hwnd: HWND(0),
+    hwnd: HWND(std::ptr::null_mut()),
     buttons: Vec::new(),
     hovered_button: -1,
     selected_preset_idx: None,
@@ -109,7 +110,7 @@ pub fn show_preset_wheel(
         WHEEL_ACTIVE.store(true, Ordering::SeqCst);
         {
             let mut state = WHEEL_STATE.lock().unwrap();
-            if state.hwnd.0 != 0 { return None; }
+            if !state.hwnd.is_invalid() { return None; }
             state.selected_preset_idx = None;
             state.hovered_button = -1;
             state.buttons.clear();
@@ -302,7 +303,7 @@ pub fn show_preset_wheel(
         REGISTER_WHEEL_CLASS.call_once(|| {
             let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(wheel_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -315,8 +316,8 @@ pub fn show_preset_wheel(
             w!("SGT Preset Wheel"),
             WS_POPUP,
             min_x, min_y, win_width, win_height,
-            None, None, instance, None
-        );
+            None, None, Some(instance.into()), None
+        ).unwrap();
         
         WHEEL_STATE.lock().unwrap().hwnd = hwnd;
         
@@ -326,7 +327,7 @@ pub fn show_preset_wheel(
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         
         // CRITICAL: Capture mouse to prevent click-through to windows underneath
-        SetCapture(hwnd);
+        let _ = SetCapture(hwnd);
         
         // Message loop
         let mut msg = MSG::default();
@@ -345,7 +346,7 @@ pub fn show_preset_wheel(
         {
             let mut state = WHEEL_STATE.lock().unwrap();
             state.buttons.clear();
-            state.hwnd = HWND(0);
+            state.hwnd = HWND::default();
         }
         WHEEL_ACTIVE.store(false, Ordering::SeqCst);
         
@@ -386,7 +387,7 @@ unsafe extern "system" fn wheel_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                 } else {
                     LoadCursorW(None, IDC_ARROW).unwrap()
                 };
-                SetCursor(cursor);
+                SetCursor(Some(cursor));
                 
                 let mut rect = RECT::default();
                 GetClientRect(hwnd, &mut rect);
@@ -404,7 +405,7 @@ unsafe extern "system" fn wheel_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             } else {
                 LoadCursorW(None, IDC_ARROW).unwrap()
             };
-            SetCursor(cursor);
+            SetCursor(Some(cursor));
             LRESULT(1) // Return non-zero to indicate we handled it
         }
         
@@ -475,7 +476,7 @@ unsafe extern "system" fn wheel_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
 
 unsafe fn paint_wheel_window(hwnd: HWND, width: i32, height: i32) {
     let screen_dc = GetDC(None);
-    let mem_dc = CreateCompatibleDC(screen_dc);
+    let mem_dc = CreateCompatibleDC(Some(screen_dc));
     
     let bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
@@ -491,8 +492,8 @@ unsafe fn paint_wheel_window(hwnd: HWND, width: i32, height: i32) {
     };
     
     let mut p_bits: *mut core::ffi::c_void = std::ptr::null_mut();
-    let bitmap = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut p_bits, None, 0).unwrap();
-    let old_bitmap = SelectObject(mem_dc, bitmap);
+    let bitmap = CreateDIBSection(Some(screen_dc), &bmi, DIB_RGB_COLORS, &mut p_bits, None, 0).unwrap();
+    let old_bitmap = SelectObject(mem_dc, bitmap.into());
     
     // Clear to transparent
     let pixels = std::slice::from_raw_parts_mut(p_bits as *mut u32, (width * height) as usize);
@@ -516,15 +517,15 @@ unsafe fn paint_wheel_window(hwnd: HWND, width: i32, height: i32) {
     bl.BlendOp = AC_SRC_OVER as u8;
     bl.SourceConstantAlpha = 255;
     bl.AlphaFormat = AC_SRC_ALPHA as u8;
-    UpdateLayeredWindow(hwnd, HDC(0), None, Some(&size), mem_dc, Some(&pt_src), COLORREF(0), Some(&bl), ULW_ALPHA);
+    UpdateLayeredWindow(hwnd, Some(HDC::default()), None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&bl), ULW_ALPHA);
     
     SelectObject(mem_dc, old_bitmap);
-    let _ = DeleteObject(bitmap);
+    let _ = DeleteObject(bitmap.into());
     DeleteDC(mem_dc);
     ReleaseDC(None, screen_dc);
 }
 
-unsafe fn draw_button(dc: CreatedHDC, pixels: &mut [u32], stride: i32, rect: &RECT, label: &str, is_dismiss: bool, is_hovered: bool, color_idx: usize) {
+unsafe fn draw_button(dc: HDC, pixels: &mut [u32], stride: i32, rect: &RECT, label: &str, is_dismiss: bool, is_hovered: bool, color_idx: usize) {
     // Beautiful color palette for presets - fully opaque for solid fill
     // Each preset gets a unique, aesthetically pleasing color
     const PRESET_COLORS: [u32; 12] = [
@@ -622,11 +623,11 @@ unsafe fn draw_button(dc: CreatedHDC, pixels: &mut [u32], stride: i32, rect: &RE
     // Draw text directly on the button (no shadow - causes issues on bright bg)
     let font = CreateFontW(
         14, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0,
-        DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32,
-        CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32,
-        (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI")
+        FONT_CHARSET(DEFAULT_CHARSET.0 as u8), FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8),
+        FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8), FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8),
+        std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32), w!("Segoe UI")
     );
-    let old_font = SelectObject(dc, font);
+    let old_font = SelectObject(dc, font.into());
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, COLORREF(text_color & 0x00FFFFFF));
     
@@ -656,7 +657,7 @@ unsafe fn draw_button(dc: CreatedHDC, pixels: &mut [u32], stride: i32, rect: &RE
     }
     
     SelectObject(dc, old_font);
-    let _ = DeleteObject(font);
+    let _ = DeleteObject(font.into());
 }
 
 /// Signed Distance Field for rounded rectangle
@@ -691,8 +692,8 @@ pub fn is_wheel_active() -> bool {
 pub fn dismiss_wheel() {
     unsafe {
         let hwnd = WHEEL_STATE.lock().unwrap().hwnd;
-        if hwnd.0 != 0 {
-            PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+        if !hwnd.is_invalid() {
+            PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }

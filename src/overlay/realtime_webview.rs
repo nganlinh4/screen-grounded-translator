@@ -44,10 +44,20 @@ lazy_static::lazy_static! {
     /// Visibility state for windows
     pub static ref MIC_VISIBLE: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     pub static ref TRANS_VISIBLE: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
+    
+    // --- Realtime TTS State ---
+    /// Enable/disable realtime TTS for committed translations
+    pub static ref REALTIME_TTS_ENABLED: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    /// TTS playback speed (100 = 1.0x, 50 = 0.5x, 150 = 1.5x, etc.)
+    pub static ref REALTIME_TTS_SPEED: Arc<std::sync::atomic::AtomicU32> = Arc::new(std::sync::atomic::AtomicU32::new(100));
+    /// Queue of committed translation text segments to speak
+    pub static ref COMMITTED_TRANSLATION_QUEUE: Mutex<std::collections::VecDeque<String>> = Mutex::new(std::collections::VecDeque::new());
+    /// Track how much of the committed text has been sent to TTS
+    pub static ref LAST_SPOKEN_LENGTH: Arc<std::sync::atomic::AtomicUsize> = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 }
 
-static mut REALTIME_HWND: HWND = HWND(0);
-static mut TRANSLATION_HWND: HWND = HWND(0);
+static mut REALTIME_HWND: HWND = HWND(std::ptr::null_mut());
+static mut TRANSLATION_HWND: HWND = HWND(std::ptr::null_mut());
 static mut IS_ACTIVE: bool = false;
 
 static REGISTER_REALTIME_CLASS: Once = Once::new();
@@ -127,6 +137,7 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         let gtx_active = if translation_model == "google-gtx" { "active" } else { "" };
 
         format!(r#"
+            <span class="ctrl-btn speak-btn" id="speak-btn" title="Text-to-Speech Settings"><span class="material-symbols-rounded">volume_up</span></span>
             <div class="btn-group">
                 <span class="material-symbols-rounded model-icon {gemma_active}" data-value="google-gemma" title="AI Translation (Gemma)">auto_awesome</span>
                 <span class="material-symbols-rounded model-icon {groq_active}" data-value="groq-llama" title="Fast Translation (Groq)">speed</span>
@@ -624,6 +635,143 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
             0%, 100% {{ transform: translateY(0); opacity: 0.8; }}
             50% {{ transform: translateY(-3px); opacity: 1; }}
         }}
+        
+        /* Speak button styling */
+        .speak-btn {{
+            position: relative;
+        }}
+        .speak-btn.active {{
+            color: #4caf50 !important;
+            border-color: #4caf50;
+            box-shadow: 0 0 8px #4caf5040;
+        }}
+        .speak-btn.active .material-symbols-rounded {{
+            animation: speak-pulse 1.5s ease-in-out infinite;
+        }}
+        @keyframes speak-pulse {{
+            0%, 100% {{ opacity: 1; }}
+            50% {{ opacity: 0.5; }}
+        }}
+        
+        /* TTS Settings Modal */
+        #tts-modal {{
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(30, 30, 30, 0.98);
+            border: 1px solid #ff963380;
+            border-radius: 12px;
+            padding: 16px 20px;
+            z-index: 1000;
+            min-width: 200px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px #ff963330;
+        }}
+        #tts-modal.show {{
+            display: block;
+            animation: modal-appear 0.2s ease-out;
+        }}
+        @keyframes modal-appear {{
+            from {{ opacity: 0; transform: translate(-50%, -50%) scale(0.9); }}
+            to {{ opacity: 1; transform: translate(-50%, -50%) scale(1); }}
+        }}
+        #tts-modal-overlay {{
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 999;
+        }}
+        #tts-modal-overlay.show {{
+            display: block;
+        }}
+        .tts-modal-title {{
+            font-size: 13px;
+            font-weight: bold;
+            color: #ff9633;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        .tts-modal-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            gap: 12px;
+        }}
+        .tts-modal-row:last-child {{
+            margin-bottom: 0;
+        }}
+        .tts-modal-label {{
+            font-size: 12px;
+            color: #aaa;
+        }}
+        /* Toggle Switch */
+        .toggle-switch {{
+            position: relative;
+            width: 40px;
+            height: 22px;
+            background: #444;
+            border-radius: 11px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }}
+        .toggle-switch.on {{
+            background: #4caf50;
+        }}
+        .toggle-switch::after {{
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 18px;
+            height: 18px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }}
+        .toggle-switch.on::after {{
+            transform: translateX(18px);
+        }}
+        /* Speed Slider */
+        .speed-slider-container {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .speed-slider {{
+            -webkit-appearance: none;
+            width: 100px;
+            height: 6px;
+            background: #444;
+            border-radius: 3px;
+            outline: none;
+        }}
+        .speed-slider::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            background: #ff9633;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }}
+        .speed-slider::-webkit-slider-thumb:hover {{
+            transform: scale(1.2);
+        }}
+        .speed-value {{
+            font-size: 11px;
+            color: #ff9633;
+            font-weight: bold;
+            min-width: 32px;
+            text-align: right;
+        }}
     </style>
 </head>
 <body>
@@ -652,6 +800,25 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         </div>
         <div id="resize-hint"><span class="material-symbols-rounded" style="font-size: 14px;">picture_in_picture_small</span></div>
     </div>
+    <!-- TTS Settings Modal -->
+    <div id="tts-modal-overlay"></div>
+    <div id="tts-modal">
+        <div class="tts-modal-title">
+            <span class="material-symbols-rounded">volume_up</span>
+            Text-to-Speech
+        </div>
+        <div class="tts-modal-row">
+            <span class="tts-modal-label">Speak translations</span>
+            <div class="toggle-switch" id="tts-toggle"></div>
+        </div>
+        <div class="tts-modal-row">
+            <span class="tts-modal-label">Speed</span>
+            <div class="speed-slider-container">
+                <input type="range" class="speed-slider" id="speed-slider" min="50" max="200" value="100" step="10">
+                <span class="speed-value" id="speed-value">1.0x</span>
+            </div>
+        </div>
+    </div>
     <script>
         const container = document.getElementById('container');
         const viewport = document.getElementById('viewport');
@@ -672,6 +839,49 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
         let micVisible = true;
         let transVisible = true;
         let headerCollapsed = false;
+        
+        // TTS Modal elements
+        const speakBtn = document.getElementById('speak-btn');
+        const ttsModal = document.getElementById('tts-modal');
+        const ttsModalOverlay = document.getElementById('tts-modal-overlay');
+        const ttsToggle = document.getElementById('tts-toggle');
+        const speedSlider = document.getElementById('speed-slider');
+        const speedValue = document.getElementById('speed-value');
+        let ttsEnabled = false;
+        let ttsSpeed = 100;
+        
+        // TTS Modal Logic
+        if (speakBtn && ttsModal && ttsModalOverlay) {{
+            speakBtn.addEventListener('click', function(e) {{
+                e.stopPropagation();
+                ttsModal.classList.toggle('show');
+                ttsModalOverlay.classList.toggle('show');
+            }});
+            
+            ttsModalOverlay.addEventListener('click', function() {{
+                ttsModal.classList.remove('show');
+                ttsModalOverlay.classList.remove('show');
+            }});
+        }}
+        
+        if (ttsToggle) {{
+            ttsToggle.addEventListener('click', function(e) {{
+                e.stopPropagation();
+                ttsEnabled = !ttsEnabled;
+                this.classList.toggle('on', ttsEnabled);
+                if (speakBtn) speakBtn.classList.toggle('active', ttsEnabled);
+                window.ipc.postMessage('ttsEnabled:' + (ttsEnabled ? '1' : '0'));
+            }});
+        }}
+        
+        if (speedSlider && speedValue) {{
+            speedSlider.addEventListener('input', function(e) {{
+                e.stopPropagation();
+                ttsSpeed = parseInt(this.value);
+                speedValue.textContent = (ttsSpeed / 100).toFixed(1) + 'x';
+                window.ipc.postMessage('ttsSpeed:' + ttsSpeed);
+            }});
+        }}
         
         // Header toggle (with null check in case element is commented out)
         if (headerToggle) {{
@@ -1192,14 +1402,14 @@ fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[Stri
 }
 
 pub fn is_realtime_overlay_active() -> bool {
-    unsafe { IS_ACTIVE && REALTIME_HWND.0 != 0 }
+    unsafe { IS_ACTIVE && !REALTIME_HWND.is_invalid() }
 }
 
 /// Stop the realtime overlay and close all windows
 pub fn stop_realtime_overlay() {
     unsafe {
-        if REALTIME_HWND.0 != 0 {
-            let _ = PostMessageW(REALTIME_HWND, WM_CLOSE, WPARAM(0), LPARAM(0));
+        if !REALTIME_HWND.is_invalid() {
+            let _ = PostMessageW(Some(REALTIME_HWND), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -1238,11 +1448,11 @@ pub fn show_realtime_overlay(preset_idx: usize) {
         REGISTER_REALTIME_CLASS.call_once(|| {
             let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(realtime_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
-            wc.hbrBackground = HBRUSH(0);
+            wc.hbrBackground = HBRUSH(std::ptr::null_mut());
             let _ = RegisterClassW(&wc);
         });
         
@@ -1316,8 +1526,8 @@ pub fn show_realtime_overlay(preset_idx: usize) {
             w!("Realtime Transcription"),
             WS_POPUP | WS_VISIBLE,
             main_x, main_y, main_w, main_h,
-            None, None, instance, None
-        );
+            None, None, Some(instance.into()), None
+        ).unwrap();
         
         // Enable rounded corners (Windows 11+)
         let corner_pref = DWMWCP_ROUND;
@@ -1339,11 +1549,11 @@ pub fn show_realtime_overlay(preset_idx: usize) {
             REGISTER_TRANSLATION_CLASS.call_once(|| {
                 let mut wc = WNDCLASSW::default();
                 wc.lpfnWndProc = Some(translation_wnd_proc);
-                wc.hInstance = instance;
+                wc.hInstance = instance.into();
                 wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
                 wc.lpszClassName = trans_class;
                 wc.style = CS_HREDRAW | CS_VREDRAW;
-                wc.hbrBackground = HBRUSH(0);
+                wc.hbrBackground = HBRUSH(std::ptr::null_mut());
                 let _ = RegisterClassW(&wc);
             });
             
@@ -1354,8 +1564,8 @@ pub fn show_realtime_overlay(preset_idx: usize) {
                 w!("Translation"),
                 WS_POPUP | WS_VISIBLE,
                 trans_x, main_y, trans_w, trans_h,
-                None, None, instance, None
-            );
+                None, None, Some(instance.into()), None
+            ).unwrap();
             
             // Enable rounded corners (Windows 11+)
             let corner_pref = DWMWCP_ROUND;
@@ -1371,7 +1581,7 @@ pub fn show_realtime_overlay(preset_idx: usize) {
             
             Some(trans_hwnd)
         } else {
-            TRANSLATION_HWND = HWND(0);
+            TRANSLATION_HWND = HWND::default();
             None
         };
         
@@ -1394,13 +1604,13 @@ pub fn show_realtime_overlay(preset_idx: usize) {
         
         // Cleanup
         destroy_realtime_webview(REALTIME_HWND);
-        if TRANSLATION_HWND.0 != 0 {
+        if !TRANSLATION_HWND.is_invalid() {
             destroy_realtime_webview(TRANSLATION_HWND);
         }
         
         IS_ACTIVE = false;
-        REALTIME_HWND = HWND(0);
-        TRANSLATION_HWND = HWND(0);
+        REALTIME_HWND = HWND::default();
+        TRANSLATION_HWND = HWND::default();
     }
 }
 
@@ -1447,8 +1657,8 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
                     SendMessageW(
                         hwnd_for_ipc,
                         WM_NCLBUTTONDOWN,
-                        WPARAM(HTCAPTION as usize),
-                        LPARAM(0)
+                        Some(WPARAM(HTCAPTION as usize)),
+                        Some(LPARAM(0))
                     );
                 }
             } else if body == "startGroupDrag" {
@@ -1461,7 +1671,7 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
                     if let (Ok(dx), Ok(dy)) = (dx_str.parse::<i32>(), dy_str.parse::<i32>()) {
                         unsafe {
                             // Move realtime window
-                            if REALTIME_HWND.0 != 0 {
+                            if !REALTIME_HWND.is_invalid() {
                                 let mut rect = RECT::default();
                                 GetWindowRect(REALTIME_HWND, &mut rect);
                                 SetWindowPos(
@@ -1475,7 +1685,7 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
                             }
                             
                             // Move translation window
-                            if TRANSLATION_HWND.0 != 0 {
+                            if !TRANSLATION_HWND.is_invalid() {
                                 let mut rect = RECT::default();
                                 GetWindowRect(TRANSLATION_HWND, &mut rect);
                                 SetWindowPos(
@@ -1497,7 +1707,7 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
             } else if body == "close" {
                 unsafe {
                     let _ = PostMessageW(
-                        hwnd_for_ipc,
+                        Some(hwnd_for_ipc),
                         WM_CLOSE,
                         WPARAM(0),
                         LPARAM(0)
@@ -1594,7 +1804,7 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
                 let visible = &body[10..] == "1";
                 MIC_VISIBLE.store(visible, Ordering::SeqCst);
                 unsafe {
-                    if REALTIME_HWND.0 != 0 {
+                    if !REALTIME_HWND.is_invalid() {
                         ShowWindow(REALTIME_HWND, if visible { SW_SHOW } else { SW_HIDE });
                     }
                     // Sync to other webview
@@ -1606,7 +1816,7 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
                         PostQuitMessage(0);
                     } else if visible {
                         // Force update since we suppressed them while hidden
-                        let _ = PostMessageW(REALTIME_HWND, WM_REALTIME_UPDATE, WPARAM(0), LPARAM(0));
+                        let _ = PostMessageW(Some(REALTIME_HWND), WM_REALTIME_UPDATE, WPARAM(0), LPARAM(0));
                     }
                 }
             } else if body.starts_with("toggleTrans:") {
@@ -1614,7 +1824,7 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
                 let visible = &body[12..] == "1";
                 TRANS_VISIBLE.store(visible, Ordering::SeqCst);
                 unsafe {
-                    if TRANSLATION_HWND.0 != 0 {
+                    if !TRANSLATION_HWND.is_invalid() {
                         ShowWindow(TRANSLATION_HWND, if visible { SW_SHOW } else { SW_HIDE });
                     }
                     // Sync to other webview
@@ -1626,8 +1836,26 @@ fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &str,
                         PostQuitMessage(0);
                     } else if visible {
                         // Force update since we suppressed them while hidden
-                        let _ = PostMessageW(TRANSLATION_HWND, WM_TRANSLATION_UPDATE, WPARAM(0), LPARAM(0));
+                        let _ = PostMessageW(Some(TRANSLATION_HWND), WM_TRANSLATION_UPDATE, WPARAM(0), LPARAM(0));
                     }
+                }
+            } else if body.starts_with("ttsEnabled:") {
+                // TTS toggle for realtime translations
+                let enabled = &body[11..] == "1";
+                REALTIME_TTS_ENABLED.store(enabled, Ordering::SeqCst);
+                
+                // Reset spoken length when disabling so we start fresh next time
+                if !enabled {
+                    LAST_SPOKEN_LENGTH.store(0, Ordering::SeqCst);
+                    // Clear any queued translations
+                    if let Ok(mut queue) = COMMITTED_TRANSLATION_QUEUE.lock() {
+                        queue.clear();
+                    }
+                }
+            } else if body.starts_with("ttsSpeed:") {
+                // TTS speed adjustment (50-200, where 100 = 1.0x)
+                if let Ok(speed) = body[9..].parse::<u32>() {
+                    REALTIME_TTS_SPEED.store(speed, Ordering::SeqCst);
                 }
             }
         })
@@ -1744,7 +1972,7 @@ unsafe extern "system" fn realtime_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM
             REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
             DestroyWindow(hwnd);
             
-            if TRANSLATION_HWND.0 != 0 {
+            if !TRANSLATION_HWND.is_invalid() {
                 DestroyWindow(TRANSLATION_HWND);
             }
             
@@ -1772,6 +2000,35 @@ unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam: WPA
                     (String::new(), String::new())
                 }
             };
+            
+            // TTS: Check if we have new committed text to speak
+            if REALTIME_TTS_ENABLED.load(Ordering::SeqCst) && !old_text.is_empty() {
+                let old_len = old_text.len();
+                let last_spoken = LAST_SPOKEN_LENGTH.load(Ordering::SeqCst);
+                
+                if old_len > last_spoken {
+                    // We have new committed text since last spoken
+                    let new_committed = old_text[last_spoken..].to_string();
+                    
+                    // Only queue non-empty, non-whitespace segments
+                    if !new_committed.trim().is_empty() {
+                        // Queue this text for TTS
+                        if let Ok(mut queue) = COMMITTED_TRANSLATION_QUEUE.lock() {
+                            queue.push_back(new_committed.clone());
+                        }
+                        
+                        // Speak using TTS manager (non-blocking)
+                        // This uses the existing parallel TTS infrastructure
+                        let hwnd_val = hwnd.0 as isize;
+                        std::thread::spawn(move || {
+                            crate::api::tts::TTS_MANAGER.speak(&new_committed, hwnd_val);
+                        });
+                    }
+                    
+                    LAST_SPOKEN_LENGTH.store(old_len, Ordering::SeqCst);
+                }
+            }
+            
             update_webview_text(hwnd, &old_text, &new_text);
             LRESULT(0)
         }
@@ -1812,7 +2069,7 @@ unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam: WPA
             REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
             DestroyWindow(hwnd);
             
-            if REALTIME_HWND.0 != 0 {
+            if !REALTIME_HWND.is_invalid() {
                 DestroyWindow(REALTIME_HWND);
             }
             

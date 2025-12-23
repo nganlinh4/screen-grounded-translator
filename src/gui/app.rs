@@ -71,6 +71,7 @@ pub struct SettingsApp {
     startup_stage: u8, 
     
     cached_monitors: Vec<String>,
+    cached_audio_devices: Arc<Mutex<Vec<(String, String)>>>,
     
     updater: Option<Updater>,
     update_rx: Receiver<UpdateStatus>,
@@ -168,16 +169,16 @@ impl SettingsApp {
                             let result = WaitForSingleObject(event_handle, INFINITE);
                             if result == WAIT_OBJECT_0 {
                                 let class_name = w!("eframe");
-                                let mut hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), None);
-                                if hwnd.0 == 0 {
+                                let mut hwnd = FindWindowW(class_name, None).unwrap_or_default();
+                                if hwnd.is_invalid() {
                                     let title = w!("Screen Goated Toolbox (SGT by nganlinh4)");
-                                    hwnd = FindWindowW(None, PCWSTR(title.as_ptr()));
+                                    hwnd = FindWindowW(None, title).unwrap_or_default();
                                 }
-                                if hwnd.0 != 0 {
-                                    ShowWindow(hwnd, SW_RESTORE);
-                                    ShowWindow(hwnd, SW_SHOW);
-                                    SetForegroundWindow(hwnd);
-                                    SetFocus(hwnd);
+                                if !hwnd.is_invalid() {
+                                    let _ = ShowWindow(hwnd, SW_RESTORE);
+                                    let _ = ShowWindow(hwnd, SW_SHOW);
+                                    let _ = SetForegroundWindow(hwnd);
+                                    let _ = SetFocus(Some(hwnd));
                                 }
                                 RESTORE_SIGNAL.store(true, Ordering::SeqCst);
                                 ctx_restore.request_repaint();
@@ -201,16 +202,16 @@ impl SettingsApp {
                     "1002" => {
                         unsafe {
                             let class_name = w!("eframe");
-                            let hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), None);
-                            let hwnd = if hwnd.0 == 0 {
+                            let hwnd = FindWindowW(class_name, None).unwrap_or_default();
+                            let hwnd = if hwnd.is_invalid() {
                                 let title = w!("Screen Goated Toolbox (SGT by nganlinh4)");
-                                FindWindowW(None, PCWSTR(title.as_ptr()))
+                                FindWindowW(None, title).unwrap_or_default()
                             } else { hwnd };
-                            if hwnd.0 != 0 {
-                                ShowWindow(hwnd, SW_RESTORE);
-                                ShowWindow(hwnd, SW_SHOW);
-                                SetForegroundWindow(hwnd);
-                                SetFocus(hwnd);
+                            if !hwnd.is_invalid() {
+                                let _ = ShowWindow(hwnd, SW_RESTORE);
+                                let _ = ShowWindow(hwnd, SW_SHOW);
+                                let _ = SetForegroundWindow(hwnd);
+                                let _ = SetFocus(Some(hwnd));
                             }
                         }
                         RESTORE_SIGNAL.store(true, Ordering::SeqCst);
@@ -230,6 +231,17 @@ impl SettingsApp {
         
         let cached_monitors = get_monitor_names();
         let (up_tx, up_rx) = channel();
+
+        // --- Init Audio Device Cache ---
+        let cached_audio_devices = Arc::new(Mutex::new(Vec::new()));
+        let devices_clone = cached_audio_devices.clone();
+        // Fetch in background
+        std::thread::spawn(move || {
+             let devices = crate::api::tts::TtsManager::get_output_devices();
+             if let Ok(mut lock) = devices_clone.lock() {
+                 *lock = devices;
+             }
+        });
         
         // Check for current admin state
         let current_admin_state = if cfg!(target_os = "windows") {
@@ -271,6 +283,7 @@ impl SettingsApp {
             fade_in_start: None,
             startup_stage: 0,
             cached_monitors,
+            cached_audio_devices,
             snarl: None,
             last_edited_preset_idx: None,
             updater: Some(Updater::new(up_tx)),
@@ -315,9 +328,9 @@ impl SettingsApp {
         unsafe {
             let class = w!("HotkeyListenerClass");
             let title = w!("Listener");
-            let hwnd = windows::Win32::UI::WindowsAndMessaging::FindWindowW(class, title);
-            if hwnd.0 != 0 {
-                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(hwnd, 0x0400 + 101, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
+            let hwnd = windows::Win32::UI::WindowsAndMessaging::FindWindowW(class, title).unwrap_or_default();
+            if !hwnd.is_invalid() {
+                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(Some(hwnd), 0x0400 + 101, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
             }
         }
     }
@@ -787,6 +800,7 @@ impl eframe::App for SettingsApp {
                                 &text,
                                 &mut self.show_usage_modal,
                                 &mut self.show_tts_modal,
+                                &self.cached_audio_devices,
                             ) {
                                 self.save_and_sync();
                             }

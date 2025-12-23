@@ -24,15 +24,15 @@ struct TextSelectionState {
 unsafe impl Send for TextSelectionState {}
 
 static SELECTION_STATE: Mutex<TextSelectionState> = Mutex::new(TextSelectionState {
-    hwnd: HWND(0),
+    hwnd: HWND(std::ptr::null_mut()),
     preset_idx: 0,
     is_selecting: false,
     is_processing: false,
     animation_offset: 0.0,
     current_alpha: 0,
-    cached_bitmap: HBITMAP(0),
+    cached_bitmap: HBITMAP(std::ptr::null_mut()),
     cached_bits: std::ptr::null_mut(),
-    cached_font: HFONT(0),
+    cached_font: HFONT(std::ptr::null_mut()),
     cached_lang: None,
 });
 
@@ -43,7 +43,7 @@ lazy_static::lazy_static! {
 }
 
 pub fn is_active() -> bool {
-    SELECTION_STATE.lock().unwrap().hwnd.0 != 0
+    !SELECTION_STATE.lock().unwrap().hwnd.is_invalid()
 }
 
 /// Try to process already-selected text instantly.
@@ -55,7 +55,7 @@ pub fn try_instant_process(preset_idx: usize) -> bool {
         let original_clipboard = get_clipboard_text();
         
         // Step 2: Clear clipboard and send Ctrl+C to copy current selection
-        if OpenClipboard(HWND(0)).as_bool() { 
+        if OpenClipboard(Some(HWND::default())).is_ok() { 
             EmptyClipboard(); 
             CloseClipboard(); 
         }
@@ -100,7 +100,7 @@ pub fn try_instant_process(preset_idx: usize) -> bool {
         if clipboard_text.trim().is_empty() {
             // No text was selected - restore original clipboard if we had content
             if !original_clipboard.is_empty() {
-                crate::overlay::utils::copy_to_clipboard(&original_clipboard, HWND(0));
+                crate::overlay::utils::copy_to_clipboard(&original_clipboard, HWND::default());
             }
             return false; // Signal caller to show selection tag
         }
@@ -114,7 +114,7 @@ pub fn try_instant_process(preset_idx: usize) -> bool {
 /// Get text from clipboard (returns empty string if no text available)
 unsafe fn get_clipboard_text() -> String {
     let mut result = String::new();
-    if OpenClipboard(HWND(0)).as_bool() {
+    if OpenClipboard(Some(HWND::default())).is_ok() {
         if let Ok(h_data) = GetClipboardData(13u32) { // CF_UNICODETEXT
             let h_global: HGLOBAL = std::mem::transmute(h_data);
             let ptr = GlobalLock(h_global);
@@ -195,8 +195,8 @@ pub fn cancel_selection() {
     TAG_ABORT_SIGNAL.store(true, Ordering::SeqCst);
     let hwnd = SELECTION_STATE.lock().unwrap().hwnd;
     unsafe {
-        if hwnd.0 != 0 {
-            PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+        if !hwnd.is_invalid() {
+            PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -206,7 +206,7 @@ pub fn show_text_selection_tag(preset_idx: usize) {
         // Scope 1: Check and Init
         {
             let mut state = SELECTION_STATE.lock().unwrap();
-            if state.hwnd.0 != 0 { return; } 
+            if !state.hwnd.is_invalid() { return; } 
 
             state.preset_idx = preset_idx;
             state.is_selecting = false;
@@ -216,8 +216,8 @@ pub fn show_text_selection_tag(preset_idx: usize) {
             TAG_ABORT_SIGNAL.store(false, Ordering::SeqCst);
             
             // Cleanup old cache
-            if state.cached_bitmap.0 != 0 { DeleteObject(state.cached_bitmap); state.cached_bitmap = HBITMAP(0); }
-            if state.cached_font.0 != 0 { DeleteObject(state.cached_font); state.cached_font = HFONT(0); }
+            if !state.cached_bitmap.is_invalid() { unsafe { DeleteObject(state.cached_bitmap.into()); } state.cached_bitmap = HBITMAP::default(); }
+            if !state.cached_font.is_invalid() { unsafe { DeleteObject(state.cached_font.into()); } state.cached_font = HFONT(std::ptr::null_mut()); }
             state.cached_bits = std::ptr::null_mut();
         }
 
@@ -227,7 +227,7 @@ pub fn show_text_selection_tag(preset_idx: usize) {
         REGISTER_TAG_CLASS.call_once(|| {
             let mut wc = WNDCLASSW::default();
             wc.lpfnWndProc = Some(tag_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -236,20 +236,20 @@ pub fn show_text_selection_tag(preset_idx: usize) {
 
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE, 
-            class_name, w!("SGT Tag"), WS_POPUP, -1000, -1000, 200, 50, None, None, instance, None
-        );
+            class_name, w!("SGT Tag"), WS_POPUP, -1000, -1000, 200, 50, None, None, Some(instance.into()), None
+        ).unwrap_or_default();
         SELECTION_STATE.lock().unwrap().hwnd = hwnd;
-        SetTimer(hwnd, 1, 16, None); 
+        SetTimer(Some(hwnd), 1, 16, None); 
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         let mut msg = MSG::default(); while GetMessageW(&mut msg, None, 0, 0).into() { TranslateMessage(&msg); DispatchMessageW(&msg); if msg.message == WM_QUIT { break; } }
         
         // Cleanup cache on exit
         {
             let mut state = SELECTION_STATE.lock().unwrap();
-            if state.cached_bitmap.0 != 0 { DeleteObject(state.cached_bitmap); state.cached_bitmap = HBITMAP(0); }
-            if state.cached_font.0 != 0 { DeleteObject(state.cached_font); state.cached_font = HFONT(0); }
+            if !state.cached_bitmap.is_invalid() { unsafe { DeleteObject(state.cached_bitmap.into()); } state.cached_bitmap = HBITMAP::default(); }
+            if !state.cached_font.is_invalid() { unsafe { DeleteObject(state.cached_font.into()); } state.cached_font = HFONT(std::ptr::null_mut()); }
             state.cached_bits = std::ptr::null_mut();
-            state.hwnd = HWND(0);
+            state.hwnd = HWND::default();
         }
     }
 }
@@ -274,7 +274,7 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
                 }
                 
                 let mut pt = POINT::default(); GetCursorPos(&mut pt);
-                SetWindowPos(hwnd, HWND_TOPMOST, pt.x - 30, pt.y - 60, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+                SetWindowPos(hwnd, Some(HWND_TOPMOST), pt.x - 30, pt.y - 60, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
                 
                 if state.is_selecting { state.animation_offset -= 15.0; } else { state.animation_offset += 5.0; }
                 if state.animation_offset > 3600.0 { state.animation_offset -= 3600.0; } 
@@ -294,13 +294,14 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
             };
 
             if should_spawn_thread {
-                let hwnd_copy = hwnd;
+                let hwnd_val = hwnd.0 as usize;
                 std::thread::spawn(move || {
+                    let hwnd_copy = HWND(hwnd_val as *mut std::ffi::c_void);
                     unsafe {
                         if TAG_ABORT_SIGNAL.load(Ordering::Relaxed) { return; }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                         
-                        if OpenClipboard(HWND(0)).as_bool() { EmptyClipboard(); CloseClipboard(); }
+                        if OpenClipboard(Some(HWND::default())).is_ok() { EmptyClipboard(); CloseClipboard(); }
 
                         let send_input_event = |vk: u16, flags: KEYBD_EVENT_FLAGS| {
                             let input = INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), dwFlags: flags, time: 0, dwExtraInfo: 0, wScan: 0 } } };
@@ -325,7 +326,7 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
 
                         if !clipboard_text.trim().is_empty() && !TAG_ABORT_SIGNAL.load(Ordering::Relaxed) {
                             process_selected_text(preset_idx_for_thread, clipboard_text);
-                            PostMessageW(hwnd_copy, WM_CLOSE, WPARAM(0), LPARAM(0));
+                            PostMessageW(Some(hwnd_copy), WM_CLOSE, WPARAM(0), LPARAM(0));
                         } else {
                             // Reset state logic - scope the lock
                             let mut state = SELECTION_STATE.lock().unwrap();
@@ -354,7 +355,7 @@ unsafe fn paint_tag_window(hwnd: HWND, width: i32, height: i32, alpha: u8, is_se
     if alpha == 0 { return; }
     
     let screen_dc = GetDC(None); 
-    let mem_dc = CreateCompatibleDC(screen_dc);
+    let mem_dc = CreateCompatibleDC(Some(screen_dc));
     
     let mut state = SELECTION_STATE.lock().unwrap();
     let animation_offset = state.animation_offset;
@@ -365,20 +366,20 @@ unsafe fn paint_tag_window(hwnd: HWND, width: i32, height: i32, alpha: u8, is_se
          state.cached_lang = Some(app.config.ui_language.clone());
     }
     
-    if state.cached_bitmap.0 == 0 {
+    if state.cached_bitmap.is_invalid() {
         let bmi = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: width, biHeight: -height, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0 as u32, ..Default::default() }, ..Default::default() };
         let mut p_bits: *mut core::ffi::c_void = std::ptr::null_mut();
-        if let Ok(bmp) = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut p_bits, None, 0) {
+        if let Ok(bmp) = CreateDIBSection(Some(screen_dc), &bmi, DIB_RGB_COLORS, &mut p_bits, None, 0) {
             state.cached_bitmap = bmp;
             state.cached_bits = p_bits as *mut u32;
         }
     }
     
-    if state.cached_font.0 == 0 {
-       state.cached_font = CreateFontW(15, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32, (VARIABLE_PITCH.0 | FF_SWISS.0) as u32, w!("Segoe UI"));
+    if state.cached_font.is_invalid() {
+       state.cached_font = CreateFontW(15, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0, FONT_CHARSET(DEFAULT_CHARSET.0 as u8), FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8), FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8), FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8), std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32), w!("Segoe UI"));
     }
     
-    let old_bitmap = SelectObject(mem_dc, state.cached_bitmap);
+    let old_bitmap = SelectObject(mem_dc, state.cached_bitmap.into());
     
     if !state.cached_bits.is_null() {
         let pixels = std::slice::from_raw_parts_mut(state.cached_bits, (width * height) as usize);
@@ -456,7 +457,7 @@ unsafe fn paint_tag_window(hwnd: HWND, width: i32, height: i32, alpha: u8, is_se
     
     SetBkMode(mem_dc, TRANSPARENT); 
     SetTextColor(mem_dc, COLORREF(0x00FFFFFF));
-    let old_font = SelectObject(mem_dc, state.cached_font);
+    let old_font = SelectObject(mem_dc, state.cached_font.into());
     
     let text = if is_selecting { 
         match state.cached_lang.as_ref().unwrap().as_str() { "vi" => "Thả chuột để xử lý", "ko" => "처리를 위해 마우스를 놓으세요", _ => "Release to process" } 
@@ -487,10 +488,10 @@ unsafe fn paint_tag_window(hwnd: HWND, width: i32, height: i32, alpha: u8, is_se
     bl.BlendOp = AC_SRC_OVER as u8; 
     bl.SourceConstantAlpha = alpha; 
     bl.AlphaFormat = AC_SRC_ALPHA as u8;
-    UpdateLayeredWindow(hwnd, HDC(0), None, Some(&size), mem_dc, Some(&pt_src), COLORREF(0), Some(&bl), ULW_ALPHA);
+    UpdateLayeredWindow(hwnd, None, None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&bl), ULW_ALPHA);
     
-    SelectObject(mem_dc, old_font); 
-    SelectObject(mem_dc, old_bitmap); 
+    let _ = SelectObject(mem_dc, old_font.into()); 
+    let _ = SelectObject(mem_dc, old_bitmap.into()); 
     DeleteDC(mem_dc); 
     ReleaseDC(None, screen_dc);
 }

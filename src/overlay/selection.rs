@@ -7,6 +7,7 @@ use windows::core::*;
 
 use super::process::start_processing_pipeline;
 use crate::{APP, GdiCapture};
+use crate::win_types::{SendHwnd, SendHbitmap};
 
 // --- CONFIGURATION ---
 const FADE_TIMER_ID: usize = 2;
@@ -20,12 +21,12 @@ static mut IS_DRAGGING: bool = false;
 static mut IS_FADING_OUT: bool = false;
 static mut CURRENT_ALPHA: u8 = 0;
 static mut SELECTION_OVERLAY_ACTIVE: bool = false;
-static mut SELECTION_OVERLAY_HWND: HWND = HWND(0);
+static mut SELECTION_OVERLAY_HWND: SendHwnd = SendHwnd(HWND(std::ptr::null_mut()));
 static mut CURRENT_PRESET_IDX: usize = 0;
 
 // Cached back buffer to avoid per-frame allocations
 // Only cache the bitmap (the heavy allocation ~33MB for 4K), DC creation is cheap
-static mut CACHED_BITMAP: HBITMAP = HBITMAP(0);
+static mut CACHED_BITMAP: SendHbitmap = SendHbitmap(HBITMAP(std::ptr::null_mut()));
 static mut CACHED_W: i32 = 0;
 static mut CACHED_H: i32 = 0;
 
@@ -35,10 +36,10 @@ unsafe fn extract_crop_from_hbitmap(
     crop_rect: RECT
 ) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
     let hdc_screen = GetDC(None);
-    let hdc_mem = CreateCompatibleDC(hdc_screen);
+    let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
     
     // Select the big screenshot into DC
-    let old_obj = SelectObject(hdc_mem, capture.hbitmap);
+    let old_obj = SelectObject(hdc_mem, capture.hbitmap.into());
 
     let w = (crop_rect.right - crop_rect.left).abs();
     let h = (crop_rect.bottom - crop_rect.top).abs();
@@ -60,9 +61,9 @@ unsafe fn extract_crop_from_hbitmap(
     let mut buffer: Vec<u8> = vec![0; (w * h * 4) as usize];
 
     // Create small temp bitmap, blit crop to it, read bits
-    let hdc_temp = CreateCompatibleDC(hdc_screen);
+    let hdc_temp = CreateCompatibleDC(Some(hdc_screen));
     let hbm_temp = CreateCompatibleBitmap(hdc_screen, w, h);
-    SelectObject(hdc_temp, hbm_temp);
+    SelectObject(hdc_temp, hbm_temp.into());
     
     // Copy only the crop region from the huge screenshot
     // IMPORTANT: virtual screen coordinates calculation
@@ -73,7 +74,7 @@ unsafe fn extract_crop_from_hbitmap(
     let src_x = crop_rect.left - v_x;
     let src_y = crop_rect.top - v_y;
 
-    let _ = BitBlt(hdc_temp, 0, 0, w, h, hdc_mem, src_x, src_y, SRCCOPY).ok();
+    let _ = BitBlt(hdc_temp, 0, 0, w, h, Some(hdc_mem), src_x, src_y, SRCCOPY).ok();
     
     // Now read pixels from small bitmap
     GetDIBits(hdc_temp, hbm_temp, 0, h as u32, Some(buffer.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
@@ -84,7 +85,7 @@ unsafe fn extract_crop_from_hbitmap(
         chunk[3] = 255;
     }
 
-    DeleteObject(hbm_temp);
+    DeleteObject(hbm_temp.into());
     DeleteDC(hdc_temp);
     
     // Cleanup main DC
@@ -97,8 +98,8 @@ unsafe fn extract_crop_from_hbitmap(
 
 pub fn is_selection_overlay_active_and_dismiss() -> bool {
     unsafe {
-        if SELECTION_OVERLAY_ACTIVE && SELECTION_OVERLAY_HWND.0 != 0 {
-            PostMessageW(SELECTION_OVERLAY_HWND, WM_CLOSE, WPARAM(0), LPARAM(0));
+        if SELECTION_OVERLAY_ACTIVE && !SELECTION_OVERLAY_HWND.is_invalid() {
+            let _ = PostMessageW(Some(SELECTION_OVERLAY_HWND.0), WM_CLOSE, WPARAM(0), LPARAM(0));
             true
         } else {
             false
@@ -118,9 +119,9 @@ pub fn show_selection_overlay(preset_idx: usize) {
         let class_name = w!("SnippingOverlay");
         
         let mut wc = WNDCLASSW::default();
-        if !GetClassInfoW(instance, class_name, &mut wc).as_bool() {
+        if !GetClassInfoW(Some(instance.into()), class_name, &mut wc).is_ok() {
             wc.lpfnWndProc = Some(selection_wnd_proc);
-            wc.hInstance = instance;
+            wc.hInstance = instance.into();
             wc.hCursor = LoadCursorW(None, IDC_CROSS).unwrap();
             wc.lpszClassName = class_name;
             wc.hbrBackground = CreateSolidBrush(COLORREF(0x00000000));
@@ -138,25 +139,25 @@ pub fn show_selection_overlay(preset_idx: usize) {
             w!("Snipping"),
             WS_POPUP,
             x, y, w, h,
-            None, None, instance, None
-        );
+            None, None, Some(instance.into()), None
+        ).unwrap_or_default();
 
-        SELECTION_OVERLAY_HWND = hwnd;
+        SELECTION_OVERLAY_HWND = SendHwnd(hwnd);
 
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         
-        SetTimer(hwnd, FADE_TIMER_ID, 16, None);
+        let _ = SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            let _ = DispatchMessageW(&msg);
             if msg.message == WM_QUIT { break; }
         }
         
         SELECTION_OVERLAY_ACTIVE = false;
-        SELECTION_OVERLAY_HWND = HWND(0);
+        SELECTION_OVERLAY_HWND = SendHwnd::default();
     }
 }
 
@@ -164,7 +165,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
     match msg {
         WM_KEYDOWN => {
             if wparam.0 == VK_ESCAPE.0 as usize {
-                SendMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
             }
             LRESULT(0)
         }
@@ -174,7 +175,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                 GetCursorPos(std::ptr::addr_of_mut!(START_POS));
                 CURR_POS = START_POS;
                 SetCapture(hwnd);
-                InvalidateRect(hwnd, None, false);
+                InvalidateRect(Some(hwnd), None, false);
             }
             LRESULT(0)
         }
@@ -182,7 +183,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             if IS_DRAGGING {
                 GetCursorPos(std::ptr::addr_of_mut!(CURR_POS));
                 // Force immediate repaint for smoothness
-                InvalidateRect(hwnd, None, false);
+                InvalidateRect(Some(hwnd), None, false);
                 UpdateWindow(hwnd);
             }
             LRESULT(0)
@@ -228,7 +229,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                         } else {
                             // User dismissed wheel - cancel operation
                             IS_FADING_OUT = true;
-                            SetTimer(hwnd, FADE_TIMER_ID, 16, None);
+                            SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
                             return LRESULT(0);
                         }
                     } else {
@@ -263,11 +264,11 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
 
                     // 3. START FADE OUT
                     IS_FADING_OUT = true;
-                    SetTimer(hwnd, FADE_TIMER_ID, 16, None); 
+                    let _ = SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None); 
                     
                     return LRESULT(0);
                 } else {
-                    SendMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                    let _ = SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
                 }
             }
             LRESULT(0)
@@ -281,8 +282,8 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                         changed = true;
                     } else {
                         CURRENT_ALPHA = 0;
-                        KillTimer(hwnd, FADE_TIMER_ID);
-                        DestroyWindow(hwnd);
+                        let _ = KillTimer(Some(hwnd), FADE_TIMER_ID);
+                        let _ = DestroyWindow(hwnd);
                         PostQuitMessage(0);
                         return LRESULT(0);
                     }
@@ -291,12 +292,12 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                         CURRENT_ALPHA = (CURRENT_ALPHA as u16 + FADE_STEP as u16).min(TARGET_OPACITY as u16) as u8;
                         changed = true;
                     } else {
-                        KillTimer(hwnd, FADE_TIMER_ID);
+                        KillTimer(Some(hwnd), FADE_TIMER_ID);
                     }
                 }
                 
                 if changed {
-                    SetLayeredWindowAttributes(hwnd, COLORREF(0), CURRENT_ALPHA, LWA_ALPHA);
+                    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), CURRENT_ALPHA, LWA_ALPHA);
                 }
             }
             LRESULT(0)
@@ -310,18 +311,19 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             
             // OPTIMIZATION: Cache the full-screen bitmap (heavy allocation ~33MB for 4K)
             // The DC is lightweight and created per-frame, bitmap is reused
-            if CACHED_BITMAP.0 == 0 || CACHED_W != width || CACHED_H != height {
-                if CACHED_BITMAP.0 != 0 {
-                    DeleteObject(CACHED_BITMAP);
+            if CACHED_BITMAP.is_invalid() || CACHED_W != width || CACHED_H != height {
+                if !CACHED_BITMAP.is_invalid() {
+                    let _ = DeleteObject(CACHED_BITMAP.0.into());
                 }
-                CACHED_BITMAP = CreateCompatibleBitmap(hdc, width, height);
+                let hbm = CreateCompatibleBitmap(hdc, width, height);
+                CACHED_BITMAP = SendHbitmap(hbm);
                 CACHED_W = width;
                 CACHED_H = height;
             }
             
             // Create lightweight DC per-frame (no expensive allocation)
-            let mem_dc = CreateCompatibleDC(hdc);
-            let old_bmp = SelectObject(mem_dc, CACHED_BITMAP);
+            let mem_dc = CreateCompatibleDC(Some(hdc));
+            let old_bmp = SelectObject(mem_dc, CACHED_BITMAP.0.into());
 
             // 1. Clear background using stock black brush (no allocation)
             let black_brush = GetStockObject(BLACK_BRUSH);
@@ -355,7 +357,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                     
                     // Create White Pen (2px thick)
                     let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF));
-                    let old_pen = SelectObject(mem_dc, pen);
+                    let old_pen = SelectObject(mem_dc, pen.into());
                     
                     // Use Null Brush (Transparent Fill)
                     let null_brush = GetStockObject(NULL_BRUSH);
@@ -367,12 +369,12 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                     // Cleanup
                     SelectObject(mem_dc, old_brush);
                     SelectObject(mem_dc, old_pen);
-                    DeleteObject(pen);
+                    DeleteObject(pen.into());
                 }
             }
 
             // Blit to screen
-            let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY).ok();
+            let _ = BitBlt(hdc, 0, 0, width, height, Some(mem_dc), 0, 0, SRCCOPY).ok();
             
             // Cleanup DC (but keep cached bitmap)
             SelectObject(mem_dc, old_bmp);
@@ -384,16 +386,16 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
         WM_CLOSE => {
             if !IS_FADING_OUT {
                 IS_FADING_OUT = true;
-                KillTimer(hwnd, FADE_TIMER_ID);
-                SetTimer(hwnd, FADE_TIMER_ID, 16, None);
+                KillTimer(Some(hwnd), FADE_TIMER_ID);
+                SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
             }
             LRESULT(0)
         }
         WM_DESTROY => {
             // Cleanup cached back buffer resources
-            if CACHED_BITMAP.0 != 0 {
-                DeleteObject(CACHED_BITMAP);
-                CACHED_BITMAP = HBITMAP(0);
+            if !CACHED_BITMAP.is_invalid() {
+                let _ = DeleteObject(CACHED_BITMAP.0.into());
+                CACHED_BITMAP = SendHbitmap::default();
             }
             CACHED_W = 0;
             CACHED_H = 0;
