@@ -24,9 +24,11 @@ pub fn get(placeholder_text: &str) -> String { format!(r###"        function upd
 
             // Detect if newText was REPLACED (not extended)  
             // This happens when new translation starts - must do atomic rebuild
+            // BUT: only if oldText didn't grow (if oldText grew, it's a commit with smooth transition)
             const isNewTextReplacement = previousNewText.length > 0 && 
                 newText.length > 0 && 
-                !newText.startsWith(previousNewText);
+                !newText.startsWith(previousNewText) &&
+                oldText.length === currentOldTextLength;  // oldText unchanged = translation restart
             
             // 1. Handle history rewrite or shrink
             if (oldText.length < currentOldTextLength) {{
@@ -41,21 +43,43 @@ pub fn get(placeholder_text: &str) -> String { format!(r###"        function upd
             const fullText = oldText + newText;
             
             // 2. If old text grew, transition chunks from new to old
+            // Handle chunk splitting when a chunk spans the commit boundary
             if (oldText.length > currentOldTextLength) {{
                 let committedLen = oldText.length;
                 let accumulatedLen = 0;
                 
                 for (const chunk of allChunks) {{
-                    const chunkLen = chunk.textContent.length;
+                    const chunkText = chunk.textContent;
+                    const chunkLen = chunkText.length;
+                    const chunkStart = accumulatedLen;
                     const chunkEnd = accumulatedLen + chunkLen;
                     
-                    // If this chunk falls within committed range, mark as old
                     if (chunkEnd <= committedLen) {{
+                        // Entire chunk is within committed range - transition to old
                         if (!chunk.classList.contains('old')) {{
                             chunk.classList.remove('appearing', 'new');
                             chunk.classList.add('old');
                         }}
+                    }} else if (chunkStart < committedLen && chunkEnd > committedLen) {{
+                        // Chunk SPANS the commit boundary - need to split it
+                        const splitPoint = committedLen - chunkStart;
+                        const committedPart = chunkText.substring(0, splitPoint);
+                        const uncommittedPart = chunkText.substring(splitPoint);
+                        
+                        // Update current chunk to be just the committed part (old style)
+                        chunk.textContent = committedPart;
+                        chunk.classList.remove('appearing', 'new');
+                        chunk.classList.add('old');
+                        
+                        // Create new chunk for uncommitted part (stays new style)
+                        if (uncommittedPart) {{
+                            const newPartChunk = document.createElement('span');
+                            newPartChunk.className = 'text-chunk new';
+                            newPartChunk.textContent = uncommittedPart;
+                            chunk.after(newPartChunk);
+                        }}
                     }}
+                    // else: chunk is entirely after committed range, stays as-is
                     accumulatedLen = chunkEnd;
                 }}
             }}
