@@ -1046,23 +1046,23 @@ impl AudioPlayer {
             return;
         }
         
-        eprintln!("TTS: speed={:.2}, in={}", speed_ratio, input_samples.len());
+
         
         // Apply WSOLA time-stretching for pitch-preserving speed change
         let stretched_samples = if (speed_ratio - 1.0).abs() < 0.05 {
             // Speed is close to 1.0 - no processing needed
-            eprintln!("  -> Bypass (speed ~1.0)");
+
             input_samples
         } else {
             // Use WSOLA for pitch-preserving time stretch
             if let Ok(mut wsola) = self.wsola.lock() {
                 let result = wsola.stretch(&input_samples, speed_ratio);
-                eprintln!("  -> WSOLA: out={}, buf={}", result.len(), wsola.input_buffer.len());
+
                 // KEY FIX: If WSOLA returns empty, don't output anything!
                 // The samples are buffered in WSOLA and will come out next time.
                 // Do NOT mix raw samples with processed samples!
                 if result.is_empty() {
-                    eprintln!("  -> Empty, waiting for more data");
+
                     return; // Wait for more data - don't output anything
                 }
                 result
