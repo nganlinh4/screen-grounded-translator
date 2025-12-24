@@ -140,6 +140,7 @@ pub fn get_realtime_html(is_translation: bool, audio_source: &str, languages: &[
             <div class="speed-slider-container">
                 <input type="range" class="speed-slider" id="speed-slider" min="50" max="200" value="100" step="10">
                 <span class="speed-value" id="speed-value">1.0x</span>
+                <button class="auto-toggle on" id="auto-speed-toggle" title="Auto-adjust speed to catch up">Auto</button>
             </div>
         </div>
     </div>

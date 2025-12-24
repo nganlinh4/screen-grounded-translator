@@ -18,6 +18,9 @@ pub fn is_realtime_overlay_active() -> bool {
 
 /// Stop the realtime overlay and close all windows
 pub fn stop_realtime_overlay() {
+    // Stop any playing TTS immediately
+    crate::api::tts::TTS_MANAGER.stop();
+    
     unsafe {
         // Close app selection popup if open
         let popup_val = APP_SELECTION_HWND.load(std::sync::atomic::Ordering::SeqCst);

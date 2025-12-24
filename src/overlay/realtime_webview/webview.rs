@@ -239,6 +239,12 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
                 // Toggle translation window visibility
                 let visible = &body[12..] == "1";
                 TRANS_VISIBLE.store(visible, Ordering::SeqCst);
+                
+                // Stop TTS when translation window is hidden
+                if !visible {
+                    crate::api::tts::TTS_MANAGER.stop();
+                }
+                
                 unsafe {
                     if !TRANSLATION_HWND.is_invalid() {
                         ShowWindow(TRANSLATION_HWND, if visible { SW_SHOW } else { SW_HIDE });
@@ -298,10 +304,16 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
                     }
                 }
             } else if body.starts_with("ttsSpeed:") {
-                // TTS speed adjustment (50-200, where 100 = 1.0x)
+                // TTS playback speed adjustment (50-200, where 100 = 1.0x)
                 if let Ok(speed) = body[9..].parse::<u32>() {
                     REALTIME_TTS_SPEED.store(speed, Ordering::SeqCst);
+                    // Turn off auto-speed when user manually adjusts slider
+                    REALTIME_TTS_AUTO_SPEED.store(false, Ordering::SeqCst);
                 }
+            } else if body.starts_with("ttsAutoSpeed:") {
+                // TTS auto-speed toggle
+                let enabled = &body[13..] == "1";
+                REALTIME_TTS_AUTO_SPEED.store(enabled, Ordering::SeqCst);
             }
         })
         .build_as_child(&wrapper);

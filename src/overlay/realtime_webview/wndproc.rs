@@ -139,7 +139,7 @@ pub unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam:
                         // This uses the existing parallel TTS infrastructure
                         let hwnd_val = hwnd.0 as isize;
                         std::thread::spawn(move || {
-                            crate::api::tts::TTS_MANAGER.speak(&new_committed, hwnd_val);
+                            crate::api::tts::TTS_MANAGER.speak_realtime(&new_committed, hwnd_val);
                         });
                     }
                     
@@ -196,6 +196,9 @@ pub unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam:
             LRESULT(0)
         }
         WM_CLOSE => {
+            // Stop TTS when translation window is closed
+            crate::api::tts::TTS_MANAGER.stop();
+            
             REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
             DestroyWindow(hwnd);
             

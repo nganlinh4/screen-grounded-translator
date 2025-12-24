@@ -46,6 +46,7 @@ pub struct TtsRequest {
     pub id: u64,
     pub text: String,
     pub hwnd: isize, // Window handle to update state when audio starts
+    pub is_realtime: bool, // True if this is from realtime translation (uses REALTIME_TTS_SPEED)
 }
 
 /// Global TTS manager - singleton pattern for persistent connection
@@ -67,8 +68,8 @@ pub struct TtsManager {
     /// Signal for Socket Workers
     work_signal: Condvar,
 
-    /// Queue for Player: (Input Channel, Window Handle, Request ID, Generation ID)
-    playback_queue: Mutex<VecDeque<(mpsc::Receiver<AudioEvent>, isize, u64, u64)>>,
+    /// Queue for Player: (Input Channel, Window Handle, Request ID, Generation ID, IsRealtime)
+    playback_queue: Mutex<VecDeque<(mpsc::Receiver<AudioEvent>, isize, u64, u64, bool)>>,
     /// Signal for Player
     playback_signal: Condvar,
 
@@ -100,6 +101,17 @@ impl TtsManager {
     /// Request TTS for the given text. Appends to queue (sequential playback).
     /// Returns the request ID.
     pub fn speak(&self, text: &str, hwnd: isize) -> u64 {
+        self.speak_internal(text, hwnd, false)
+    }
+    
+    /// Request TTS for realtime translation. Uses REALTIME_TTS_SPEED and auto-catchup.
+    /// Returns the request ID.
+    pub fn speak_realtime(&self, text: &str, hwnd: isize) -> u64 {
+        self.speak_internal(text, hwnd, true)
+    }
+    
+    /// Internal speak implementation
+    fn speak_internal(&self, text: &str, hwnd: isize, is_realtime: bool) -> u64 {
         let id = REQUEST_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
         let current_gen = self.interrupt_generation.load(Ordering::SeqCst);
         
@@ -110,7 +122,7 @@ impl TtsManager {
             let mut wq = self.work_queue.lock().unwrap();
             wq.push_back((
                 QueuedRequest {
-                    req: TtsRequest { id, text: text.to_string(), hwnd },
+                    req: TtsRequest { id, text: text.to_string(), hwnd, is_realtime },
                     generation: current_gen,
                 },
                 tx
@@ -120,7 +132,7 @@ impl TtsManager {
         
         {
             let mut pq = self.playback_queue.lock().unwrap();
-            pq.push_back((rx, hwnd, id, current_gen));
+            pq.push_back((rx, hwnd, id, current_gen, is_realtime));
         }
         self.playback_signal.notify_one();
         
@@ -151,7 +163,7 @@ impl TtsManager {
             let mut wq = self.work_queue.lock().unwrap();
             wq.push_back((
                 QueuedRequest {
-                    req: TtsRequest { id, text: text.to_string(), hwnd },
+                    req: TtsRequest { id, text: text.to_string(), hwnd, is_realtime: false },
                     generation: new_gen,
                 },
                 tx
@@ -161,7 +173,7 @@ impl TtsManager {
         
         {
             let mut pq = self.playback_queue.lock().unwrap();
-            pq.push_back((rx, hwnd, id, new_gen));
+            pq.push_back((rx, hwnd, id, new_gen, false));
         }
         // Force notify player to wake up and check generation/queue
         self.playback_signal.notify_one();
@@ -436,7 +448,7 @@ fn run_player_thread() {
             pq.pop_front()
         };
         
-        if let Some((rx, hwnd, _req_id, generation)) = playback_job {
+        if let Some((rx, hwnd, _req_id, generation, is_realtime)) = playback_job {
              let mut loading_cleared = false;
              
              // Loop reading chunks from this channel
@@ -457,7 +469,7 @@ fn run_player_thread() {
                              loading_cleared = true;
                              clear_tts_loading_state(hwnd);
                          }
-                         audio_player.play(&data);
+                         audio_player.play(&data, is_realtime);
                      }
                      Ok(AudioEvent::End) => {
                          // Check if we were interrupted or finished normally
@@ -563,10 +575,19 @@ fn run_socket_worker() {
             }
         };
         
-        // Read config for setup
+        // Read config for setup - handle realtime vs regular TTS
         let (current_voice, current_speed) = {
-             let app = APP.lock().unwrap();
-             (app.config.tts_voice.clone(), app.config.tts_speed.clone())
+            let app = APP.lock().unwrap();
+            let voice = app.config.tts_voice.clone();
+            
+            if request.req.is_realtime {
+                // For realtime TTS: AI always speaks at normal pace
+                // Playback speed adjustment is done in the audio player
+                (voice, "Normal".to_string())
+            } else {
+                // Regular TTS: Use app config speed
+                (voice, app.config.tts_speed.clone())
+            }
         };
 
         // Send setup
@@ -697,6 +718,8 @@ struct AudioPlayer {
     shutdown: Arc<AtomicBool>,
     // Player thread handle
     _thread: Option<std::thread::JoinHandle<()>>,
+    // WSOLA time stretcher for pitch-preserving speed control
+    wsola: Mutex<WsolaStretcher>,
 }
 
 impl AudioPlayer {
@@ -742,6 +765,7 @@ impl AudioPlayer {
             shared_buffer,
             shutdown,
             _thread: Some(thread),
+            wsola: Mutex::new(WsolaStretcher::new(SOURCE_SAMPLE_RATE)),
         }
     }
     
@@ -874,9 +898,6 @@ impl AudioPlayer {
              if available > 0 {
                  let buffer_ptr = render_client.GetBuffer(available)?;
                  
-                 // We will fill as much as we have from shared_buffer, or silence
-                 let mut written_frames = 0;
-                 
                  // Lock inner buffer
                  let mut deck = shared_buffer.lock().unwrap();
                  
@@ -886,42 +907,24 @@ impl AudioPlayer {
                      for i in 0..available as usize {
                         if let Some(sample) = deck.pop_front() {
                             let s = (sample as f32) / 32768.0;
-                            // Fill all channels with same sample (mono source) or de-interleave? 
-                            // shared_buffer is mono? "VecDeque<i16>".
-                            // TTS is likely Mono.
                             for c in 0..channels {
                                 out_slice[i*channels + c] = s;
                             }
-                            written_frames += 1;
                         } else {
-                            // Silence for rest
+                            // Silence when buffer is empty
                              for c in 0..channels {
                                 out_slice[i*channels + c] = 0.0;
                             }
-                            // Don't increment written_frames if we want to release only what we wrote? 
-                            // No, GetBuffer requires we fill valid data or silence.
-                            // But usually we can only write what we have? 
-                            // WASAPI: "The caller ... writes data to the buffer ... then calls ReleaseBuffer".
-                            // If we write less, we call ReleaseBuffer(num_written).
-                            // But we shouldn't hold the buffer if we have no data?
-                            // Better mechanism: Check deck len first. 
                         }
                      }
-                     
-                     // If deck was empty, 'written_frames' is 0 (or we filled silence).
-                     // If we filled silence, we consume buffer span.
-                     // A better strategy: write ONLY available data.
-                     // But we already called GetBuffer(available).
-                     // If we ReleaseBuffer(0), we produce nothing.
                  } else {
-                     // Assume PCM i16
+                     // PCM i16
                      let out_slice = std::slice::from_raw_parts_mut(buffer_ptr as *mut i16, (available as usize) * channels);
                      for i in 0..available as usize {
                         if let Some(sample) = deck.pop_front() {
                             for c in 0..channels {
                                 out_slice[i*channels + c] = sample;
                             }
-                             written_frames += 1;
                         } else {
                              for c in 0..channels {
                                 out_slice[i*channels + c] = 0;
@@ -930,9 +933,6 @@ impl AudioPlayer {
                      }
                  }
                  
-                 // Release full buffer (including silence if any) or just written?
-                 // If we release 0, we spin loop heavily.
-                 // So we should fill silence if underflow.
                  render_client.ReleaseBuffer(available, 0)?;
             }
              
@@ -993,20 +993,75 @@ impl AudioPlayer {
         }
     }
     
-    fn play(&self, audio_data: &[u8]) {
+    fn play(&self, audio_data: &[u8], is_realtime: bool) {
+        // Get effective speed for realtime TTS (or 100 for normal TTS)
+        let effective_speed = if is_realtime {
+            use crate::overlay::realtime_webview::state::{REALTIME_TTS_SPEED, REALTIME_TTS_AUTO_SPEED, COMMITTED_TRANSLATION_QUEUE};
+            
+            let base_speed = REALTIME_TTS_SPEED.load(Ordering::Relaxed);
+            let auto_enabled = REALTIME_TTS_AUTO_SPEED.load(Ordering::Relaxed);
+            
+            // Auto-catchup: boost speed if queue is building up
+            let queue_len = COMMITTED_TRANSLATION_QUEUE.lock()
+                .map(|q| q.len())
+                .unwrap_or(0);
+            
+            if auto_enabled && queue_len > 0 {
+                // +15% per queued item, up to +60%
+                let boost = (queue_len as u32 * 15).min(60);
+                (base_speed + boost).min(200)
+            } else {
+                base_speed
+            }
+        } else {
+            100 // Normal speed for non-realtime TTS
+        };
+        
+        // Speed ratio: 100 = 1.0x, 150 = 1.5x, 50 = 0.5x
+        let speed_ratio = effective_speed as f64 / 100.0;
+        
         // Convert raw PCM bytes to i16 samples (little-endian)
-        // Also upsample from 24kHz to 48kHz by duplicating each sample
-        let mut samples = Vec::with_capacity(audio_data.len());
-        for chunk in audio_data.chunks_exact(2) {
-            let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
-            // Duplicate each sample for 2x upsampling (24kHz -> 48kHz)
-            samples.push(sample);
-            samples.push(sample);
+        let input_samples: Vec<i16> = audio_data.chunks_exact(2)
+            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        
+        if input_samples.is_empty() {
+            return;
         }
+        
+        eprintln!("TTS: speed={:.2}, in={}", speed_ratio, input_samples.len());
+        
+        // Apply WSOLA time-stretching for pitch-preserving speed change
+        let stretched_samples = if (speed_ratio - 1.0).abs() < 0.05 {
+            // Speed is close to 1.0 - no processing needed
+            eprintln!("  -> Bypass (speed ~1.0)");
+            input_samples
+        } else {
+            // Use WSOLA for pitch-preserving time stretch
+            if let Ok(mut wsola) = self.wsola.lock() {
+                let result = wsola.stretch(&input_samples, speed_ratio);
+                eprintln!("  -> WSOLA: out={}, buf={}", result.len(), wsola.input_buffer.len());
+                // KEY FIX: If WSOLA returns empty, don't output anything!
+                // The samples are buffered in WSOLA and will come out next time.
+                // Do NOT mix raw samples with processed samples!
+                if result.is_empty() {
+                    eprintln!("  -> Empty, waiting for more data");
+                    return; // Wait for more data - don't output anything
+                }
+                result
+            } else {
+                input_samples
+            }
+        };
+        
+        // Upsample from 24kHz to 48kHz (duplicate each sample)
+        let output_samples: Vec<i16> = stretched_samples.iter()
+            .flat_map(|&s| [s, s])
+            .collect();
         
         // Add to shared buffer
         if let Ok(mut buf) = self.shared_buffer.lock() {
-            buf.extend(samples);
+            buf.extend(output_samples);
         }
     }
     
@@ -1034,6 +1089,232 @@ impl Drop for AudioPlayer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
         // Thread will exit on its own
+    }
+}
+
+/// Simple OLA (Overlap-Add) time stretcher for pitch-preserving tempo change.
+/// Uses Hann window for perfect reconstruction at 50% overlap.
+struct WsolaStretcher {
+    /// Frame size in samples (20ms at 24kHz = 480 samples)
+    frame_size: usize,
+    /// Hop size (frame_size / 2 for 50% overlap)
+    hop_size: usize,
+    /// Hann window
+    window: Vec<f32>,
+    /// Input buffer for accumulating samples
+    pub input_buffer: Vec<f32>,
+    /// Output overlap buffer - carries the "tail" that needs to overlap with next chunk
+    output_overlap: Vec<f32>,
+    /// Search range for alignment (SOLA)
+    search_range: usize,
+    /// Previous speed ratio (to detect changes)
+    last_speed: f64,
+}
+
+impl WsolaStretcher {
+    fn new(sample_rate: u32) -> Self {
+        // 20ms frame size for better streaming with small chunks
+        // At 24kHz: 20ms = 480 samples
+        let frame_size = (sample_rate as usize * 20) / 1000;
+        let hop_size = frame_size / 2; // 50% overlap
+        
+        // Create Hann window - with 50% overlap, Hann windows sum to exactly 1.0
+        // This is crucial for artifact-free overlap-add!
+        let window: Vec<f32> = (0..frame_size)
+            .map(|i| {
+                let t = i as f32 / frame_size as f32;
+                // Hann window: 0.5 * (1 - cos(2*pi*t))
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * t).cos())
+            })
+            .collect();
+        
+        Self {
+            frame_size,
+            hop_size,
+            window,
+            input_buffer: Vec::new(),
+            output_overlap: Vec::new(),
+            search_range: hop_size / 2, // Search +/- 50% of hop size
+            last_speed: 1.0,
+        }
+    }
+    
+    /// Find best offset using cross-correlation
+    fn find_best_offset(&self, input_pos: usize, target_hop: usize) -> usize {
+        // We want to find a shift 'k' such that input[input_pos + k] is most similar to
+        // what would have naturally followed the previous frame.
+        // However, in standard OLA/WSOLA for time-scale modification, we look for 
+        // periodicity.
+        // We compare the region around input_pos + target_hop with the region at input_pos + synthesis_hop
+        // But since we don't have the previous synthesis output readily mapped back to input in this simple structure,
+        // we use a simpler strategy: optimize for continuity (phase alignment).
+        
+        // Strategy: We want to overlap the END of the previous frame (which is in output buffer)
+        // with the BEGINNING of the new frame.
+        // Since we don't have easy access to the unfinished output buffer here (it's being built),
+        // we use the input signal itself.
+        // We look for self-similarity in the input signal around the analysis hop.
+        
+        // Search range: [target_hop - search_range, target_hop + search_range]
+        let start = target_hop.saturating_sub(self.search_range);
+        let end = (target_hop + self.search_range).min(self.input_buffer.len().saturating_sub(self.frame_size + input_pos).saturating_sub(1));
+        
+        if start >= end {
+            return target_hop;
+        }
+
+        let mut best_offset = target_hop;
+        let mut max_corr = -1.0;
+        
+        // Use a subset of samples for correlation to save CPU
+        let compare_len = self.search_range;
+        
+        // "Natural" continuation would be at input_pos + hop_size (synthesis hop)
+        // We want to link that to input_pos + analysis_hop (target_hop)
+        // So we compare input[input_pos + hop_size ...] with input[input_pos + k ...]
+        
+        let ref_pos = input_pos + self.hop_size;
+        if ref_pos + compare_len > self.input_buffer.len() {
+             return target_hop;
+        }
+        
+        let ref_segment = &self.input_buffer[ref_pos..ref_pos + compare_len];
+
+        for k in start..end {
+            let candidate_pos = input_pos + k;
+             if candidate_pos + compare_len > self.input_buffer.len() {
+                continue;
+            }
+            
+            let candidate = &self.input_buffer[candidate_pos..candidate_pos + compare_len];
+            
+            // Cross-correlation
+            let mut corr = 0.0;
+            for i in 0..compare_len {
+                corr += ref_segment[i] * candidate[i];
+            }
+            
+            if corr > max_corr {
+                max_corr = corr;
+                best_offset = k;
+            }
+        }
+        
+        best_offset
+    }
+
+    /// Time-stretch the input samples.
+    /// speed_ratio > 1.0 = faster (compress time), < 1.0 = slower (expand time)
+    fn stretch(&mut self, input: &[i16], speed_ratio: f64) -> Vec<i16> {
+        // Bypass for normal speed
+        if (speed_ratio - 1.0).abs() < 0.05 || input.is_empty() {
+            // Flush any remaining overlap buffer
+            if !self.output_overlap.is_empty() {
+                let result: Vec<i16> = self.output_overlap.drain(..)
+                    .map(|s| s.clamp(-32768.0, 32767.0) as i16)
+                    .collect();
+                // Also return the input
+                let mut combined = result;
+                combined.extend(input.iter().cloned());
+                return combined;
+            }
+            return input.to_vec();
+        }
+        
+        // Clear buffers if speed changed significantly (avoid artifacts)
+        if (speed_ratio - self.last_speed).abs() > 0.15 {
+            self.input_buffer.clear();
+            self.output_overlap.clear();
+        }
+        self.last_speed = speed_ratio;
+        
+        // Add input samples to buffer (convert to f32)
+        self.input_buffer.extend(input.iter().map(|&s| s as f32));
+        
+        // Need at least one frame + search range to process
+        if self.input_buffer.len() < self.frame_size + self.search_range {
+            return Vec::new();
+        }
+        
+        // Ideal analysis hop
+        let target_analysis_hop = (self.hop_size as f64 * speed_ratio).round() as usize;
+        
+        // Synthesis hop stays constant at 50% of frame size
+        let synthesis_hop = self.hop_size;
+        
+        // Output buffer
+        // We guess size based on target ratio, but it will vary slightly due to SOLA
+        let estimated_frames = self.input_buffer.len() / target_analysis_hop.max(1);
+        let mut output = vec![0.0f32; estimated_frames * synthesis_hop + self.frame_size];
+        
+        // Initialize output with overlap from previous call
+        for (i, &v) in self.output_overlap.iter().enumerate() {
+            if i < output.len() {
+                output[i] = v;
+            }
+        }
+        
+        let mut input_pos = 0usize;
+        let mut output_pos = 0usize;
+        
+        loop {
+            // Ensure we have enough input for:
+            // 1. Comparison (at current pos + hop_size)
+            // 2. Next frame (at current pos + target_hop + search_range)
+            if input_pos + self.frame_size + self.search_range + target_analysis_hop > self.input_buffer.len() {
+                break;
+            }
+            if output_pos + self.frame_size > output.len() {
+                output.resize(output_pos + self.frame_size * 2, 0.0);
+            }
+            
+            // Find best alignment offset (SOLA)
+            let actual_analysis_hop = self.find_best_offset(input_pos, target_analysis_hop);
+            
+            // Advance input by the OPTIMIZED hop
+            input_pos += actual_analysis_hop;
+            
+            // Apply window and overlap-add
+            for i in 0..self.frame_size {
+                let in_sample = self.input_buffer[input_pos + i];
+                let w = self.window[i];
+                output[output_pos + i] += in_sample * w;
+            }
+            
+            output_pos += synthesis_hop;
+        }
+        
+        // The "complete" output is everything up to the start of the last frame's tail
+        let complete_len = output_pos.min(output.len());
+        
+        // Save the tail for next call's overlap
+        self.output_overlap.clear();
+        if complete_len < output.len() {
+            self.output_overlap.extend_from_slice(&output[complete_len..]);
+        }
+        
+        // Remove consumed input
+        // Maintain overlap context: input_pos points to start of LAST processed frame
+        // We need to keep that frame because next search compares against it
+        let consumed = input_pos.min(self.input_buffer.len());
+        
+        if consumed > 0 {
+            self.input_buffer.drain(0..consumed);
+        }
+        
+        // Return the complete portion as i16
+        output[..complete_len].iter()
+            .map(|&s| s.clamp(-32768.0, 32767.0) as i16)
+            .collect()
+    }
+    
+    /// Flush remaining buffered samples
+    fn flush(&mut self) -> Vec<i16> {
+        let result: Vec<i16> = self.input_buffer.iter()
+            .map(|&s| s.clamp(-32768.0, 32767.0) as i16)
+            .collect();
+        self.input_buffer.clear();
+        result
     }
 }
 

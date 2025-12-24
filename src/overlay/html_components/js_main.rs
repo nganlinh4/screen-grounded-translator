@@ -53,12 +53,29 @@ pub fn get(font_size: u32) -> String { format!(r###"        const container = do
         }}
         
         if (speedSlider && speedValue) {{
+            const autoToggle = document.getElementById('auto-speed-toggle');
+            let autoSpeed = true; // Default: auto is on
+            
             speedSlider.addEventListener('input', function(e) {{
                 e.stopPropagation();
                 ttsSpeed = parseInt(this.value);
                 speedValue.textContent = (ttsSpeed / 100).toFixed(1) + 'x';
                 window.ipc.postMessage('ttsSpeed:' + ttsSpeed);
+                // Auto turns off when user manually adjusts slider
+                if (autoSpeed && autoToggle) {{
+                    autoSpeed = false;
+                    autoToggle.classList.remove('on');
+                }}
             }});
+            
+            if (autoToggle) {{
+                autoToggle.addEventListener('click', function(e) {{
+                    e.stopPropagation();
+                    autoSpeed = !autoSpeed;
+                    this.classList.toggle('on', autoSpeed);
+                    window.ipc.postMessage('ttsAutoSpeed:' + (autoSpeed ? '1' : '0'));
+                }});
+            }}
         }}
         
         // Header toggle (with null check in case element is commented out)

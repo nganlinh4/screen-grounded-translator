@@ -41,6 +41,8 @@ lazy_static::lazy_static! {
     pub static ref REALTIME_TTS_ENABLED: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     /// TTS playback speed (100 = 1.0x, 50 = 0.5x, 150 = 1.5x, etc.)
     pub static ref REALTIME_TTS_SPEED: Arc<std::sync::atomic::AtomicU32> = Arc::new(std::sync::atomic::AtomicU32::new(100));
+    /// Auto-speed mode: automatically adjust speed based on queue length
+    pub static ref REALTIME_TTS_AUTO_SPEED: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     /// Queue of committed translation text segments to speak
     pub static ref COMMITTED_TRANSLATION_QUEUE: Mutex<std::collections::VecDeque<String>> = Mutex::new(std::collections::VecDeque::new());
     

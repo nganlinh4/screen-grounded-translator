@@ -118,6 +118,28 @@ pub fn get() -> String { r###"
             min-width: 32px;
             text-align: right;
         }
+        .auto-toggle {
+            padding: 4px 10px;
+            font-size: 10px;
+            font-weight: bold;
+            border: 1px solid #555;
+            border-radius: 12px;
+            background: transparent;
+            color: #888;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .auto-toggle:hover {
+            border-color: #ff9633;
+            color: #ff9633;
+        }
+        .auto-toggle.on {
+            background: linear-gradient(135deg, #ff9633 0%, #ff6b00 100%);
+            border-color: #ff9633;
+            color: #fff;
+        }
         
         /* App Selection Modal */
         #app-modal {
