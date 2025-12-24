@@ -125,69 +125,107 @@ impl RealtimeState {
     
     /// Commit finished sentences after successful translation
     /// Matches sentence delimiters between source and translation, then commits all matched pairs.
+    /// For long sentences, PROACTIVELY uses commas as split points before waiting for sentence end.
     /// Uses a low-threshold pressure valve for single sentences to avoid excessive re-translation.
     pub fn commit_finished_sentences(&mut self) {
         let sentence_delimiters = ['.', '!', '?', '。', '！', '？'];
+        let clause_delimiters = [',', ';', ':', '，', '；', '：'];
         
-        let mut temp_src_pos = self.last_committed_pos;
-        let mut temp_trans_pos = 0;
+        // Thresholds for proactive comma splitting
+        const LONG_SENTENCE_THRESHOLD: usize = 60;  // Start looking for comma after this many chars
+        const MIN_CLAUSE_LENGTH: usize = 20;        // Minimum chars before a comma to commit
         
-        // Store all valid matches found in this pass: (source_absolute_end, translation_relative_end)
-        let mut matches: Vec<(usize, usize)> = Vec::new();
+        let uncommitted_len = self.uncommitted_translation.len();
+        
+        // Store all valid matches found: (source_absolute_end, translation_relative_end, is_clause)
+        let mut matches: Vec<(usize, usize, bool)> = Vec::new();
 
-        // 1. Scan ahead and find ALL potential sentence matches
-        loop {
-            // Safety check
-            if temp_src_pos >= self.full_transcript.len() { break; }
-            if temp_trans_pos >= self.uncommitted_translation.len() { break; }
+        // 1. PROACTIVE COMMA SPLIT: If uncommitted is long, check for comma FIRST
+        // This ensures we don't wait for sentence endings in long ongoing sentences
+        if uncommitted_len > LONG_SENTENCE_THRESHOLD {
+            let source_remaining = &self.full_transcript[self.last_committed_pos..];
+            let trans_remaining = &self.uncommitted_translation;
             
-            let source_text = &self.full_transcript[temp_src_pos..];
-            let trans_text = &self.uncommitted_translation[temp_trans_pos..];
-
-            // Find next delimiter in Source
-            let src_end_opt = source_text.char_indices()
-                .find(|(_, c)| sentence_delimiters.contains(c))
+            // Find the LAST comma that gives us at least MIN_CLAUSE_LENGTH chars
+            // (prefer later split for more context while still being proactive)
+            let src_clause_end = source_remaining.char_indices()
+                .filter(|(_, c)| clause_delimiters.contains(c))
+                .filter(|(i, _)| *i >= MIN_CLAUSE_LENGTH)
+                .last()
                 .map(|(i, c)| i + c.len_utf8());
             
-            // Find next delimiter in Translation
-            let trn_end_opt = trans_text.char_indices()
-                .find(|(_, c)| sentence_delimiters.contains(c))
+            let trn_clause_end = trans_remaining.char_indices()
+                .filter(|(_, c)| clause_delimiters.contains(c))
+                .filter(|(i, _)| *i >= MIN_CLAUSE_LENGTH)
+                .last()
                 .map(|(i, c)| i + c.len_utf8());
+            
+            if let (Some(s_rel), Some(t_rel)) = (src_clause_end, trn_clause_end) {
+                let s_abs = self.last_committed_pos + s_rel;
+                matches.push((s_abs, t_rel, true));
+                eprintln!("[Commit] PROACTIVE comma split: {} chars at pos {}", t_rel, t_rel);
+            }
+        }
+        
+        // 2. If no proactive comma split, look for sentence delimiters
+        if matches.is_empty() {
+            let mut temp_src_pos = self.last_committed_pos;
+            let mut temp_trans_pos = 0;
+            
+            loop {
+                if temp_src_pos >= self.full_transcript.len() { break; }
+                if temp_trans_pos >= self.uncommitted_translation.len() { break; }
+                
+                let source_text = &self.full_transcript[temp_src_pos..];
+                let trans_text = &self.uncommitted_translation[temp_trans_pos..];
 
-            if let (Some(s_rel), Some(t_rel)) = (src_end_opt, trn_end_opt) {
-                let s_abs = temp_src_pos + s_rel;
-                let t_abs = temp_trans_pos + t_rel;
+                let src_sentence_end = source_text.char_indices()
+                    .find(|(_, c)| sentence_delimiters.contains(c))
+                    .map(|(i, c)| i + c.len_utf8());
                 
-                matches.push((s_abs, t_abs));
-                
-                // Advance temp pointers to look for the next sentence
-                temp_src_pos = s_abs;
-                temp_trans_pos = t_abs;
-            } else {
-                // One of them ran out of delimiters, stop scanning
-                break;
+                let trn_sentence_end = trans_text.char_indices()
+                    .find(|(_, c)| sentence_delimiters.contains(c))
+                    .map(|(i, c)| i + c.len_utf8());
+
+                if let (Some(s_rel), Some(t_rel)) = (src_sentence_end, trn_sentence_end) {
+                    let s_abs = temp_src_pos + s_rel;
+                    let t_abs = temp_trans_pos + t_rel;
+                    
+                    matches.push((s_abs, t_abs, false));
+                    temp_src_pos = s_abs;
+                    temp_trans_pos = t_abs;
+                } else {
+                    break;
+                }
             }
         }
 
-        // 2. Decide how many to commit - commit ALL matched sentences immediately
+        // 3. Decide how many to commit
         let num_matches = matches.len();
-        let mut num_to_commit = num_matches; // Commit all matches, no keep-one-behind
+        let mut num_to_commit = num_matches;
 
         // Pressure Valve: For single sentence, still require minimum length
-        // to avoid committing very short fragments that might grow
-        if num_matches == 1 && self.uncommitted_translation.len() < 50 {
+        // (but clause splits already checked for 30 char minimum)
+        if num_matches == 1 && !matches[0].2 && self.uncommitted_translation.len() < 50 {
             num_to_commit = 0; // Wait for more text or another sentence
+            eprintln!("[Commit] Waiting - single short sentence ({} chars)", 
+                self.uncommitted_translation.len());
         }
 
         if num_to_commit > 0 {
-            // Get the boundary of the last sentence we are allowed to commit
-            let (final_src_pos, final_trans_pos) = matches[num_to_commit - 1];
+            // Get the boundary of the last item we are committing
+            let (final_src_pos, final_trans_pos, is_clause) = matches[num_to_commit - 1];
             
             // Extract the text chunk we are committing
             let source_segment = self.full_transcript[self.last_committed_pos..final_src_pos].trim().to_string();
             let trans_segment = self.uncommitted_translation[..final_trans_pos].trim().to_string();
             
             if !source_segment.is_empty() && !trans_segment.is_empty() {
+                eprintln!("[Commit] {} {} chars: \"{}...\"", 
+                    if is_clause { "CLAUSE" } else { "SENTENCE" },
+                    trans_segment.len(),
+                    trans_segment.chars().take(50).collect::<String>());
+                
                 // Add to history (Clean, stabilized context)
                 self.add_to_history(source_segment, trans_segment.clone());
                 
@@ -203,9 +241,12 @@ impl RealtimeState {
                 self.last_committed_pos = final_src_pos;
                 
                 // Slice the uncommitted buffer
-                // This removes the committed text but KEEPS the "safety buffer" sentence(s)
-                // in uncommitted_translation for the next run.
                 self.uncommitted_translation = self.uncommitted_translation[final_trans_pos..].trim().to_string();
+                
+                if !self.uncommitted_translation.is_empty() {
+                    eprintln!("[Commit] Remaining uncommitted: \"{}...\"", 
+                        self.uncommitted_translation.chars().take(30).collect::<String>());
+                }
             }
         }
         
