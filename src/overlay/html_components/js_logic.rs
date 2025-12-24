@@ -6,6 +6,7 @@ pub fn get(placeholder_text: &str) -> String { format!(r###"        function upd
                 isFirstText = false;
                 minContentHeight = 0;
                 currentOldTextLength = 0;
+                previousNewText = '';
             }}
             
             if (!hasContent) {{
@@ -17,13 +18,21 @@ pub fn get(placeholder_text: &str) -> String { format!(r###"        function upd
                 currentScrollTop = 0;
                 viewport.scrollTop = 0;
                 currentOldTextLength = 0;
+                previousNewText = '';
                 return;
             }}
 
+            // Detect if newText was REPLACED (not extended)  
+            // This happens when new translation starts - must do atomic rebuild
+            const isNewTextReplacement = previousNewText.length > 0 && 
+                newText.length > 0 && 
+                !newText.startsWith(previousNewText);
+            
             // 1. Handle history rewrite or shrink
             if (oldText.length < currentOldTextLength) {{
                 content.innerHTML = '';
                 currentOldTextLength = 0;
+                previousNewText = '';
             }}
             
             // Get all existing chunks
@@ -51,9 +60,27 @@ pub fn get(placeholder_text: &str) -> String { format!(r###"        function upd
                 }}
             }}
             currentOldTextLength = oldText.length;
+            previousNewText = newText;
             
-            // 3. Handle new text growth - create appearing chunks
-            if (fullText.length > totalChunkText.length && fullText.startsWith(totalChunkText)) {{
+            // 3. Handle text changes
+            // Priority: replacement detection > append > general rebuild
+            if (isNewTextReplacement) {{
+                // Atomic replacement: rebuild with new content immediately
+                content.innerHTML = '';
+                if (oldText) {{
+                    const oldChunk = document.createElement('span');
+                    oldChunk.className = 'text-chunk old';
+                    oldChunk.textContent = oldText;
+                    content.appendChild(oldChunk);
+                }}
+                if (newText) {{
+                    const newChunk = document.createElement('span');
+                    newChunk.className = 'text-chunk new';
+                    newChunk.textContent = newText;
+                    content.appendChild(newChunk);
+                }}
+            }} else if (fullText.length > totalChunkText.length && fullText.startsWith(totalChunkText)) {{
+                // Normal append mode - text grew
                 const delta = fullText.substring(totalChunkText.length);
                 
                 const chunk = document.createElement('span');
@@ -64,20 +91,18 @@ pub fn get(placeholder_text: &str) -> String { format!(r###"        function upd
                 // Trigger wipe animation
                 requestAnimationFrame(() => {{
                     chunk.classList.add('show');
-                    // After wipe completes, transition to proper state
                     setTimeout(() => {{
                         chunk.classList.remove('appearing', 'show');
-                        // Check if this chunk is now committed or still new
                         const chunkStart = totalChunkText.length;
                         if (chunkStart < currentOldTextLength) {{
                             chunk.classList.add('old');
                         }} else {{
                             chunk.classList.add('new');
                         }}
-                    }}, 350); // Match wipe animation duration
+                    }}, 350);
                 }});
             }} else if (fullText !== totalChunkText) {{
-                // Text was revised - rebuild (rare case)
+                // General rebuild for other cases
                 content.innerHTML = '';
                 if (oldText) {{
                     const oldChunk = document.createElement('span');

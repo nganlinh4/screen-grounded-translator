@@ -213,9 +213,9 @@ impl RealtimeState {
     }
     
     /// Start new translation (clears uncommitted, keeps committed)
+    /// NOTE: Caller must update UI immediately after calling this to clear old partial
     pub fn start_new_translation(&mut self) {
         self.uncommitted_translation.clear();
-        self.update_display_translation();
     }
     
     /// Append to uncommitted translation and update display
@@ -1358,13 +1358,14 @@ fn run_translation_loop(
             
             if let Some(chunk) = chunk {
                 
-                // Mark transcript length as processed and clear stale uncommitted translation
+                // Mark transcript length as processed and clear uncommitted internally
+                // DON'T post UI update here - keep old partial visible until new chunk arrives
+                // JS will detect fullText !== totalChunkText and do atomic rebuild
                 {
                     let mut s = state.lock().unwrap();
                     s.update_last_processed_len();
-                    // Clear uncommitted NOW, before we start translating
-                    // This ensures partial results from previous translations don't linger
                     s.start_new_translation();
+                    // No UI update here - avoids empty flash
                 }
                 
                 // Get API keys, model selection, and history

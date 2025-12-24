@@ -386,4 +386,5 @@ pub fn get(font_size: u32) -> String { format!(r###"        const container = do
         }}
         
         let currentOldTextLength = 0;
+        let previousNewText = '';
 "###, font_size=font_size) }
