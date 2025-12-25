@@ -111,9 +111,12 @@ pub unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam:
             
             
             // TTS: Check if we have new committed text to speak
-            // Only speak if TTS is enabled AND an app is selected (per-app capture active)
+            // For Mic mode: TTS always works (no feedback loop concern)
+            // For Device mode: Only speak if an app is selected (per-app capture isolates TTS from loopback)
             let app_selected = SELECTED_APP_PID.load(Ordering::SeqCst) > 0;
-            if REALTIME_TTS_ENABLED.load(Ordering::SeqCst) && app_selected && !old_text.is_empty() {
+            let is_mic_mode = NEW_AUDIO_SOURCE.lock().map(|s| s.is_empty() || s.as_str() == "mic").unwrap_or(true);
+            let tts_allowed = is_mic_mode || app_selected;
+            if REALTIME_TTS_ENABLED.load(Ordering::SeqCst) && tts_allowed && !old_text.is_empty() {
                 let old_len = old_text.len();
                 
                 // Smart catch-up: If starting fresh (0) with existing text, skip to last sentence
