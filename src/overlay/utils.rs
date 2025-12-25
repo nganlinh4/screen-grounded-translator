@@ -29,7 +29,7 @@ pub fn copy_to_clipboard(text: &str, hwnd: HWND) {
         // Retry loop to handle temporary clipboard locks
         for attempt in 0..5 {
             if OpenClipboard(Some(hwnd)).is_ok() {
-                EmptyClipboard();
+                let _ = EmptyClipboard();
                 
                 // Convert text to UTF-16
                 let wide_text: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
@@ -39,14 +39,14 @@ pub fn copy_to_clipboard(text: &str, hwnd: HWND) {
                 if let Ok(h_mem) = GlobalAlloc(GMEM_MOVEABLE, mem_size) {
                     let ptr = GlobalLock(h_mem) as *mut u16;
                     std::ptr::copy_nonoverlapping(wide_text.as_ptr(), ptr, wide_text.len());
-                    GlobalUnlock(h_mem);
+                    let _ = GlobalUnlock(h_mem);
                     
                     // Set clipboard data (CF_UNICODETEXT = 13)
                     let h_mem_handle = HANDLE(h_mem.0);
                     let _ = SetClipboardData(13u32, Some(h_mem_handle));
                 }
                 
-                CloseClipboard();
+                let _ = CloseClipboard();
                 return; // Success
             }
             

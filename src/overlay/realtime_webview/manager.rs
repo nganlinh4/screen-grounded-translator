@@ -13,7 +13,7 @@ use super::state::*;
 use super::webview::*;
 use super::wndproc::*;
 pub fn is_realtime_overlay_active() -> bool {
-    unsafe { IS_ACTIVE && !REALTIME_HWND.is_invalid() }
+    unsafe { IS_ACTIVE && !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() }
 }
 
 /// Stop the realtime overlay and close all windows
@@ -30,7 +30,7 @@ pub fn stop_realtime_overlay() {
              APP_SELECTION_HWND.store(0, std::sync::atomic::Ordering::SeqCst);
         }
 
-        if !REALTIME_HWND.is_invalid() {
+        if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
             let _ = PostMessageW(Some(REALTIME_HWND), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
@@ -219,14 +219,14 @@ pub fn show_realtime_overlay(preset_idx: usize) {
         // Message loop
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
+            let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
             if msg.message == WM_QUIT { break; }
         }
         
         // Cleanup
         destroy_realtime_webview(REALTIME_HWND);
-        if !TRANSLATION_HWND.is_invalid() {
+        if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
             destroy_realtime_webview(TRANSLATION_HWND);
         }
         

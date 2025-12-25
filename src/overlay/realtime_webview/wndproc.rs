@@ -78,10 +78,10 @@ pub unsafe extern "system" fn realtime_wnd_proc(hwnd: HWND, msg: u32, wparam: WP
         }
         WM_CLOSE => {
             REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
-            DestroyWindow(hwnd);
+            let _ = DestroyWindow(hwnd);
             
-            if !TRANSLATION_HWND.is_invalid() {
-                DestroyWindow(TRANSLATION_HWND);
+            if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
+                let _ = DestroyWindow(TRANSLATION_HWND);
             }
             
             PostQuitMessage(0);
@@ -227,10 +227,10 @@ pub unsafe extern "system" fn translation_wnd_proc(hwnd: HWND, msg: u32, wparam:
             crate::api::tts::TTS_MANAGER.stop();
             
             REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
-            DestroyWindow(hwnd);
+            let _ = DestroyWindow(hwnd);
             
-            if !REALTIME_HWND.is_invalid() {
-                DestroyWindow(REALTIME_HWND);
+            if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
+                let _ = DestroyWindow(REALTIME_HWND);
             }
             
             PostQuitMessage(0);

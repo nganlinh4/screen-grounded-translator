@@ -295,7 +295,7 @@ fn register_all_hotkeys(hwnd: HWND) {
 
             let id = (p_idx as i32 * 1000) + (h_idx as i32) + 1;
             unsafe {
-                RegisterHotKey(Some(hwnd), id, HOT_KEY_MODIFIERS(hotkey.modifiers), hotkey.code);
+                let _ = RegisterHotKey(Some(hwnd), id, HOT_KEY_MODIFIERS(hotkey.modifiers), hotkey.code);
             }
             registered_ids.push(id);
         }
@@ -431,7 +431,7 @@ fn run_hotkey_listener() {
                          app.hotkeys_updated = false;
                     }
                 } else {
-                    TranslateMessage(&msg);
+                    let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
             }
@@ -633,7 +633,7 @@ fn capture_screen_fast() -> anyhow::Result<GdiCapture> {
         BitBlt(hdc_mem, 0, 0, width, height, Some(hdc_screen), x, y, SRCCOPY)?;
 
         // Cleanup DCs, but KEEP the HBITMAP
-        DeleteDC(hdc_mem);
+        let _ = DeleteDC(hdc_mem);
         ReleaseDC(None, hdc_screen);
 
         Ok(GdiCapture {

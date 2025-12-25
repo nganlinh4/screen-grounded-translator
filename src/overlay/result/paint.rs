@@ -22,7 +22,7 @@ unsafe fn measure_text_bounds(hdc: windows::Win32::Graphics::Gdi::HDC, text: &mu
     DrawTextW(hdc, text, &mut calc_rect, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL);
     
     SelectObject(hdc, old_font);
-    DeleteObject(hfont.into());
+    let _ = DeleteObject(hfont.into());
     
     // Return (Height, Width)
     (calc_rect.bottom, calc_rect.right)
@@ -71,7 +71,7 @@ pub fn paint_window(hwnd: HWND) {
         let mut ps = PAINTSTRUCT::default();
         let hdc = BeginPaint(hwnd, &mut ps);
         let mut rect = RECT::default();
-        GetClientRect(hwnd, &mut rect);
+        let _ = GetClientRect(hwnd, &mut rect);
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
 
@@ -98,7 +98,7 @@ pub fn paint_window(hwnd: HWND) {
                 
                 // 1.1 Update Background Cache if needed
                 if state.bg_bitmap.is_invalid() || state.bg_w != width || state.bg_h != height {
-                    if !state.bg_bitmap.is_invalid() { DeleteObject(state.bg_bitmap.into()); }
+                    if !state.bg_bitmap.is_invalid() { let _ = DeleteObject(state.bg_bitmap.into()); }
 
                     let bmi = BITMAPINFO {
                         bmiHeader: BITMAPINFOHEADER {
@@ -217,12 +217,12 @@ pub fn paint_window(hwnd: HWND) {
             let old_cbm = SelectObject(cache_dc, cached_bg_bm.into());
             let _ = BitBlt(mem_dc, 0, 0, width, height, Some(cache_dc), 0, 0, SRCCOPY).ok();
             SelectObject(cache_dc, old_cbm);
-            DeleteDC(cache_dc);
+            let _ = DeleteDC(cache_dc);
         }
 
         if !is_markdown_mode {
             if cache_dirty || cached_text_bm.is_invalid() {
-                if !cached_text_bm.is_invalid() { DeleteObject(cached_text_bm.into()); }
+                if !cached_text_bm.is_invalid() { let _ = DeleteObject(cached_text_bm.into()); }
 
                 cached_text_bm = CreateCompatibleBitmap(hdc, width, height);
                 let cache_dc = CreateCompatibleDC(Some(hdc));
@@ -231,7 +231,7 @@ pub fn paint_window(hwnd: HWND) {
                 let dark_brush = CreateSolidBrush(COLORREF(bg_color_u32));
                 let fill_rect = RECT { left: 0, top: 0, right: width, bottom: height };
                 FillRect(cache_dc, &fill_rect, dark_brush);
-                DeleteObject(dark_brush.into());
+                let _ = DeleteObject(dark_brush.into());
 
                 SetBkMode(cache_dc, TRANSPARENT);
                 SetTextColor(cache_dc, COLORREF(0x00FFFFFF));
@@ -301,9 +301,9 @@ pub fn paint_window(hwnd: HWND) {
                 DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, draw_flags);
 
                 SelectObject(cache_dc, old_font);
-                DeleteObject(hfont.into());
+                let _ = DeleteObject(hfont.into());
                 SelectObject(cache_dc, old_cache_bm);
-                DeleteDC(cache_dc);
+                let _ = DeleteDC(cache_dc);
 
                 let mut states = WINDOW_STATES.lock().unwrap();
                 if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
@@ -318,7 +318,7 @@ pub fn paint_window(hwnd: HWND) {
                 let old_cbm = SelectObject(cache_dc, cached_text_bm.into());
                 let _ = BitBlt(mem_dc, 0, 0, width, height, Some(cache_dc), 0, 0, SRCCOPY).ok();
                 SelectObject(cache_dc, old_cbm);
-                DeleteDC(cache_dc);
+                let _ = DeleteDC(cache_dc);
             }
         }
 
@@ -791,10 +791,10 @@ pub fn paint_window(hwnd: HWND) {
                 bf.AlphaFormat = AC_SRC_ALPHA as u8;
                 let draw_x = px as i32 - (BROOM_W / 2); 
                 let draw_y = py as i32 - (BROOM_H as f32 * 0.65) as i32; 
-                GdiAlphaBlend(mem_dc, draw_x, draw_y, BROOM_W, BROOM_H, broom_dc, 0, 0, BROOM_W, BROOM_H, bf);
+                let _ = GdiAlphaBlend(mem_dc, draw_x, draw_y, BROOM_W, BROOM_H, broom_dc, 0, 0, BROOM_W, BROOM_H, bf);
                 SelectObject(broom_dc, old_hbm_broom);
-                DeleteDC(broom_dc);
-                DeleteObject(hbm.into());
+                let _ = DeleteDC(broom_dc);
+                let _ = DeleteObject(hbm.into());
             }
         }
 
@@ -802,9 +802,9 @@ pub fn paint_window(hwnd: HWND) {
         let _ = BitBlt(hdc, 0, 0, width, height, Some(mem_dc), 0, 0, SRCCOPY).ok();
 
         SelectObject(mem_dc, old_scratch);
-        DeleteObject(scratch_bitmap.into());
-        DeleteDC(mem_dc);
+        let _ = DeleteObject(scratch_bitmap.into());
+        let _ = DeleteDC(mem_dc);
         
-        EndPaint(hwnd, &mut ps);
+        let _ = EndPaint(hwnd, &mut ps);
     }
 }

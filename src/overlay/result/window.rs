@@ -106,9 +106,9 @@ pub fn create_result_window(
         // FOR MARKDOWN MODE: Create WebView IMMEDIATELY after window creation
         // See docs/WEBVIEW2_INITIALIZATION.md for why this is necessary
         if render_mode == "markdown" {
-            SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
             let _ = super::markdown_view::create_markdown_webview(hwnd, "", false);
-            SetLayeredWindowAttributes(hwnd, COLORREF(0), 220, LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 220, LWA_ALPHA);
         }
 
         let edit_style = WINDOW_STYLE(
@@ -203,7 +203,7 @@ pub fn create_result_window(
             });
         }
 
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 220, LWA_ALPHA);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 220, LWA_ALPHA);
         
         let corner_preference = 2u32; 
         let _ = DwmSetWindowAttribute(
@@ -218,7 +218,7 @@ pub fn create_result_window(
             // Initial positioning for the edit box
             let edit_w = width - 20;
             let edit_h = 40;
-            SetWindowPos(h_edit, Some(HWND_TOP), 10, 10, edit_w, edit_h, SWP_SHOWWINDOW);
+            let _ = SetWindowPos(h_edit, Some(HWND_TOP), 10, 10, edit_w, edit_h, SWP_SHOWWINDOW);
             set_rounded_edit_region(h_edit, edit_w, edit_h);
             
             // FIX: Activate window so Edit control can receive focus immediately
@@ -233,8 +233,8 @@ pub fn create_result_window(
             // WebView was already created immediately after window creation (see above)
         }
         
-        InvalidateRect(Some(hwnd), None, false);
-        UpdateWindow(hwnd);
+        let _ = InvalidateRect(Some(hwnd), None, false);
+        let _ = UpdateWindow(hwnd);
         
         hwnd
     }

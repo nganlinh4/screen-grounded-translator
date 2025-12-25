@@ -262,14 +262,14 @@ pub fn record_audio_and_transcribe(
 
     if let Err(e) = stream_res {
         eprintln!("Failed to build stream: {}", e);
-        unsafe { PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+        unsafe { let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         return;
     }
     let stream = stream_res.unwrap();
 
     if let Err(e) = stream.play() {
         eprintln!("Failed to play stream: {}", e);
-        unsafe { PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+        unsafe { let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         return;
     }
 
@@ -333,7 +333,7 @@ pub fn record_audio_and_transcribe(
         println!("Audio recording aborted by user.");
         unsafe {
             if IsWindow(Some(overlay_hwnd)).as_bool() {
-                 PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                 let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         }
         return;
@@ -350,7 +350,7 @@ pub fn record_audio_and_transcribe(
     if samples.is_empty() {
         println!("Warning: Recorded audio buffer is empty.");
         unsafe {
-            PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
         return;
     }
@@ -386,7 +386,7 @@ pub fn record_audio_and_transcribe(
             // User dismissed wheel - close overlay and cancel
             unsafe {
                 if IsWindow(Some(overlay_hwnd)).as_bool() {
-                    PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
             }
             return;
@@ -400,7 +400,7 @@ pub fn record_audio_and_transcribe(
         Some(b) => b.clone(),
         None => {
             eprintln!("Error: Audio preset has no blocks configured");
-            unsafe { PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             return;
         }
     };
@@ -410,7 +410,7 @@ pub fn record_audio_and_transcribe(
         Some(c) => c,
         None => {
             eprintln!("Error: Model config not found for audio model: {}", audio_block.model);
-            unsafe { PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             return;
         }
     };
@@ -463,7 +463,7 @@ pub fn record_audio_and_transcribe(
     if abort_signal.load(Ordering::SeqCst) {
         unsafe {
             if IsWindow(Some(overlay_hwnd)).as_bool() {
-                 PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                 let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         }
         return;
@@ -512,7 +512,7 @@ pub fn record_audio_and_transcribe(
             // Close overlay on error
             unsafe {
                 if IsWindow(Some(overlay_hwnd)).as_bool() {
-                     PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                     let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
             }
         }

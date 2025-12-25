@@ -1,6 +1,5 @@
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use crate::win_types::SendHwnd;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::core::*;
@@ -42,11 +41,11 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
         WM_SETCURSOR => {
             let mut cursor_id = PCWSTR(std::ptr::null());
             let mut rect = RECT::default();
-            GetClientRect(hwnd, &mut rect);
+            let _ = GetClientRect(hwnd, &mut rect);
             
             let mut pt = POINT::default();
-            GetCursorPos(&mut pt);
-            ScreenToClient(hwnd, &mut pt);
+            let _ = GetCursorPos(&mut pt);
+            let _ = ScreenToClient(hwnd, &mut pt);
             
             let mut is_over_edit = false;
             {
@@ -145,14 +144,14 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             let x = (lparam.0 & 0xFFFF) as i16 as i32;
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
             let mut rect = RECT::default();
-            GetClientRect(hwnd, &mut rect);
+            let _ = GetClientRect(hwnd, &mut rect);
             let width = rect.right;
             let height = rect.bottom;
             let edge = get_resize_edge(width, height, x, y);
             let mut window_rect = RECT::default();
-            GetWindowRect(hwnd, &mut window_rect);
+            let _ = GetWindowRect(hwnd, &mut window_rect);
             let mut screen_pt = POINT::default();
-            GetCursorPos(&mut screen_pt);
+            let _ = GetCursorPos(&mut screen_pt);
 
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
@@ -171,7 +170,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
 
         WM_RBUTTONDOWN => {
             let mut screen_pt = POINT::default();
-            GetCursorPos(&mut screen_pt);
+            let _ = GetCursorPos(&mut screen_pt);
             
             let mut group_snapshot = Vec::new();
             let mut token_to_match = None;
@@ -189,7 +188,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                              if Arc::ptr_eq(&token, t) {
                                  let h = HWND(h_val as *mut std::ffi::c_void);
                                  let mut r = RECT::default();
-                                 GetWindowRect(h, &mut r);
+                                 let _ = GetWindowRect(h, &mut r);
                                  group_snapshot.push((h, r));
                              }
                          }
@@ -209,7 +208,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                      
                      while let Some(current) = queue.pop_front() {
                          let mut r = RECT::default();
-                         GetWindowRect(current, &mut r);
+                         let _ = GetWindowRect(current, &mut r);
                          group_snapshot.push((current, r));
                          
                          // Find neighbor in state map
@@ -245,7 +244,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             let x = (lparam.0 & 0xFFFF) as i16 as f32;
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
             let mut rect = RECT::default();
-            GetClientRect(hwnd, &mut rect);
+            let _ = GetClientRect(hwnd, &mut rect);
             let hover_edge = get_resize_edge(rect.right, rect.bottom, x as i32, y as i32);
             
             // Defer group moves to avoid deadlocks (holding lock while calling SetWindowPos on other windows)
@@ -352,14 +351,14 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     if handle_hover_in_mousemove && !state.is_hovered {
                         state.is_hovered = true;
                         let mut tme = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
-                        TrackMouseEvent(&mut tme);
+                        let _ = TrackMouseEvent(&mut tme);
                         // Note: WebView resize is now handled by Timer 2 to avoid race conditions
                     }
 
                     match &state.interaction_mode {
                         InteractionMode::DraggingWindow => {
                             let mut curr_pt = POINT::default();
-                            GetCursorPos(&mut curr_pt);
+                            let _ = GetCursorPos(&mut curr_pt);
                             let dx = curr_pt.x - state.drag_start_mouse.x;
                             let dy = curr_pt.y - state.drag_start_mouse.y;
                             if dx.abs() > 3 || dy.abs() > 3 { state.has_moved_significantly = true; }
@@ -369,7 +368,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         }
                         InteractionMode::DraggingGroup(snapshot) => {
                             let mut curr_pt = POINT::default();
-                            GetCursorPos(&mut curr_pt);
+                            let _ = GetCursorPos(&mut curr_pt);
                             let dx = curr_pt.x - state.drag_start_mouse.x;
                             let dy = curr_pt.y - state.drag_start_mouse.y;
                             if dx.abs() > 3 || dy.abs() > 3 { state.has_moved_significantly = true; }
@@ -383,7 +382,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         InteractionMode::Resizing(edge) => {
                             state.has_moved_significantly = true;
                             let mut curr_pt = POINT::default();
-                            GetCursorPos(&mut curr_pt);
+                            let _ = GetCursorPos(&mut curr_pt);
                             let dx = curr_pt.x - state.drag_start_mouse.x;
                             let dy = curr_pt.y - state.drag_start_mouse.y;
                             let mut new_rect = state.drag_start_window_rect;
@@ -418,7 +417,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         }
                         _ => {}
                     }
-                    InvalidateRect(Some(hwnd), None, false);
+                    let _ = InvalidateRect(Some(hwnd), None, false);
                 }
             } // Lock released (WINDOW_STATES)
 
@@ -452,13 +451,13 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     state.is_hovered = false;
                 }
                 
-                InvalidateRect(Some(hwnd), None, false);
+                let _ = InvalidateRect(Some(hwnd), None, false);
             }
             LRESULT(0)
         }
 
         WM_LBUTTONUP => {
-            ReleaseCapture();
+            let _ = ReleaseCapture();
             let mut perform_click = false;
             let mut is_copy_click = false;
             let mut is_edit_click = false;
@@ -517,7 +516,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     }
                     if let Some(txt) = prev_text {
                         let wide_text = to_wstring(&txt);
-                        SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
+                        let _ = SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
                         {
                             let mut states = WINDOW_STATES.lock().unwrap();
                             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
@@ -532,7 +531,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                             markdown_view::create_markdown_webview(hwnd, &txt, is_hovered);
                         }
                         
-                        InvalidateRect(Some(hwnd), None, false);
+                        let _ = InvalidateRect(Some(hwnd), None, false);
                     }
                  } else if is_redo_click {
                     // Redo: pop from redo_history, push current to text_history
@@ -559,7 +558,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     }
                     if let Some(txt) = next_text {
                         let wide_text = to_wstring(&txt);
-                        SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
+                        let _ = SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
                         {
                             let mut states = WINDOW_STATES.lock().unwrap();
                             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
@@ -574,7 +573,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                             markdown_view::create_markdown_webview(hwnd, &txt, is_hovered);
                         }
                         
-                        InvalidateRect(Some(hwnd), None, false);
+                        let _ = InvalidateRect(Some(hwnd), None, false);
                     }
                  } else if is_edit_click {
                     // Check if we're in markdown mode to decide which input to use
@@ -655,7 +654,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                                 }
                             }
                         }
-                        InvalidateRect(Some(hwnd), None, false);
+                        let _ = InvalidateRect(Some(hwnd), None, false);
                     }
                  } else if is_copy_click {
                     let text_len = GetWindowTextLengthW(hwnd) + 1;
@@ -696,14 +695,14 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                         if toggle_on {
                             // DEFER WebView creation to after this handler returns
                             // Using PostMessage allows the handler to return first.
-                            PostMessageW(Some(hwnd), WM_CREATE_WEBVIEW, WPARAM(0), LPARAM(0));
+                            let _ = PostMessageW(Some(hwnd), WM_CREATE_WEBVIEW, WPARAM(0), LPARAM(0));
                             // Start hover polling timer (ID 2, 30ms interval)
                             SetTimer(Some(hwnd), 2, 30, None);
                         } else {
                             // Hide markdown webview, show plain text
                             markdown_view::hide_markdown_webview(hwnd);
                             // Stop hover polling timer
-                            KillTimer(Some(hwnd), 2);
+                            let _ = KillTimer(Some(hwnd), 2);
                             
                             // Re-establish TrackMouseEvent for plain text mode
                             // This is needed because Timer 2 was handling hover state,
@@ -714,9 +713,9 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                                 hwndTrack: hwnd, 
                                 dwHoverTime: 0 
                             };
-                            TrackMouseEvent(&mut tme);
+                            let _ = TrackMouseEvent(&mut tme);
                         }
-                        InvalidateRect(Some(hwnd), None, false);
+                        let _ = InvalidateRect(Some(hwnd), None, false);
                     }
                  } else if is_download_click {
                     // Download as HTML file
@@ -765,7 +764,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                                 state.tts_loading = true;
                             }
                         }
-                        InvalidateRect(Some(hwnd), None, false); // Redraw to show loading
+                        let _ = InvalidateRect(Some(hwnd), None, false); // Redraw to show loading
                         
                         let request_id = crate::api::tts::TTS_MANAGER.speak(&full_text, hwnd.0 as isize);
                         {
@@ -776,7 +775,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                             }
                         }
                     }
-                    InvalidateRect(Some(hwnd), None, false);
+                    let _ = InvalidateRect(Some(hwnd), None, false);
                  } else {
                       let linked_hwnd = {
                           let states = WINDOW_STATES.lock().unwrap();
@@ -794,7 +793,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
         }
         
         WM_RBUTTONUP => {
-            ReleaseCapture();
+            let _ = ReleaseCapture();
             let mut perform_action = false;
             
             {
@@ -843,7 +842,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
 
             for target in targets {
                 if IsWindow(Some(target)).as_bool() {
-                    PostMessageW(Some(target), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(Some(target), WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
             }
             LRESULT(0)
@@ -855,9 +854,9 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             // Timer ID 2: Markdown hover polling (The Authority on WebView Sizing)
             if timer_id == 2 {
                 let mut cursor_pos = POINT::default();
-                GetCursorPos(&mut cursor_pos);
+                let _ = GetCursorPos(&mut cursor_pos);
                 let mut window_rect = RECT::default();
-                GetWindowRect(hwnd, &mut window_rect);
+                let _ = GetWindowRect(hwnd, &mut window_rect);
                 
                 // Check if cursor is geometrically inside the window rect
                 let cursor_inside = cursor_pos.x >= window_rect.left && cursor_pos.x < window_rect.right
@@ -883,7 +882,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                             }
                         }
                         markdown_view::resize_markdown_webview(hwnd, true);
-                        InvalidateRect(Some(hwnd), None, false);
+                        let _ = InvalidateRect(Some(hwnd), None, false);
                     } else if !cursor_inside && current_hover_state {
                         // Leave: Mark unhovered -> Expand WebView -> Clean look
                         {
@@ -899,7 +898,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                             }
                         }
                         markdown_view::resize_markdown_webview(hwnd, false);
-                        InvalidateRect(Some(hwnd), None, false);
+                        let _ = InvalidateRect(Some(hwnd), None, false);
                     }
                 }
                 
@@ -1007,7 +1006,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
 
             if let Some(txt) = pending_update {
                 let wide_text = to_wstring(&txt);
-                SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
+                let _ = SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
                 
                 let (maybe_markdown_update, is_hovered) = {
                     let mut states = WINDOW_STATES.lock().unwrap();
@@ -1122,7 +1121,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
 
             logic::handle_timer(hwnd, wparam);
             if need_repaint {
-                InvalidateRect(Some(hwnd), None, false);
+                let _ = InvalidateRect(Some(hwnd), None, false);
             }
             LRESULT(0)
         }
@@ -1165,17 +1164,17 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     
                     // Cleanup this window's resources
                     if !state.content_bitmap.is_invalid() {
-                        DeleteObject(state.content_bitmap.into());
+                        let _ = DeleteObject(state.content_bitmap.into());
                     }
                     if !state.bg_bitmap.is_invalid() {
-                        DeleteObject(state.bg_bitmap.into());
+                        let _ = DeleteObject(state.bg_bitmap.into());
                     }
                     if !state.edit_font.is_invalid() {
-                        DeleteObject(state.edit_font.into());
+                        let _ = DeleteObject(state.edit_font.into());
                     }
                     
                     // Cleanup markdown webview and timer
-                    KillTimer(Some(hwnd), 2);
+                    let _ = KillTimer(Some(hwnd), 2);
                     markdown_view::destroy_markdown_webview(hwnd);
                     
                     // Cleanup refine input if active
@@ -1189,7 +1188,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             // Close all other windows in the same chain (after dropping the lock)
             for other_hwnd in windows_to_close {
                 if other_hwnd != hwnd {
-                    PostMessageW(Some(other_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(Some(other_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
             }
             
@@ -1241,7 +1240,7 @@ pub unsafe extern "system" fn result_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 refine_input::bring_to_top(hwnd);
             }
             
-            InvalidateRect(Some(hwnd), None, false);
+            let _ = InvalidateRect(Some(hwnd), None, false);
             LRESULT(0)
         }
         

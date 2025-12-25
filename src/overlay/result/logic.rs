@@ -70,7 +70,7 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                         // This prevents the constant timer from killing the caret blink
                         if state.is_editing {
                             let mut client_rect = RECT::default();
-                            GetClientRect(hwnd, &mut client_rect);
+                            let _ = GetClientRect(hwnd, &mut client_rect);
                             
                             // Edit control is at (10, 10) with width = client_w - 20, height = 40
                             // Invalidate: bottom region (below edit), left margin, right margin
@@ -83,7 +83,7 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                                 right: client_rect.right,
                                 bottom: client_rect.bottom,
                             };
-                            InvalidateRect(Some(hwnd), Some(&bottom_region), false);
+                            let _ = InvalidateRect(Some(hwnd), Some(&bottom_region), false);
                             
                             // Left margin
                             let left_margin = RECT {
@@ -92,7 +92,7 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                                 right: 10,
                                 bottom: edit_bottom,
                             };
-                            InvalidateRect(Some(hwnd), Some(&left_margin), false);
+                            let _ = InvalidateRect(Some(hwnd), Some(&left_margin), false);
                             
                             // Right margin  
                             let right_margin = RECT {
@@ -101,9 +101,9 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                                 right: client_rect.right,
                                 bottom: edit_bottom,
                             };
-                            InvalidateRect(Some(hwnd), Some(&right_margin), false);
+                            let _ = InvalidateRect(Some(hwnd), Some(&right_margin), false);
                         } else {
-                            InvalidateRect(Some(hwnd), None, false);
+                            let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                     }
                 }
@@ -111,7 +111,7 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
 
             if should_close {
                 // CRITICAL: Set alpha to 0 BEFORE closing to prevent last frame freeze
-                SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+                let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
                 
                 let linked_hwnd = {
                     let states = WINDOW_STATES.lock().unwrap();
@@ -121,16 +121,16 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                     let linked = crate::win_types::SendHwnd(linked).0;
                     if IsWindow(Some(linked)).as_bool() { 
                         // Also set linked window to invisible
-                        SetLayeredWindowAttributes(linked, COLORREF(0), 0, LWA_ALPHA);
-                        PostMessageW(Some(linked), WM_CLOSE, WPARAM(0), LPARAM(0)); 
+                        let _ = SetLayeredWindowAttributes(linked, COLORREF(0), 0, LWA_ALPHA);
+                        let _ = PostMessageW(Some(linked), WM_CLOSE, WPARAM(0), LPARAM(0)); 
                     }
                 }
-                PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         } 
         else if wparam.0 == 1 {
             // Revert Copy Icon
-            KillTimer(Some(hwnd), 1);
+            let _ = KillTimer(Some(hwnd), 1);
             let mut states = WINDOW_STATES.lock().unwrap();
             if let Some(state) = states.get_mut(&(hwnd.0 as isize)) { 
                 state.copy_success = false; 
@@ -150,7 +150,7 @@ pub fn handle_timer(hwnd: HWND, wparam: WPARAM) {
                     });
                 }
             }
-            InvalidateRect(Some(hwnd), None, false);
+            let _ = InvalidateRect(Some(hwnd), None, false);
         }
     }
 }

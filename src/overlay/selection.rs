@@ -85,12 +85,12 @@ unsafe fn extract_crop_from_hbitmap(
         chunk[3] = 255;
     }
 
-    DeleteObject(hbm_temp.into());
-    DeleteDC(hdc_temp);
+    let _ = DeleteObject(hbm_temp.into());
+    let _ = DeleteDC(hdc_temp);
     
     // Cleanup main DC
     SelectObject(hdc_mem, old_obj);
-    DeleteDC(hdc_mem);
+    let _ = DeleteDC(hdc_mem);
     ReleaseDC(None, hdc_screen);
 
     image::ImageBuffer::from_raw(w as u32, h as u32, buffer).unwrap()
@@ -98,7 +98,7 @@ unsafe fn extract_crop_from_hbitmap(
 
 pub fn is_selection_overlay_active_and_dismiss() -> bool {
     unsafe {
-        if SELECTION_OVERLAY_ACTIVE && !SELECTION_OVERLAY_HWND.is_invalid() {
+        if SELECTION_OVERLAY_ACTIVE && !std::ptr::addr_of!(SELECTION_OVERLAY_HWND).read().is_invalid() {
             let _ = PostMessageW(Some(SELECTION_OVERLAY_HWND.0), WM_CLOSE, WPARAM(0), LPARAM(0));
             true
         } else {
@@ -172,26 +172,26 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
         WM_LBUTTONDOWN => {
             if !IS_FADING_OUT {
                 IS_DRAGGING = true;
-                GetCursorPos(std::ptr::addr_of_mut!(START_POS));
+                let _ = GetCursorPos(std::ptr::addr_of_mut!(START_POS));
                 CURR_POS = START_POS;
                 SetCapture(hwnd);
-                InvalidateRect(Some(hwnd), None, false);
+                let _ = InvalidateRect(Some(hwnd), None, false);
             }
             LRESULT(0)
         }
         WM_MOUSEMOVE => {
             if IS_DRAGGING {
-                GetCursorPos(std::ptr::addr_of_mut!(CURR_POS));
+                let _ = GetCursorPos(std::ptr::addr_of_mut!(CURR_POS));
                 // Force immediate repaint for smoothness
-                InvalidateRect(Some(hwnd), None, false);
-                UpdateWindow(hwnd);
+                let _ = InvalidateRect(Some(hwnd), None, false);
+                let _ = UpdateWindow(hwnd);
             }
             LRESULT(0)
         }
         WM_LBUTTONUP => {
             if IS_DRAGGING {
                 IS_DRAGGING = false;
-                ReleaseCapture();
+                let _ = ReleaseCapture();
 
                 let rect = RECT {
                     left: START_POS.x.min(CURR_POS.x),
@@ -216,10 +216,10 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                     let final_preset_idx = if is_master {
                         // Get cursor position for wheel center
                         let mut cursor_pos = POINT::default();
-                        GetCursorPos(&mut cursor_pos);
+                        let _ = GetCursorPos(&mut cursor_pos);
                         
                         // Hide selection overlay temporarily while showing wheel
-                        SetLayeredWindowAttributes(hwnd, COLORREF(0), 60, LWA_ALPHA);
+                        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 60, LWA_ALPHA);
                         
                         // Show preset wheel - this blocks until user makes selection
                         let selected = super::preset_wheel::show_preset_wheel("image", None, cursor_pos);
@@ -292,7 +292,7 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                         CURRENT_ALPHA = (CURRENT_ALPHA as u16 + FADE_STEP as u16).min(TARGET_OPACITY as u16) as u8;
                         changed = true;
                     } else {
-                        KillTimer(Some(hwnd), FADE_TIMER_ID);
+                        let _ = KillTimer(Some(hwnd), FADE_TIMER_ID);
                     }
                 }
                 
@@ -311,8 +311,8 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             
             // OPTIMIZATION: Cache the full-screen bitmap (heavy allocation ~33MB for 4K)
             // The DC is lightweight and created per-frame, bitmap is reused
-            if CACHED_BITMAP.is_invalid() || CACHED_W != width || CACHED_H != height {
-                if !CACHED_BITMAP.is_invalid() {
+            if std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() || CACHED_W != width || CACHED_H != height {
+                if !std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() {
                     let _ = DeleteObject(CACHED_BITMAP.0.into());
                 }
                 let hbm = CreateCompatibleBitmap(hdc, width, height);
@@ -364,12 +364,12 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
                     let old_brush = SelectObject(mem_dc, null_brush);
                     
                     // Draw Rounded Rectangle
-                    RoundRect(mem_dc, r.left, r.top, r.right, r.bottom, 12, 12);
+                    let _ = RoundRect(mem_dc, r.left, r.top, r.right, r.bottom, 12, 12);
                     
                     // Cleanup
                     SelectObject(mem_dc, old_brush);
                     SelectObject(mem_dc, old_pen);
-                    DeleteObject(pen.into());
+                    let _ = DeleteObject(pen.into());
                 }
             }
 
@@ -378,22 +378,22 @@ unsafe extern "system" fn selection_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             
             // Cleanup DC (but keep cached bitmap)
             SelectObject(mem_dc, old_bmp);
-            DeleteDC(mem_dc);
+            let _ = DeleteDC(mem_dc);
             
-            EndPaint(hwnd, &mut ps);
+            let _ = EndPaint(hwnd, &mut ps);
             LRESULT(0)
         }
         WM_CLOSE => {
             if !IS_FADING_OUT {
                 IS_FADING_OUT = true;
-                KillTimer(Some(hwnd), FADE_TIMER_ID);
+                let _ = KillTimer(Some(hwnd), FADE_TIMER_ID);
                 SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
             }
             LRESULT(0)
         }
         WM_DESTROY => {
             // Cleanup cached back buffer resources
-            if !CACHED_BITMAP.is_invalid() {
+            if !std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() {
                 let _ = DeleteObject(CACHED_BITMAP.0.into());
                 CACHED_BITMAP = SendHbitmap::default();
             }

@@ -25,7 +25,7 @@ pub fn render_global_settings(
     text: &LocaleText,
     show_usage_modal: &mut bool,
     show_tts_modal: &mut bool,
-    cached_audio_devices: &std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    _cached_audio_devices: &std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
 ) -> bool {
     let mut changed = false;
     

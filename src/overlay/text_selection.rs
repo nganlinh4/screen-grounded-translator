@@ -56,8 +56,8 @@ pub fn try_instant_process(preset_idx: usize) -> bool {
         
         // Step 2: Clear clipboard and send Ctrl+C to copy current selection
         if OpenClipboard(Some(HWND::default())).is_ok() { 
-            EmptyClipboard(); 
-            CloseClipboard(); 
+            let _ = EmptyClipboard(); 
+            let _ = CloseClipboard(); 
         }
         
         // Small delay to ensure clipboard is clear
@@ -125,9 +125,9 @@ unsafe fn get_clipboard_text() -> String {
                     result = String::from_utf16_lossy(&wide_slice[..end]); 
                 }
             }
-            GlobalUnlock(h_global);
+            let _ = GlobalUnlock(h_global);
         }
-        CloseClipboard();
+        let _ = CloseClipboard();
     }
     result
 }
@@ -145,7 +145,7 @@ fn process_selected_text(preset_idx: usize, clipboard_text: String) {
         let final_preset_idx = if is_master {
             // Get cursor position for wheel center
             let mut cursor_pos = POINT { x: 0, y: 0 };
-            GetCursorPos(&mut cursor_pos);
+            let _ = GetCursorPos(&mut cursor_pos);
             
             // Show preset wheel
             let selected = super::preset_wheel::show_preset_wheel("text", Some("select"), cursor_pos);
@@ -196,7 +196,7 @@ pub fn cancel_selection() {
     let hwnd = SELECTION_STATE.lock().unwrap().hwnd;
     unsafe {
         if !hwnd.is_invalid() {
-            PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -216,8 +216,8 @@ pub fn show_text_selection_tag(preset_idx: usize) {
             TAG_ABORT_SIGNAL.store(false, Ordering::SeqCst);
             
             // Cleanup old cache
-            if !state.cached_bitmap.is_invalid() { unsafe { DeleteObject(state.cached_bitmap.into()); } state.cached_bitmap = HBITMAP::default(); }
-            if !state.cached_font.is_invalid() { unsafe { DeleteObject(state.cached_font.into()); } state.cached_font = HFONT(std::ptr::null_mut()); }
+            if !state.cached_bitmap.is_invalid() { let _ = DeleteObject(state.cached_bitmap.into()); state.cached_bitmap = HBITMAP::default(); }
+            if !state.cached_font.is_invalid() { let _ = DeleteObject(state.cached_font.into()); state.cached_font = HFONT(std::ptr::null_mut()); }
             state.cached_bits = std::ptr::null_mut();
         }
 
@@ -240,14 +240,14 @@ pub fn show_text_selection_tag(preset_idx: usize) {
         ).unwrap_or_default();
         SELECTION_STATE.lock().unwrap().hwnd = hwnd;
         SetTimer(Some(hwnd), 1, 16, None); 
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        let mut msg = MSG::default(); while GetMessageW(&mut msg, None, 0, 0).into() { TranslateMessage(&msg); DispatchMessageW(&msg); if msg.message == WM_QUIT { break; } }
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let mut msg = MSG::default(); while GetMessageW(&mut msg, None, 0, 0).into() { let _ = TranslateMessage(&msg); DispatchMessageW(&msg); if msg.message == WM_QUIT { break; } }
         
         // Cleanup cache on exit
         {
             let mut state = SELECTION_STATE.lock().unwrap();
-            if !state.cached_bitmap.is_invalid() { unsafe { DeleteObject(state.cached_bitmap.into()); } state.cached_bitmap = HBITMAP::default(); }
-            if !state.cached_font.is_invalid() { unsafe { DeleteObject(state.cached_font.into()); } state.cached_font = HFONT(std::ptr::null_mut()); }
+            if !state.cached_bitmap.is_invalid() { let _ = DeleteObject(state.cached_bitmap.into()); state.cached_bitmap = HBITMAP::default(); }
+            if !state.cached_font.is_invalid() { let _ = DeleteObject(state.cached_font.into()); state.cached_font = HFONT(std::ptr::null_mut()); }
             state.cached_bits = std::ptr::null_mut();
             state.hwnd = HWND::default();
         }
@@ -257,7 +257,7 @@ pub fn show_text_selection_tag(preset_idx: usize) {
 unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER => {
-            if TAG_ABORT_SIGNAL.load(Ordering::SeqCst) { DestroyWindow(hwnd); PostQuitMessage(0); return LRESULT(0); }
+            if TAG_ABORT_SIGNAL.load(Ordering::SeqCst) { let _ = DestroyWindow(hwnd); PostQuitMessage(0); return LRESULT(0); }
             let lbutton_down = (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0;
             
             let mut should_spawn_thread = false;
@@ -273,8 +273,8 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
                     preset_idx_for_thread = state.preset_idx;
                 }
                 
-                let mut pt = POINT::default(); GetCursorPos(&mut pt);
-                SetWindowPos(hwnd, Some(HWND_TOPMOST), pt.x - 30, pt.y - 60, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+                let mut pt = POINT::default(); let _ = GetCursorPos(&mut pt);
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), pt.x - 30, pt.y - 60, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
                 
                 if state.is_selecting { state.animation_offset -= 15.0; } else { state.animation_offset += 5.0; }
                 if state.animation_offset > 3600.0 { state.animation_offset -= 3600.0; } 
@@ -301,7 +301,7 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
                         if TAG_ABORT_SIGNAL.load(Ordering::Relaxed) { return; }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                         
-                        if OpenClipboard(Some(HWND::default())).is_ok() { EmptyClipboard(); CloseClipboard(); }
+                        if OpenClipboard(Some(HWND::default())).is_ok() { let _ = EmptyClipboard(); let _ = CloseClipboard(); }
 
                         let send_input_event = |vk: u16, flags: KEYBD_EVENT_FLAGS| {
                             let input = INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), dwFlags: flags, time: 0, dwExtraInfo: 0, wScan: 0 } } };
@@ -326,7 +326,7 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
 
                         if !clipboard_text.trim().is_empty() && !TAG_ABORT_SIGNAL.load(Ordering::Relaxed) {
                             process_selected_text(preset_idx_for_thread, clipboard_text);
-                            PostMessageW(Some(hwnd_copy), WM_CLOSE, WPARAM(0), LPARAM(0));
+                            let _ = PostMessageW(Some(hwnd_copy), WM_CLOSE, WPARAM(0), LPARAM(0));
                         } else {
                             // Reset state logic - scope the lock
                             let mut state = SELECTION_STATE.lock().unwrap();
@@ -343,7 +343,7 @@ unsafe extern "system" fn tag_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
         }
         WM_CLOSE => { 
             TAG_ABORT_SIGNAL.store(true, Ordering::SeqCst); 
-            DestroyWindow(hwnd); 
+            let _ = DestroyWindow(hwnd); 
             PostQuitMessage(0); 
             LRESULT(0) 
         }
@@ -469,7 +469,7 @@ unsafe fn paint_tag_window(hwnd: HWND, width: i32, height: i32, alpha: u8, is_se
     DrawTextW(mem_dc, &mut text_w, &mut tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     
     if !state.cached_bits.is_null() { 
-        GdiFlush(); 
+        let _ = GdiFlush(); 
         let pxs = std::slice::from_raw_parts_mut(state.cached_bits, (width * height) as usize); 
         for p in pxs.iter_mut() { 
             let val = *p; 
@@ -488,10 +488,10 @@ unsafe fn paint_tag_window(hwnd: HWND, width: i32, height: i32, alpha: u8, is_se
     bl.BlendOp = AC_SRC_OVER as u8; 
     bl.SourceConstantAlpha = alpha; 
     bl.AlphaFormat = AC_SRC_ALPHA as u8;
-    UpdateLayeredWindow(hwnd, None, None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&bl), ULW_ALPHA);
+    let _ = UpdateLayeredWindow(hwnd, None, None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&bl), ULW_ALPHA);
     
     let _ = SelectObject(mem_dc, old_font.into()); 
     let _ = SelectObject(mem_dc, old_bitmap.into()); 
-    DeleteDC(mem_dc); 
+    let _ = DeleteDC(mem_dc); 
     ReleaseDC(None, screen_dc);
 }

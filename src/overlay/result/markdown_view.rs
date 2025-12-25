@@ -85,7 +85,7 @@ fn warmup_internal() {
         WARMUP_HWND = hwnd;
         
         // Make it transparent (invisible)
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
 
         // Create a WebView to warm up WebView2 infrastructure
         let wrapper = HwndWrapper(hwnd);
@@ -116,7 +116,7 @@ fn warmup_internal() {
         // Message loop to keep the warmup thread alive
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
+            let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
     }
@@ -484,7 +484,7 @@ pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hov
     
     // Get parent window rect
     let mut rect = RECT::default();
-    unsafe { GetClientRect(parent_hwnd, &mut rect); }
+    unsafe { let _ = GetClientRect(parent_hwnd, &mut rect); }
     
     let html_content = markdown_to_html(markdown_text, is_refining, preset_prompt, input_text);
     
@@ -565,7 +565,7 @@ pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hov
                             state.max_navigation_depth = 0;
                             // Ensure repaint to hide buttons
                             unsafe {
-                                windows::Win32::Graphics::Gdi::InvalidateRect(Some(HWND(hwnd_key_for_nav as *mut std::ffi::c_void)), None, false);
+                                let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(HWND(hwnd_key_for_nav as *mut std::ffi::c_void)), None, false);
                             }
                         }
                     }
@@ -628,7 +628,7 @@ pub fn go_back(parent_hwnd: HWND) {
         
         // Trigger repaint to hide navigation buttons
         unsafe {
-            windows::Win32::Graphics::Gdi::InvalidateRect(Some(parent_hwnd), None, false);
+            let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(parent_hwnd), None, false);
         }
     } else {
         // Normal browser history back for deeper navigation
@@ -763,7 +763,7 @@ pub fn resize_markdown_webview(parent_hwnd: HWND, is_hovered: bool) {
     
     unsafe {
         let mut rect = RECT::default();
-        GetClientRect(parent_hwnd, &mut rect);
+        let _ = GetClientRect(parent_hwnd, &mut rect);
         
         // 2px edge margin for resize handles
         let edge_margin = 2.0;

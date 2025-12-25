@@ -51,12 +51,12 @@ static mut WARMUP_COUNTER: i32 = 0;
 static REGISTER_RECORDING_CLASS: Once = Once::new();
 
 pub fn is_recording_overlay_active() -> bool {
-    unsafe { IS_RECORDING && !RECORDING_HWND.is_invalid() }
+    unsafe { IS_RECORDING && !std::ptr::addr_of!(RECORDING_HWND).read().is_invalid() }
 }
 
 pub fn stop_recording_and_submit() {
     unsafe {
-        if IS_RECORDING && !RECORDING_HWND.is_invalid() {
+        if IS_RECORDING && !std::ptr::addr_of!(RECORDING_HWND).read().is_invalid() {
             AUDIO_STOP_SIGNAL.store(true, Ordering::SeqCst);
             // Force immediate update to show "Processing"
             let _ = PostMessageW(Some(RECORDING_HWND.0), WM_TIMER, WPARAM(0), LPARAM(0));
@@ -483,7 +483,7 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
     // This causes white text on semi-transparent backgrounds to have RGB > Alpha, which looks "bloomed" or "washed out".
     // We iterate the buffer and force Alpha to be at least the max of R,G,B (Premultiplied constraint).
     if !p_bits.is_null() {
-        GdiFlush(); // Ensure GDI drawing is committed to bits
+        let _ = GdiFlush(); // Ensure GDI drawing is committed to bits
         let pixels = std::slice::from_raw_parts_mut(p_bits as *mut u32, (width * height) as usize);
         for px in pixels.iter_mut() {
             let val = *px;
@@ -507,7 +507,7 @@ unsafe fn paint_layered_window(hwnd: HWND, width: i32, height: i32, alpha: u8) {
     blend.SourceConstantAlpha = alpha; // Use the fading alpha
     blend.AlphaFormat = AC_SRC_ALPHA as u8;
 
-    UpdateLayeredWindow(hwnd, Some(HDC::default()), None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
+    let _ = UpdateLayeredWindow(hwnd, Some(HDC::default()), None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
 
     let _ = SelectObject(mem_dc, old_bitmap);
     let _ = DeleteObject(bitmap.into());
@@ -536,7 +536,7 @@ unsafe extern "system" fn recording_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARA
             let x = (lparam.0 & 0xFFFF) as i16 as i32;
             
             let mut rect = RECT::default();
-            GetWindowRect(hwnd, &mut rect);
+            let _ = GetWindowRect(hwnd, &mut rect);
             let local_x = x - rect.left;
             
             let center_left = BTN_OFFSET;

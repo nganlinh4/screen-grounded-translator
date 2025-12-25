@@ -305,7 +305,7 @@ pub fn show_refine_input(parent_hwnd: HWND, placeholder: &str) -> bool {
     
     unsafe {
         let mut parent_rect = RECT::default();
-        GetClientRect(parent_hwnd, &mut parent_rect);
+        let _ = GetClientRect(parent_hwnd, &mut parent_rect);
         
         let input_height = 40i32;
         let width = parent_rect.right - 4; // 2px margin each side
@@ -502,7 +502,7 @@ pub fn set_refine_text(parent_hwnd: HWND, text: &str) {
         
         // Post message to the child window to trigger the injection
         unsafe {
-            PostMessageW(Some(hwnd), WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(hwnd), WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -521,7 +521,7 @@ pub fn resize_refine_input(parent_hwnd: HWND) {
     if let Some(hwnd) = child_hwnd {
         unsafe {
             let mut parent_rect = RECT::default();
-            GetClientRect(parent_hwnd, &mut parent_rect);
+            let _ = GetClientRect(parent_hwnd, &mut parent_rect);
             
             let input_height = 40i32;
             let width = parent_rect.right - 4; // 2px margin each side

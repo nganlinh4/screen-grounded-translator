@@ -292,12 +292,12 @@ fn get_editor_html(placeholder: &str) -> String {
 }
 
 pub fn is_active() -> bool {
-    unsafe { !INPUT_HWND.is_invalid() && IsWindowVisible(INPUT_HWND.0).as_bool() }
+    unsafe { !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() && IsWindowVisible(INPUT_HWND.0).as_bool() }
 }
 
 pub fn cancel_input() {
     unsafe {
-        if !INPUT_HWND.is_invalid() {
+        if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
             // Just hide the window, don't destroy
             let _ = ShowWindow(INPUT_HWND.0, SW_HIDE);
         }
@@ -312,7 +312,7 @@ pub fn set_editor_text(text: &str) {
         *PENDING_TEXT.lock().unwrap() = Some(text.to_string());
         
         // Post message to the text input window to trigger the injection
-        if !INPUT_HWND.is_invalid() {
+        if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
             let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
         }
     }
@@ -364,7 +364,7 @@ pub fn clear_editor_text() {
 /// Update the UI text (header) and trigger a repaint
 pub fn update_ui_text(header_text: String) {
     unsafe {
-        if !INPUT_HWND.is_invalid() {
+        if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
             *CFG_TITLE.lock().unwrap() = header_text;
             let _ = InvalidateRect(Some(INPUT_HWND.0), None, true);
         }
@@ -375,7 +375,7 @@ pub fn update_ui_text(header_text: String) {
 /// Call this after closing modal windows like the preset wheel
 pub fn refocus_editor() {
     unsafe {
-        if !INPUT_HWND.is_invalid() {
+        if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
             use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, BringWindowToTop, SetTimer};
             use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
             
@@ -404,7 +404,7 @@ pub fn refocus_editor() {
 /// Get the current window rect of the text input window (if active)
 pub fn get_window_rect() -> Option<RECT> {
     unsafe {
-        if !INPUT_HWND.is_invalid() {
+        if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
             let mut rect = RECT::default();
             if GetWindowRect(INPUT_HWND.0, &mut rect).is_ok() {
                 return Some(rect);
@@ -440,7 +440,7 @@ pub fn show(
         *SHOULD_CLOSE.lock().unwrap() = false;
         *SHOULD_CLEAR_ONLY.lock().unwrap() = false;
 
-        if !INPUT_HWND.is_invalid() {
+        if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
             // Window exists, wake it up
             let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
         } else {
@@ -448,7 +448,7 @@ pub fn show(
             warmup();
             // Sleep a bit and retry (simple handling for race on first cold start)
             std::thread::sleep(std::time::Duration::from_millis(100));
-            if !INPUT_HWND.is_invalid() {
+            if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
                  let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
             }
         }
@@ -585,7 +585,7 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let ui_language = CFG_LANG.lock().unwrap().clone();
 
             // Update window title
-            SetWindowTextW(hwnd, &HSTRING::from(prompt_guide));
+            let _ = SetWindowTextW(hwnd, &HSTRING::from(prompt_guide));
 
             // Update webview placeholder and clear text (but NOT focus yet - window not visible)
             let locale = LocaleText::get(&ui_language);
@@ -604,21 +604,21 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let screen_h = GetSystemMetrics(SM_CYSCREEN);
             let mut rect = RECT::default();
-            GetWindowRect(hwnd, &mut rect);
+            let _ = GetWindowRect(hwnd, &mut rect);
             let w = rect.right - rect.left;
             let h = rect.bottom - rect.top;
             let x = (screen_w - w) / 2;
             let y = (screen_h - h) / 2;
-            SetWindowPos(hwnd, Some(HWND::default()), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            let _ = SetWindowPos(hwnd, Some(HWND::default()), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
             
             // Reset alpha to 0 before show
-            SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
             
             // Show and bring to front
-            ShowWindow(hwnd, SW_SHOW);
-            SetForegroundWindow(hwnd);
-            SetFocus(Some(hwnd)); // CRITICAL: Set keyboard focus to window
-            UpdateWindow(hwnd);
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(hwnd);
+            let _ = SetFocus(Some(hwnd)); // CRITICAL: Set keyboard focus to window
+            let _ = UpdateWindow(hwnd);
             
             // Start Fade Timer
             SetTimer(Some(hwnd), 1, 16, None);
@@ -636,10 +636,10 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
         }
 
         WM_CLOSE => {
-            ShowWindow(hwnd, SW_HIDE);
-            KillTimer(Some(hwnd), 1);
-            KillTimer(Some(hwnd), 2);
-            KillTimer(Some(hwnd), 3);
+            let _ = ShowWindow(hwnd, SW_HIDE);
+            let _ = KillTimer(Some(hwnd), 1);
+            let _ = KillTimer(Some(hwnd), 2);
+            let _ = KillTimer(Some(hwnd), 3);
             LRESULT(0)
         }
 
@@ -651,14 +651,14 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                 if FADE_ALPHA < 245 {
                     FADE_ALPHA += 25;
                     if FADE_ALPHA > 245 { FADE_ALPHA = 245; }
-                    SetLayeredWindowAttributes(hwnd, COLORREF(0), FADE_ALPHA as u8, LWA_ALPHA);
+                    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), FADE_ALPHA as u8, LWA_ALPHA);
                 } else {
-                    KillTimer(Some(hwnd), 1);
+                    let _ = KillTimer(Some(hwnd), 1);
                     
                     // CRITICAL: Focus the editor AFTER fade completes (window fully visible)
                     // WebView2 won't accept focus properly if window is transparent
-                    SetForegroundWindow(hwnd);
-                    SetFocus(Some(hwnd));
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = SetFocus(Some(hwnd));
                     TEXT_INPUT_WEBVIEW.with(|webview| {
                         if let Some(wv) = webview.borrow().as_ref() {
                             // First focus the WebView itself (native focus)
@@ -683,18 +683,18 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                             if let Some(cb) = cb_lock.as_ref() { cb(text, hwnd); }
                             clear_editor_text();
                         } else {
-                            ShowWindow(hwnd, SW_HIDE);
+                            let _ = ShowWindow(hwnd, SW_HIDE);
                             let cb_lock = CFG_CALLBACK.lock().unwrap();
                             if let Some(cb) = cb_lock.as_ref() { cb(text, hwnd); }
                         }
                     } else {
-                        ShowWindow(hwnd, SW_HIDE);
+                        let _ = ShowWindow(hwnd, SW_HIDE);
                     }
                 }
             }
             // Timer 3: focus logic (used by refocus_editor after preset wheel)
             if wparam.0 == 3 {
-                KillTimer(Some(hwnd), 3);
+                let _ = KillTimer(Some(hwnd), 3);
                 TEXT_INPUT_WEBVIEW.with(|webview| {
                     if let Some(wv) = webview.borrow().as_ref() {
                         let _ = wv.focus();
@@ -710,20 +710,20 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
             
             let mut rect = RECT::default();
-            GetClientRect(hwnd, &mut rect);
+            let _ = GetClientRect(hwnd, &mut rect);
             let w = rect.right;
             
             // Close Button
             let close_x = w - 30;
             let close_y = 20;
             if (x - close_x).abs() < 15 && (y - close_y).abs() < 15 {
-                 PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                 let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                  return LRESULT(0);
             }
 
             // Title Bar Drag - Use Native Drag (Fix drifting issues)
             if y < 50 {
-                ReleaseCapture();
+                let _ = ReleaseCapture();
                 SendMessageW(hwnd, WM_SYSCOMMAND, Some(WPARAM(0xF012)), Some(LPARAM(0)));
                 return LRESULT(0);
             }
@@ -744,7 +744,7 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let mut ps = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut ps);
             let mut rect = RECT::default();
-            GetClientRect(hwnd, &mut rect);
+            let _ = GetClientRect(hwnd, &mut rect);
             let w = rect.right;
             let h = rect.bottom;
 
@@ -755,7 +755,7 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             // 1. Draw Background (Dark)
             let brush_bg = CreateSolidBrush(COLORREF(COL_DARK_BG));
             FillRect(mem_dc, &rect, brush_bg);
-            DeleteObject(brush_bg.into());
+            let _ = DeleteObject(brush_bg.into());
 
             // 2. Draw white rounded rectangle
             let edit_x = 20;
@@ -828,28 +828,28 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             DrawTextW(mem_dc, &mut hint_w, &mut r_hint, DT_CENTER | DT_SINGLELINE);
 
             SelectObject(mem_dc, old_font);
-            DeleteObject(h_font.into());
-            DeleteObject(h_font_small.into());
+            let _ = DeleteObject(h_font.into());
+            let _ = DeleteObject(h_font_small.into());
 
             // 4. Draw Close Button 'X'
             let c_cx = w - 30;
             let c_cy = 20;
             let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00AAAAAA));
             let old_pen = SelectObject(mem_dc, pen.into());
-            MoveToEx(mem_dc, c_cx - 5, c_cy - 5, None);
-            LineTo(mem_dc, c_cx + 5, c_cy + 5);
-            MoveToEx(mem_dc, c_cx + 5, c_cy - 5, None);
-            LineTo(mem_dc, c_cx - 5, c_cy + 5);
+            let _ = MoveToEx(mem_dc, c_cx - 5, c_cy - 5, None);
+            let _ = LineTo(mem_dc, c_cx + 5, c_cy + 5);
+            let _ = MoveToEx(mem_dc, c_cx + 5, c_cy - 5, None);
+            let _ = LineTo(mem_dc, c_cx - 5, c_cy + 5);
             SelectObject(mem_dc, old_pen);
-            DeleteObject(pen.into());
+            let _ = DeleteObject(pen.into());
 
             // Final Blit
-            BitBlt(hdc, 0, 0, w, h, Some(mem_dc), 0, 0, SRCCOPY);
+            let _ = BitBlt(hdc, 0, 0, w, h, Some(mem_dc), 0, 0, SRCCOPY);
             SelectObject(mem_dc, old_bmp);
-            DeleteObject(mem_bmp.into());
-            DeleteDC(mem_dc);
+            let _ = DeleteObject(mem_bmp.into());
+            let _ = DeleteDC(mem_dc);
             
-            EndPaint(hwnd, &mut ps);
+            let _ = EndPaint(hwnd, &mut ps);
             LRESULT(0)
         }
 

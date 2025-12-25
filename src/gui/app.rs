@@ -434,11 +434,11 @@ impl eframe::App for SettingsApp {
         if self.startup_stage == 0 {
             unsafe {
                 let mut cursor_pos = POINT::default();
-                GetCursorPos(&mut cursor_pos);
+                let _ = GetCursorPos(&mut cursor_pos);
                 let h_monitor = MonitorFromPoint(cursor_pos, MONITOR_DEFAULTTONEAREST);
                 let mut mi = MONITORINFO::default();
                 mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-                GetMonitorInfoW(h_monitor, &mut mi);
+                let _ = GetMonitorInfoW(h_monitor, &mut mi);
                 
                 let work_w = (mi.rcWork.right - mi.rcWork.left) as f32;
                 let work_h = (mi.rcWork.bottom - mi.rcWork.top) as f32;

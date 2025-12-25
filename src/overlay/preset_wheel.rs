@@ -324,7 +324,7 @@ pub fn show_preset_wheel(
         // Paint initial state
         paint_wheel_window(hwnd, win_width, win_height);
         
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         
         // CRITICAL: Capture mouse to prevent click-through to windows underneath
         let _ = SetCapture(hwnd);
@@ -332,7 +332,7 @@ pub fn show_preset_wheel(
         // Message loop
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
+            let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
             
             // Check if we got a result
@@ -390,7 +390,7 @@ unsafe extern "system" fn wheel_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                 SetCursor(Some(cursor));
                 
                 let mut rect = RECT::default();
-                GetClientRect(hwnd, &mut rect);
+                let _ = GetClientRect(hwnd, &mut rect);
                 paint_wheel_window(hwnd, rect.right, rect.bottom);
             }
             
@@ -443,8 +443,8 @@ unsafe extern "system" fn wheel_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                      WHEEL_RESULT.store(preset_idx as i32, Ordering::SeqCst);
                  }
                  // Release capture before destroying to prevent click-through
-                 ReleaseCapture();
-                 DestroyWindow(hwnd);
+                 let _ = ReleaseCapture();
+                 let _ = DestroyWindow(hwnd);
                  // NOTE: Do NOT call PostQuitMessage!
             }
             
@@ -455,8 +455,8 @@ unsafe extern "system" fn wheel_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             if wparam.0 as u32 == 0x1B { // VK_ESCAPE
                 WHEEL_STATE.lock().unwrap().selected_preset_idx = None;
                 WHEEL_RESULT.store(-2, Ordering::SeqCst);
-                ReleaseCapture();
-                DestroyWindow(hwnd);
+                let _ = ReleaseCapture();
+                let _ = DestroyWindow(hwnd);
             }
             LRESULT(0)
         }
@@ -465,8 +465,8 @@ unsafe extern "system" fn wheel_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             if WHEEL_RESULT.load(Ordering::SeqCst) == -1 {
                 WHEEL_RESULT.store(-2, Ordering::SeqCst);
             }
-            ReleaseCapture();
-            DestroyWindow(hwnd);
+            let _ = ReleaseCapture();
+            let _ = DestroyWindow(hwnd);
             LRESULT(0)
         }
         
@@ -517,11 +517,11 @@ unsafe fn paint_wheel_window(hwnd: HWND, width: i32, height: i32) {
     bl.BlendOp = AC_SRC_OVER as u8;
     bl.SourceConstantAlpha = 255;
     bl.AlphaFormat = AC_SRC_ALPHA as u8;
-    UpdateLayeredWindow(hwnd, Some(HDC::default()), None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&bl), ULW_ALPHA);
+    let _ = UpdateLayeredWindow(hwnd, Some(HDC::default()), None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&bl), ULW_ALPHA);
     
     SelectObject(mem_dc, old_bitmap);
     let _ = DeleteObject(bitmap.into());
-    DeleteDC(mem_dc);
+    let _ = DeleteDC(mem_dc);
     ReleaseDC(None, screen_dc);
 }
 
@@ -636,7 +636,7 @@ unsafe fn draw_button(dc: HDC, pixels: &mut [u32], stride: i32, rect: &RECT, lab
     DrawTextW(dc, &mut text_w, &mut text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     
     // Fix text alpha by finding bright pixels and making them opaque
-    GdiFlush();
+    let _ = GdiFlush();
     for y in rect.top.max(0)..rect.bottom.min(pixels.len() as i32 / stride) {
         for x in rect.left.max(0)..rect.right.min(stride) {
             let idx = (y * stride + x) as usize;
@@ -693,7 +693,7 @@ pub fn dismiss_wheel() {
     unsafe {
         let hwnd = WHEEL_STATE.lock().unwrap().hwnd;
         if !hwnd.is_invalid() {
-            PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }

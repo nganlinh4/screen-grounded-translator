@@ -16,7 +16,6 @@ use lazy_static::lazy_static;
 use crate::APP;
 use windows::Win32::Media::Audio::*;
 use windows::Win32::System::Com::*;
-use windows::core::Interface;
 
 /// Model for TTS (same native audio model, configured for output only)
 const TTS_MODEL: &str = "gemini-2.5-flash-native-audio-preview-12-2025";
@@ -43,13 +42,12 @@ struct QueuedRequest {
 /// TTS request with unique ID for cancellation
 #[derive(Clone)]
 pub struct TtsRequest {
-    pub id: u64,
+    pub _id: u64,
     pub text: String,
     pub hwnd: isize, // Window handle to update state when audio starts
     pub is_realtime: bool, // True if this is from realtime translation (uses REALTIME_TTS_SPEED)
 }
 
-/// Global TTS manager - singleton pattern for persistent connection
 lazy_static! {
     /// The global TTS connection manager
     pub static ref TTS_MANAGER: Arc<TtsManager> = Arc::new(TtsManager::new());
@@ -61,7 +59,7 @@ lazy_static! {
 /// Manages the persistent TTS WebSocket connection
 pub struct TtsManager {
     /// Flag to indicate if the connection is ready
-    is_ready: AtomicBool,
+    _is_ready: AtomicBool,
     
     /// Queue for Socket Workers: (Request + Generation, Output Channel)
     work_queue: Mutex<VecDeque<(QueuedRequest, mpsc::Sender<AudioEvent>)>>,
@@ -83,7 +81,7 @@ pub struct TtsManager {
 impl TtsManager {
     pub fn new() -> Self {
         Self {
-            is_ready: AtomicBool::new(false),
+            _is_ready: AtomicBool::new(false),
             work_queue: Mutex::new(VecDeque::new()),
             work_signal: Condvar::new(),
             playback_queue: Mutex::new(VecDeque::new()),
@@ -94,8 +92,8 @@ impl TtsManager {
     }
     
     /// Check if TTS is ready to accept requests
-    pub fn is_ready(&self) -> bool {
-        self.is_ready.load(Ordering::SeqCst)
+    pub fn _is_ready(&self) -> bool {
+        self._is_ready.load(Ordering::SeqCst)
     }
     
     /// Request TTS for the given text. Appends to queue (sequential playback).
@@ -122,7 +120,7 @@ impl TtsManager {
             let mut wq = self.work_queue.lock().unwrap();
             wq.push_back((
                 QueuedRequest {
-                    req: TtsRequest { id, text: text.to_string(), hwnd, is_realtime },
+                    req: TtsRequest { _id: id, text: text.to_string(), hwnd, is_realtime },
                     generation: current_gen,
                 },
                 tx
@@ -163,7 +161,7 @@ impl TtsManager {
             let mut wq = self.work_queue.lock().unwrap();
             wq.push_back((
                 QueuedRequest {
-                    req: TtsRequest { id, text: text.to_string(), hwnd, is_realtime: false },
+                    req: TtsRequest { _id: id, text: text.to_string(), hwnd, is_realtime: false },
                     generation: new_gen,
                 },
                 tx
@@ -217,7 +215,7 @@ impl TtsManager {
     }
     
     /// Shutdown the TTS manager
-    pub fn shutdown(&self) {
+    pub fn _shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
         self.interrupt_generation.fetch_add(1, Ordering::SeqCst);
         self.work_signal.notify_all();
@@ -260,7 +258,7 @@ fn clear_tts_loading_state(hwnd: isize) {
     
     // Trigger repaint to update button appearance
     unsafe {
-        InvalidateRect(Some(HWND(hwnd as *mut std::ffi::c_void)), None, false);
+        let _ = InvalidateRect(Some(HWND(hwnd as *mut std::ffi::c_void)), None, false);
     }
 }
 
@@ -280,7 +278,7 @@ fn clear_tts_state(hwnd: isize) {
     
     // Trigger repaint to update button appearance
     unsafe {
-        InvalidateRect(Some(HWND(hwnd as *mut std::ffi::c_void)), None, false);
+        let _ = InvalidateRect(Some(HWND(hwnd as *mut std::ffi::c_void)), None, false);
     }
 }
 
@@ -716,7 +714,7 @@ fn run_socket_worker() {
 /// Simple audio player using Windows WASAPI with loopback exclusion
 /// Uses AudioClientProperties to prevent TTS from being captured by loopback
 struct AudioPlayer {
-    sample_rate: u32,
+    _sample_rate: u32,
     // Shared buffer for audio data (thread-safe)
     shared_buffer: Arc<Mutex<VecDeque<i16>>>,
     // Shutdown signal for the player thread
@@ -766,7 +764,7 @@ impl AudioPlayer {
         });
         
         Self {
-            sample_rate,
+            _sample_rate: sample_rate,
             shared_buffer,
             shutdown,
             _thread: Some(thread),
@@ -814,7 +812,7 @@ impl AudioPlayer {
                                  if let Ok(id) = device.GetId() {
                                      let id_str = id.to_string().unwrap_or_default();
                                      // Try to get friendly name
-                                     let name = if let Ok(props) = device.OpenPropertyStore(STGM_READ) {
+                                     let name = if let Ok(_props) = device.OpenPropertyStore(STGM_READ) {
                                          // PKEY_Device_FriendlyName is {a45c254e-df1c-4efd-8020-67d146a850e0}, 14
                                          // We use a manual retrieval or just use ID for now if helpers missing
                                          // For now, let's just use a placeholder or partial ID if name fails, 
@@ -843,7 +841,7 @@ impl AudioPlayer {
         target_device_id: Option<String>,
     ) ->  anyhow::Result<()> {
         // Use STA for better compatibility with audio drivers
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
         
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         
@@ -885,7 +883,7 @@ impl AudioPlayer {
                        || (mix_format.wFormatTag == 65534 // WAVE_FORMAT_EXTENSIBLE 
                           && (mix_format.cbSize >= 22)); 
         
-        let mut frames_written = 0;
+        let _frames_written = 0;
         
         let mut last_gen = TTS_MANAGER.interrupt_generation.load(Ordering::SeqCst);
         
@@ -947,56 +945,6 @@ impl AudioPlayer {
         client.Stop()?;
         Ok(())
     }
-
-    /// Fallback to cpal when WASAPI exclusion isn't available
-    fn run_cpal_fallback(
-        sample_rate: u32,
-        shared_buffer: Arc<Mutex<VecDeque<i16>>>,
-        shutdown: Arc<AtomicBool>,
-    ) {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-        
-        #[cfg(target_os = "windows")]
-        let host = cpal::host_from_id(cpal::HostId::Wasapi).unwrap_or(cpal::default_host());
-        #[cfg(not(target_os = "windows"))]
-        let host = cpal::default_host();
-        
-        let Some(device) = host.default_output_device() else {
-            eprintln!("TTS: No audio output device");
-            return;
-        };
-        
-        let config = cpal::StreamConfig {
-            channels: 2,
-            sample_rate: cpal::SampleRate(sample_rate),
-            buffer_size: cpal::BufferSize::Default,
-        };
-        
-        let buffer_clone = shared_buffer.clone();
-        let stream = device.build_output_stream(
-            &config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let mut buf = buffer_clone.lock().unwrap();
-                for frame in data.chunks_mut(2) {
-                    let sample = buf.pop_front().unwrap_or(0);
-                    let f_sample = sample as f32 / 32768.0;
-                    frame[0] = f_sample;
-                    frame[1] = f_sample;
-                }
-            },
-            |err| eprintln!("TTS Audio error: {}", err),
-            None,
-        );
-        
-        if let Ok(stream) = stream {
-            let _ = stream.play();
-            
-            // Keep stream alive until shutdown
-            while !shutdown.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-    }
     
     fn play(&self, audio_data: &[u8], is_realtime: bool) {
         // Get effective speed for realtime TTS (or 100 for normal TTS)
@@ -1026,10 +974,10 @@ impl AudioPlayer {
                     use crate::overlay::realtime_webview::state::TRANSLATION_HWND;
                     use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
                     use windows::Win32::Foundation::{WPARAM, LPARAM};
-                    if !REALTIME_HWND.is_invalid() {
+                    if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
                         let _ = PostMessageW(Some(REALTIME_HWND), WM_UPDATE_TTS_SPEED, WPARAM(speed as usize), LPARAM(0));
                     }
-                    if !TRANSLATION_HWND.is_invalid() {
+                    if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
                         let _ = PostMessageW(Some(TRANSLATION_HWND), WM_UPDATE_TTS_SPEED, WPARAM(speed as usize), LPARAM(0));
                     }
                 }
@@ -1328,15 +1276,6 @@ impl WsolaStretcher {
         output[..complete_len].iter()
             .map(|&s| s.clamp(-32768.0, 32767.0) as i16)
             .collect()
-    }
-    
-    /// Flush remaining buffered samples
-    fn flush(&mut self) -> Vec<i16> {
-        let result: Vec<i16> = self.input_buffer.iter()
-            .map(|&s| s.clamp(-32768.0, 32767.0) as i16)
-            .collect();
-        self.input_buffer.clear();
-        result
     }
 }
 

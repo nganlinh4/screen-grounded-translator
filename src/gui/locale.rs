@@ -139,7 +139,7 @@ pub struct LocaleText {
      pub tts_speed_normal: &'static str,
      pub tts_speed_slow: &'static str,
      pub tts_speed_fast: &'static str,
-     pub tts_voice_label: &'static str,
+     pub _tts_voice_label: &'static str,
      pub tts_preview_texts: Vec<&'static str>,
      pub tts_male: &'static str,
      pub tts_female: &'static str,
@@ -312,7 +312,7 @@ impl LocaleText {
                 tts_speed_normal: "Bình thường",
                 tts_speed_slow: "Chậm",
                 tts_speed_fast: "Nhanh",
-                tts_voice_label: "Giọng đọc:",
+                _tts_voice_label: "Giọng đọc:",
                 tts_preview_texts: vec![
                     "Xin chào, tôi là {}, tôi có thể đọc giúp bạn đoạn văn này.",
                     "Cuộc sống thật đẹp tươi, {} rất vui khi được trò chuyện cùng bạn.",
@@ -492,7 +492,7 @@ impl LocaleText {
                 tts_speed_normal: "보통",
                 tts_speed_slow: "느림",
                 tts_speed_fast: "빠름",
-                tts_voice_label: "목소리:",
+                _tts_voice_label: "목소리:",
                 tts_preview_texts: vec![
                     "안녕하세요, 제 이름은 {}입니다. 만나서 반갑습니다.",
                     "오늘 날씨가 정말 좋네요, {}와 함께 산책 어떠세요?",
@@ -672,7 +672,7 @@ impl LocaleText {
                 tts_speed_normal: "Normal",
                 tts_speed_slow: "Slow",
                 tts_speed_fast: "Fast",
-                tts_voice_label: "Voice:",
+                _tts_voice_label: "Voice:",
                 tts_preview_texts: vec![
                     "Hello, I am {}, ready to read this text for you.",
                     "The quick brown fox jumps over the lazy dog.",

@@ -2,16 +2,12 @@
 
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::Win32::Graphics::Gdi::{GetStockObject, BLACK_BRUSH, HBRUSH};
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::core::w;
-use std::sync::atomic::Ordering;
 use super::state::*;
 /// Enumerate visible windows with titles for app selection
 /// Returns a list of (PID, Window Title) for apps that likely emit audio
 pub fn enumerate_audio_apps() -> Vec<(u32, String)> {
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    
     
     let mut apps: Vec<(u32, String)> = Vec::new();
     let mut seen_pids: std::collections::HashSet<u32> = std::collections::HashSet::new();
@@ -374,15 +370,13 @@ pub fn show_app_selection_popup() {
                                 AUDIO_SOURCE_CHANGE.store(true, Ordering::SeqCst);
                                 
                                 let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-                                unsafe {
-                                    // Close native popup
-                                    let _ = ShowWindow(hwnd, SW_HIDE);
-                                    let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-                                    
-                                    // Close TTS Modal in translation window (if exists)
-                                    if !TRANSLATION_HWND.is_invalid() {
-                                        let _ = PostMessageW(Some(TRANSLATION_HWND), WM_CLOSE_TTS_MODAL, WPARAM(0), LPARAM(0));
-                                    }
+                                // Close native popup
+                                let _ = ShowWindow(hwnd, SW_HIDE);
+                                let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                                
+                                // Close TTS Modal in translation window (if exists)
+                                if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
+                                    let _ = PostMessageW(Some(TRANSLATION_HWND), WM_CLOSE_TTS_MODAL, WPARAM(0), LPARAM(0));
                                 }
                             }
                         }

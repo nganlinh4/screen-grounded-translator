@@ -15,7 +15,7 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
     let hwnd_key = hwnd.0 as isize;
     
     let mut rect = RECT::default();
-    unsafe { GetClientRect(hwnd, &mut rect); }
+    unsafe { let _ = GetClientRect(hwnd, &mut rect); }
     
     // Use full language list from isolang crate
     let languages = get_all_languages();
@@ -66,10 +66,10 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
                     if let (Ok(dx), Ok(dy)) = (dx_str.parse::<i32>(), dy_str.parse::<i32>()) {
                         unsafe {
                             // Move realtime window
-                            if !REALTIME_HWND.is_invalid() {
+                            if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
                                 let mut rect = RECT::default();
-                                GetWindowRect(REALTIME_HWND, &mut rect);
-                                SetWindowPos(
+                                let _ = GetWindowRect(REALTIME_HWND, &mut rect);
+                                let _ = SetWindowPos(
                                     REALTIME_HWND,
                                     None,
                                     rect.left + dx,
@@ -80,10 +80,10 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
                             }
                             
                             // Move translation window
-                            if !TRANSLATION_HWND.is_invalid() {
+                            if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
                                 let mut rect = RECT::default();
-                                GetWindowRect(TRANSLATION_HWND, &mut rect);
-                                SetWindowPos(
+                                let _ = GetWindowRect(TRANSLATION_HWND, &mut rect);
+                                let _ = SetWindowPos(
                                     TRANSLATION_HWND,
                                     None,
                                     rect.left + dx,
@@ -111,7 +111,7 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
             } else if body == "saveResize" {
                 unsafe {
                     let mut rect = RECT::default();
-                    GetWindowRect(hwnd_for_ipc, &mut rect);
+                    let _ = GetWindowRect(hwnd_for_ipc, &mut rect);
                     let w = rect.right - rect.left;
                     let h = rect.bottom - rect.top;
                     
@@ -200,10 +200,10 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
                     if let (Ok(dx), Ok(dy)) = (dx_str.parse::<i32>(), dy_str.parse::<i32>()) {
                         unsafe {
                             let mut rect = RECT::default();
-                            GetWindowRect(hwnd_for_ipc, &mut rect);
+                            let _ = GetWindowRect(hwnd_for_ipc, &mut rect);
                             let new_width = (rect.right - rect.left + dx).max(200);
                             let new_height = (rect.bottom - rect.top + dy).max(100);
-                            SetWindowPos(
+                            let _ = SetWindowPos(
                                 hwnd_for_ipc,
                                 None,
                                 rect.left,
@@ -220,8 +220,8 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
                 let visible = &body[10..] == "1";
                 MIC_VISIBLE.store(visible, Ordering::SeqCst);
                 unsafe {
-                    if !REALTIME_HWND.is_invalid() {
-                        ShowWindow(REALTIME_HWND, if visible { SW_SHOW } else { SW_HIDE });
+                    if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
+                        let _ = ShowWindow(REALTIME_HWND, if visible { SW_SHOW } else { SW_HIDE });
                     }
                     // Sync to other webview
                     sync_visibility_to_webviews();
@@ -246,8 +246,8 @@ pub fn create_realtime_webview(hwnd: HWND, is_translation: bool, audio_source: &
                 }
                 
                 unsafe {
-                    if !TRANSLATION_HWND.is_invalid() {
-                        ShowWindow(TRANSLATION_HWND, if visible { SW_SHOW } else { SW_HIDE });
+                    if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
+                        let _ = ShowWindow(TRANSLATION_HWND, if visible { SW_SHOW } else { SW_HIDE });
                     }
                     // Sync to other webview
                     sync_visibility_to_webviews();

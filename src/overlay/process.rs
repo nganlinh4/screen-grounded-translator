@@ -156,7 +156,7 @@ pub fn start_text_processing(
             } else if is_master {
                 // First time MASTER preset - show the preset wheel
                 let mut cursor_pos = POINT::default();
-                unsafe { GetCursorPos(&mut cursor_pos); }
+                unsafe { let _ = GetCursorPos(&mut cursor_pos); }
                 
                 // Show preset wheel - this blocks until user makes selection
                 let selected = super::preset_wheel::show_preset_wheel("text", Some("type"), cursor_pos);
@@ -202,7 +202,7 @@ pub fn start_text_processing(
             
             if !is_continuous {
                 // Normal mode: close input window
-                unsafe { PostMessageW(Some(input_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                unsafe { let _ = PostMessageW(Some(input_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             } else {
                 // Continuous mode: close previous result overlays before spawning new ones
                 if let Ok(token_guard) = last_cancel_token_clone.lock() {
@@ -270,7 +270,7 @@ pub fn start_text_processing(
         
         text_input::show(guide_text, ui_lang, cancel_hotkey_name, false, move |user_prompt, input_hwnd| {
             // Close the input window
-            unsafe { PostMessageW(Some(input_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { let _ = PostMessageW(Some(input_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             
             // Clone preset and modify the first block's prompt with user's input
             let mut modified_preset = (*preset).clone();
@@ -421,7 +421,7 @@ pub fn start_processing_pipeline(
             unsafe {
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).into() {
-                    TranslateMessage(&msg);
+                    let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                     if !IsWindow(Some(processing_hwnd)).as_bool() { break; }
                 }
@@ -476,7 +476,7 @@ pub fn start_processing_pipeline(
     unsafe {
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
+            let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
             if !IsWindow(Some(processing_hwnd)).as_bool() { break; }
         }
@@ -530,7 +530,7 @@ fn execute_chain_pipeline(
     unsafe {
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
+            let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
             if !IsWindow(Some(processing_hwnd)).as_bool() { break; }
         }
@@ -592,7 +592,7 @@ fn run_chain_step(
     // Check if cancelled before starting
     if cancel_token.load(Ordering::Relaxed) {
         if let Some(h) = processing_indicator_hwnd {
-            unsafe { PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { let _ = PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         }
         return;
     }
@@ -690,7 +690,7 @@ fn run_chain_step(
             unsafe { 
                 let mut m = MSG::default(); 
                 while GetMessageW(&mut m, None, 0, 0).into() { 
-                    TranslateMessage(&m); 
+                    let _ = TranslateMessage(&m); 
                     DispatchMessageW(&m); 
                     if !IsWindow(Some(hwnd)).as_bool() { break; } 
                 } 
@@ -965,7 +965,7 @@ fn run_chain_step(
     // Check cancellation before continuing
     if cancel_token.load(Ordering::Relaxed) {
         if let Some(h) = processing_indicator_hwnd {
-            unsafe { PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+            unsafe { let _ = PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         }
         return;
     }
@@ -995,7 +995,7 @@ fn run_chain_step(
         if next_blocks.is_empty() {
             // End of chain
             if let Some(h) = processing_indicator_hwnd {
-                unsafe { PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                unsafe { let _ = PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
             }
             return;
         }
@@ -1081,7 +1081,7 @@ fn run_chain_step(
         // Chain stopped unexpectedly (empty result or error)
         // Ensure processing overlay is closed
         if let Some(h) = processing_indicator_hwnd {
-             unsafe { PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
+             unsafe { let _ = PostMessageW(Some(h.0), WM_CLOSE, WPARAM(0), LPARAM(0)); }
         }
     }
 }
@@ -1115,7 +1115,7 @@ unsafe fn create_processing_window(rect: RECT, graphics_mode: String) -> HWND {
     states.insert(hwnd.0 as isize, ProcessingState::new(graphics_mode));
     drop(states);
     SetTimer(Some(hwnd), 1, timer_interval, None);
-    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     hwnd
 }
 
@@ -1127,7 +1127,7 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
             if !state.is_fading_out {
                 state.is_fading_out = true;
                 if !state.timer_killed {
-                    KillTimer(Some(hwnd), 1); state.timer_killed = true;
+                    let _ = KillTimer(Some(hwnd), 1); state.timer_killed = true;
                     SetTimer(Some(hwnd), 2, 25, None);
                 }
             }
@@ -1146,12 +1146,12 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                 (destroy_flag, state.animation_offset, state.alpha, state.is_fading_out)
             };
             if should_destroy { 
-                KillTimer(Some(hwnd), 1); KillTimer(Some(hwnd), 2); 
-                DestroyWindow(hwnd); 
+                let _ = KillTimer(Some(hwnd), 1); let _ = KillTimer(Some(hwnd), 2); 
+                let _ = DestroyWindow(hwnd); 
                 return LRESULT(0); 
             }
             
-            let mut rect = RECT::default(); GetWindowRect(hwnd, &mut rect);
+            let mut rect = RECT::default(); let _ = GetWindowRect(hwnd, &mut rect);
             let w = (rect.right - rect.left).abs(); let h = (rect.bottom - rect.top).abs();
             if w > 0 && h > 0 {
                 let mut states = PROC_STATES.lock().unwrap();
@@ -1183,23 +1183,23 @@ unsafe extern "system" fn processing_wnd_proc(hwnd: HWND, msg: u32, wparam: WPAR
                     if let Ok(hbm) = dest_hbm {
                         if !hbm.is_invalid() {
                             let dest_dc = CreateCompatibleDC(Some(screen_dc)); SelectObject(dest_dc, hbm.into());
-                            SetStretchBltMode(dest_dc, HALFTONE); StretchBlt(dest_dc, 0, 0, w, h, Some(scaled_dc), 0, 0, state.scaled_w, state.scaled_h, SRCCOPY);
-                            DeleteDC(scaled_dc); (Some((dest_dc, hbm)), w, h)
-                        } else { DeleteDC(scaled_dc); (None, state.scaled_w, state.scaled_h) }
-                    } else { DeleteDC(scaled_dc); (None, state.scaled_w, state.scaled_h) }
+                            SetStretchBltMode(dest_dc, HALFTONE); let _ = StretchBlt(dest_dc, 0, 0, w, h, Some(scaled_dc), 0, 0, state.scaled_w, state.scaled_h, SRCCOPY);
+                            let _ = DeleteDC(scaled_dc); (Some((dest_dc, hbm)), w, h)
+                        } else { let _ = DeleteDC(scaled_dc); (None, state.scaled_w, state.scaled_h) }
+                    } else { let _ = DeleteDC(scaled_dc); (None, state.scaled_w, state.scaled_h) }
                 } else { (None, w, h) };
                 
                 let (mem_dc, old_hbm, temp_res) = if let Some((dc, hbm)) = final_hbm { (dc, HGDIOBJ::default(), Some(hbm)) } else { let dc = CreateCompatibleDC(Some(screen_dc)); let old = SelectObject(dc, state.cache_hbm.into()); (dc, old, None) };
                 let pt_src = POINT { x: 0, y: 0 }; let size = SIZE { cx: final_w, cy: final_h };
                 let mut blend = BLENDFUNCTION::default(); blend.BlendOp = AC_SRC_OVER as u8; blend.SourceConstantAlpha = alpha; blend.AlphaFormat = AC_SRC_ALPHA as u8;
-                UpdateLayeredWindow(hwnd, None, None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
+                let _ = UpdateLayeredWindow(hwnd, None, None, Some(&size), Some(mem_dc), Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
                 
-                if temp_res.is_some() { DeleteDC(mem_dc); if let Some(hbm) = temp_res { DeleteObject(hbm.into()); } } else { SelectObject(mem_dc, old_hbm); DeleteDC(mem_dc); }
+                if temp_res.is_some() { let _ = DeleteDC(mem_dc); if let Some(hbm) = temp_res { let _ = DeleteObject(hbm.into()); } } else { SelectObject(mem_dc, old_hbm); let _ = DeleteDC(mem_dc); }
                 ReleaseDC(None, screen_dc);
             }
             LRESULT(0)
         }
-        WM_PAINT => { let mut ps = PAINTSTRUCT::default(); BeginPaint(hwnd, &mut ps); EndPaint(hwnd, &mut ps); LRESULT(0) }
+        WM_PAINT => { let mut ps = PAINTSTRUCT::default(); BeginPaint(hwnd, &mut ps); let _ = EndPaint(hwnd, &mut ps); LRESULT(0) }
         WM_DESTROY => { let mut states = PROC_STATES.lock().unwrap(); if let Some(mut state) = states.remove(&(hwnd.0 as isize)) { state.cleanup(); } LRESULT(0) }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
