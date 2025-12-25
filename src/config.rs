@@ -153,6 +153,28 @@ fn default_history_limit() -> usize { DEFAULT_HISTORY_LIMIT }
 fn default_graphics_mode() -> String { "standard".to_string() }
 fn default_audio_processing_mode() -> String { "record_then_process".to_string() }
 
+/// A condition for TTS that applies a specific speaking instruction
+/// when the detected language matches
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TtsLanguageCondition {
+    /// ISO 639-3 language code from whatlang (e.g., "vie" for Vietnamese, "kor" for Korean)
+    pub language_code: String,
+    /// Human-readable language name for display
+    pub language_name: String,
+    /// The speaking instruction to apply when this language is detected
+    pub instruction: String,
+}
+
+fn default_tts_language_conditions() -> Vec<TtsLanguageCondition> {
+    vec![
+        TtsLanguageCondition {
+            language_code: "vie".to_string(),
+            language_name: "Vietnamese".to_string(),
+            instruction: "Speak in a \"giọng miền Tây\" accent.".to_string(),
+        }
+    ]
+}
+
 
 impl Default for Preset {
     fn default() -> Self {
@@ -247,13 +269,12 @@ pub struct Config {
     pub tts_speed: String, // "Normal", "Slow", "Fast"
     #[serde(default)]
     pub tts_output_device: String, // Device ID
-    #[serde(default = "default_tts_system_instructions")]
-    pub tts_system_instructions: String, // Custom tone/style instructions
+    #[serde(default = "default_tts_language_conditions")]
+    pub tts_language_conditions: Vec<TtsLanguageCondition>, // Language-specific TTS conditions
 }
 
 fn default_tts_voice() -> String { "Aoede".to_string() }
 fn default_tts_speed() -> String { "Fast".to_string() }
-fn default_tts_system_instructions() -> String { "If the text is in Vietnamese, speak in a \"giọng miền Tây\" accent.".to_string() }
 
 fn default_realtime_translation_model() -> String { "groq-llama".to_string() }
 fn default_realtime_font_size() -> u32 { 16 }
@@ -1230,7 +1251,7 @@ impl Default for Config {
             tts_voice: default_tts_voice(),
             tts_speed: default_tts_speed(),
             tts_output_device: String::new(),
-            tts_system_instructions: default_tts_system_instructions(),
+            tts_language_conditions: default_tts_language_conditions(),
         }
     }
 }

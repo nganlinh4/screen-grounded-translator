@@ -312,8 +312,24 @@ fn connect_tts_websocket(api_key: &str) -> Result<tungstenite::WebSocket<native_
     Ok(socket)
 }
 
+/// Detect language of text and get matching TTS instruction from config conditions
+fn get_language_instruction_for_text(text: &str, conditions: &[crate::config::TtsLanguageCondition]) -> Option<String> {
+    // Use whatlang for fast language detection (70 languages supported)
+    // Returns None if text is too short or language is unclear
+    let detected = whatlang::detect_lang(text)?;
+    let detected_code = detected.code(); // ISO 639-3 code (e.g., "vie", "kor", "eng")
+    
+    // Find matching condition
+    for condition in conditions {
+        if condition.language_code.eq_ignore_ascii_case(detected_code) {
+            return Some(condition.instruction.clone());
+        }
+    }
+    None
+}
+
 /// Send TTS setup message - configures for audio output only, no input transcription
-fn send_tts_setup(socket: &mut tungstenite::WebSocket<native_tls::TlsStream<TcpStream>>, voice_name: &str, speed: &str, custom_instructions: &str) -> Result<()> {
+fn send_tts_setup(socket: &mut tungstenite::WebSocket<native_tls::TlsStream<TcpStream>>, voice_name: &str, speed: &str, custom_instructions: Option<&str>) -> Result<()> {
     // System instruction based on speed
     let mut system_text = "You are a text-to-speech reader. Your ONLY job is to read the user's text out loud, exactly as written, word for word. Do NOT respond conversationally. Do NOT add commentary. Do NOT ask questions. ".to_string();
     
@@ -324,10 +340,12 @@ fn send_tts_setup(socket: &mut tungstenite::WebSocket<native_tls::TlsStream<TcpS
     }
     
     // Append custom tone/style instructions if provided
-    if !custom_instructions.trim().is_empty() {
-        system_text.push_str(" Additional instructions: ");
-        system_text.push_str(custom_instructions.trim());
-        system_text.push(' ');
+    if let Some(instructions) = custom_instructions {
+        if !instructions.trim().is_empty() {
+            system_text.push_str(" Additional instructions: ");
+            system_text.push_str(instructions.trim());
+            system_text.push(' ');
+        }
     }
     
     system_text.push_str("Start reading immediately.");
@@ -578,23 +596,27 @@ fn run_socket_worker() {
         };
         
         // Read config for setup - handle realtime vs regular TTS
-        let (current_voice, current_speed, custom_instructions) = {
+        // Detect language and get matching instruction
+        let (current_voice, current_speed, language_instruction) = {
             let app = APP.lock().unwrap();
             let voice = app.config.tts_voice.clone();
-            let instructions = app.config.tts_system_instructions.clone();
+            let conditions = app.config.tts_language_conditions.clone();
+            
+            // Detect language and find matching instruction
+            let instruction = get_language_instruction_for_text(&request.req.text, &conditions);
             
             if request.req.is_realtime {
                 // For realtime TTS: AI always speaks at normal pace
                 // Playback speed adjustment is done in the audio player
-                (voice, "Normal".to_string(), instructions)
+                (voice, "Normal".to_string(), instruction)
             } else {
                 // Regular TTS: Use app config speed
-                (voice, app.config.tts_speed.clone(), instructions)
+                (voice, app.config.tts_speed.clone(), instruction)
             }
         };
 
         // Send setup
-        if let Err(e) = send_tts_setup(&mut socket, &current_voice, &current_speed, &custom_instructions) {
+        if let Err(e) = send_tts_setup(&mut socket, &current_voice, &current_speed, language_instruction.as_deref()) {
             eprintln!("TTS: Failed to send setup: {}", e);
             let _ = socket.close(None);
             let _ = tx.send(AudioEvent::End);

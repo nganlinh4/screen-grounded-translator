@@ -145,6 +145,7 @@ pub struct LocaleText {
      pub tts_female: &'static str,
      pub tts_instructions_label: &'static str,
      pub tts_instructions_hint: &'static str,
+     pub tts_add_condition: &'static str,
      // Realtime TTS modal
      pub realtime_tts_title: &'static str,
      pub realtime_tts_speed: &'static str,
@@ -327,8 +328,9 @@ impl LocaleText {
                 ],
                 tts_male: "Nam",
                 tts_female: "Nữ",
-                tts_instructions_label: "Giọng điệu (tuỳ chọn):",
-                tts_instructions_hint: "VD: Nếu là tiếng Việt, hãy đọc giọng miền Tây.",
+                tts_instructions_label: "Giọng điệu theo ngôn ngữ:",
+                tts_instructions_hint: "VD: Đọc giọng miền Tây",
+                tts_add_condition: "+ Thêm điều kiện...",
                 // Realtime TTS modal
                 realtime_tts_title: "Đọc phần Dịch",
                 realtime_tts_speed: "Tốc độ",
@@ -507,8 +509,9 @@ impl LocaleText {
                 ],
                  tts_male: "남성",
                  tts_female: "여성",
-                 tts_instructions_label: "톤 & 스타일 (선택):",
-                 tts_instructions_hint: "예: 베트남어라면 \"지옹 미엔 떼이\" 억양으로 말해.",
+                 tts_instructions_label: "언어별 말투:",
+                 tts_instructions_hint: "예: 사투리로 말해",
+                 tts_add_condition: "+ 조건 추가...",
                 // Realtime TTS modal
                 realtime_tts_title: "번역 읽기",
                 realtime_tts_speed: "속도",
@@ -687,8 +690,9 @@ impl LocaleText {
                 ],
                 tts_male: "Male",
                 tts_female: "Female",
-                tts_instructions_label: "Tone & Style (Optional):",
-                tts_instructions_hint: "e.g. If it's Vietnamese, speak in a \"giọng miền Tây\" accent.",
+                tts_instructions_label: "Per-language Accent:",
+                tts_instructions_hint: "e.g. Use a Southern accent",
+                tts_add_condition: "+ Add condition...",
                 // Realtime TTS modal
                 realtime_tts_title: "Read translation",
                 realtime_tts_speed: "Speed",
