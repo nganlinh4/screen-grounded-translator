@@ -9,7 +9,7 @@ use eframe::egui;
 use crate::config::{Config, save_config, Hotkey, ThemeMode};
 use crate::{WINDOW_WIDTH, WINDOW_HEIGHT};
 use std::sync::{Arc, Mutex};
-use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent, MouseButton, menu::{Menu, MenuEvent, MenuItem}};
+use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent, MouseButton, menu::{Menu, MenuEvent, MenuItem, CheckMenuItem}};
 use auto_launch::AutoLaunch;
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,6 +54,7 @@ pub struct SettingsApp {
     tray_menu: Menu, // Store menu for lazy icon creation
     tray_settings_item: MenuItem, // Store for dynamic i18n update
     tray_quit_item: MenuItem, // Store for dynamic i18n update
+    tray_favorite_bubble_item: CheckMenuItem, // Store for favorite bubble toggle
     last_ui_language: String, // Track language to detect changes
     tray_retry_timer: f64, // Timer for lazy tray icon creation
     event_rx: Receiver<UserEvent>,
@@ -109,7 +110,7 @@ pub struct SettingsApp {
 
 
 impl SettingsApp {
-    pub fn new(mut config: Config, app_state: Arc<Mutex<crate::AppState>>, tray_menu: Menu, tray_settings_item: MenuItem, tray_quit_item: MenuItem, ctx: egui::Context) -> Self {
+    pub fn new(mut config: Config, app_state: Arc<Mutex<crate::AppState>>, tray_menu: Menu, tray_settings_item: MenuItem, tray_quit_item: MenuItem, tray_favorite_bubble_item: CheckMenuItem, ctx: egui::Context) -> Self {
         let app_name = "ScreenGoatedToolbox";
         let app_path = std::env::current_exe().unwrap();
         let args: &[&str] = &[];
@@ -274,6 +275,7 @@ impl SettingsApp {
             tray_menu, // Store for lazy initialization
             tray_settings_item,
             tray_quit_item,
+            tray_favorite_bubble_item,
             last_ui_language: initial_ui_language,
             tray_retry_timer: -5.0, // Negative to force immediate retry if needed
             event_rx: rx,
@@ -491,6 +493,12 @@ impl eframe::App for SettingsApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(should_be_visible));
             
             self.startup_stage = 3;
+            
+            // Start favorite bubble if enabled and has favorites
+            let has_favorites = self.config.presets.iter().any(|p| p.is_favorite);
+            if self.config.show_favorite_bubble && has_favorites {
+                crate::overlay::favorite_bubble::show_favorite_bubble();
+            }
         }
 
         // Splash Update
@@ -603,8 +611,24 @@ impl eframe::App for SettingsApp {
                     }
                 }
                 UserEvent::Menu(menu_event) => {
-                    if menu_event.id.0 == "1002" {
-                        self.restore_window(ctx);
+                    match menu_event.id.0.as_str() {
+                        "1002" => {
+                            self.restore_window(ctx);
+                        }
+                        "1003" => {
+                            // Toggle favorite bubble
+                            self.config.show_favorite_bubble = !self.config.show_favorite_bubble;
+                            self.tray_favorite_bubble_item.set_checked(self.config.show_favorite_bubble);
+                            self.save_and_sync();
+                            
+                            // Spawn or dismiss the bubble overlay
+                            if self.config.show_favorite_bubble {
+                                crate::overlay::favorite_bubble::show_favorite_bubble();
+                            } else {
+                                crate::overlay::favorite_bubble::hide_favorite_bubble();
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

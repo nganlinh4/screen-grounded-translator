@@ -103,6 +103,9 @@ impl Default for Config {
             tts_speed: default_tts_speed(),
             tts_output_device: String::new(),
             tts_language_conditions: default_tts_language_conditions(),
+            // Favorite bubble defaults
+            show_favorite_bubble: false,
+            favorite_bubble_position: None,
         }
     }
 }

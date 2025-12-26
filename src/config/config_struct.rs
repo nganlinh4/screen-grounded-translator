@@ -72,4 +72,10 @@ pub struct Config {
     pub tts_output_device: String, // Device ID
     #[serde(default = "default_tts_language_conditions")]
     pub tts_language_conditions: Vec<TtsLanguageCondition>, // Language-specific TTS conditions
+    
+    // --- Favorite Bubble Settings ---
+    #[serde(default)]
+    pub show_favorite_bubble: bool,
+    #[serde(default)]
+    pub favorite_bubble_position: Option<(i32, i32)>, // Screen position (physical pixels)
 }

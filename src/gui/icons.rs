@@ -30,6 +30,8 @@ pub enum Icon {
     CopyDisabled, // NEW: Copy icon with cross (disabled auto-copy)
     Lightbulb, // NEW: Lightbulb icon for tips
     Realtime, // NEW: Streaming waves icon for realtime audio processing
+    Star, // Outline star for non-favorite presets
+    StarFilled, // Filled star for favorite presets
 }
 
 /// Main entry point: Draw a clickable icon button (default size 24.0)
@@ -567,6 +569,44 @@ fn paint_internal(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: 
                 [egui::pos2(right_start, y_center), egui::pos2(right_end, y_center)],
                 wave_stroke
             );
+        }
+
+        Icon::Star => {
+            // 5-pointed star outline
+            let outer_r = 8.0 * scale;
+            let inner_r = 3.5 * scale;
+            let mut points = Vec::new();
+            
+            for i in 0..10 {
+                let angle = (i as f32 * PI / 5.0) - PI / 2.0; // Start from top
+                let r = if i % 2 == 0 { outer_r } else { inner_r };
+                points.push(egui::pos2(
+                    center.x + r * angle.cos(),
+                    center.y + r * angle.sin()
+                ));
+            }
+            points.push(points[0]); // Close the shape
+            painter.add(egui::Shape::line(points, stroke));
+        }
+
+        Icon::StarFilled => {
+            // 5-pointed star filled with gold color
+            let outer_r = 8.0 * scale;
+            let inner_r = 3.5 * scale;
+            let mut points = Vec::new();
+            
+            for i in 0..10 {
+                let angle = (i as f32 * PI / 5.0) - PI / 2.0; // Start from top
+                let r = if i % 2 == 0 { outer_r } else { inner_r };
+                points.push(egui::pos2(
+                    center.x + r * angle.cos(),
+                    center.y + r * angle.sin()
+                ));
+            }
+            
+            // Gold color for filled star
+            let gold = egui::Color32::from_rgb(255, 193, 7); // Bright gold/amber
+            painter.add(egui::Shape::convex_polygon(points, gold, egui::Stroke::NONE));
         }
     }
 }

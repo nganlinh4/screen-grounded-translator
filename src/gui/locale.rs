@@ -156,6 +156,8 @@ pub struct LocaleText {
      // --- TRAY MENU ---
      pub tray_settings: &'static str,
      pub tray_quit: &'static str,
+     pub tray_favorite_bubble: &'static str,
+     pub tray_favorite_bubble_disabled: &'static str,
      }
 
 impl LocaleText {
@@ -344,6 +346,8 @@ impl LocaleText {
                 // --- TRAY MENU VI ---
                 tray_settings: "⚙️ Cài đặt",
                 tray_quit: "Thoát",
+                tray_favorite_bubble: "Hiện bong bóng yêu thích",
+                tray_favorite_bubble_disabled: "Hiện bong bóng yêu thích (Chưa có mục yêu thích)",
                 },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -528,6 +532,8 @@ impl LocaleText {
                 // --- TRAY MENU KO ---
                 tray_settings: "⚙️ 설정",
                 tray_quit: "종료",
+                tray_favorite_bubble: "즐겨찾기 버블 표시",
+                tray_favorite_bubble_disabled: "즐겨찾기 버블 표시 (즐겨찾기 없음)",
                 },
                 _ => Self {
                  history_btn: "History",
@@ -712,6 +718,8 @@ impl LocaleText {
                 // --- TRAY MENU EN ---
                 tray_settings: "⚙️ Settings",
                 tray_quit: "Quit",
+                tray_favorite_bubble: "Show favorite bubble",
+                tray_favorite_bubble_disabled: "Show favorite bubble (No favorites set yet)",
                 },
                 }
                 }

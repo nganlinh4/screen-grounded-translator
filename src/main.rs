@@ -22,7 +22,7 @@ use windows::Win32::System::Com::CoInitialize;
 use windows::core::*;
 use lazy_static::lazy_static;
 use config::{Config, load_config, ThemeMode};
-use tray_icon::menu::{Menu, MenuItem};
+use tray_icon::menu::{Menu, MenuItem, CheckMenuItem};
 use std::collections::HashMap;
 use history::HistoryManager;
 use gui::locale::LocaleText;
@@ -259,8 +259,25 @@ fn main() -> eframe::Result<()> {
     // --- TRAY MENU SETUP (with i18n) ---
     let tray_locale = LocaleText::get(&initial_config.ui_language);
     let tray_menu = Menu::new();
+    
+    // Favorite bubble toggle - check if any presets are favorited
+    let has_favorites = initial_config.presets.iter().any(|p| p.is_favorite);
+    let favorite_bubble_text = if has_favorites {
+        tray_locale.tray_favorite_bubble
+    } else {
+        tray_locale.tray_favorite_bubble_disabled
+    };
+    let tray_favorite_bubble_item = CheckMenuItem::with_id(
+        "1003", 
+        favorite_bubble_text, 
+        has_favorites, // enabled only if has favorites
+        initial_config.show_favorite_bubble && has_favorites, 
+        None
+    );
+    
     let tray_settings_item = MenuItem::with_id("1002", tray_locale.tray_settings, true, None);
     let tray_quit_item = MenuItem::with_id("1001", tray_locale.tray_quit, true, None);
+    let _ = tray_menu.append(&tray_favorite_bubble_item);
     let _ = tray_menu.append(&tray_settings_item);
     let _ = tray_menu.append(&tray_quit_item);
 
@@ -307,7 +324,7 @@ fn main() -> eframe::Result<()> {
             // 6. Set Native Icon
             gui::utils::update_window_icon_native(effective_dark);
 
-            Ok(Box::new(gui::SettingsApp::new(initial_config, APP.clone(), tray_menu, tray_settings_item, tray_quit_item, cc.egui_ctx.clone())))
+            Ok(Box::new(gui::SettingsApp::new(initial_config, APP.clone(), tray_menu, tray_settings_item, tray_quit_item, tray_favorite_bubble_item, cc.egui_ctx.clone())))
         }),
     )
 }

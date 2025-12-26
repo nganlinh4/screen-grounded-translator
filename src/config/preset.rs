@@ -71,6 +71,10 @@ pub struct Preset {
     // Default: true for MASTER presets, false for regular presets
     #[serde(default)]
     pub show_controller_ui: bool,
+    
+    // Whether this preset is marked as a favorite for quick access via the floating bubble
+    #[serde(default)]
+    pub is_favorite: bool,
 }
 
 impl Default for Preset {
@@ -104,6 +108,8 @@ impl Default for Preset {
             is_upcoming: false,
             is_master: false,
             show_controller_ui: false,
+            is_favorite: false,
         }
     }
 }
+

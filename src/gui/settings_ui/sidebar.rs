@@ -151,6 +151,7 @@ pub fn render_sidebar(
     let mut changed = false;
     let mut preset_idx_to_delete = None;
     let mut preset_idx_to_clone = None;
+    let mut preset_idx_to_toggle_favorite = None;
     let mut preset_to_add_type = None;
     let mut preset_idx_to_select: Option<usize> = None;
 
@@ -329,21 +330,21 @@ pub fn render_sidebar(
             for i in 0..max_len {
                 // Column 1: Image Presets
                 if let Some(&idx) = image_indices.get(i) {
-                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
+                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &mut preset_idx_to_toggle_favorite, &config.ui_language);
                 } else {
                     ui.label("");
                 }
 
                 // Column 2: Text Presets
                 if let Some(&idx) = text_indices.get(i) {
-                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
+                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &mut preset_idx_to_toggle_favorite, &config.ui_language);
                 } else {
                     ui.label("");
                 }
 
                 // Column 3: Audio + Video Presets
                 if let Some(&idx) = audio_video_indices.get(i) {
-                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &config.ui_language);
+                    render_preset_item(ui, &config.presets, idx, &current_view_mode, &mut preset_idx_to_select, &mut preset_idx_to_delete, &mut preset_idx_to_clone, &mut preset_idx_to_toggle_favorite, &config.ui_language);
                 } else {
                     ui.label("");
                 }
@@ -361,6 +362,14 @@ pub fn render_sidebar(
     }
     if let Some(idx) = preset_idx_to_select {
         *view_mode = ViewMode::Preset(idx);
+    }
+
+    // Handle Toggle Favorite
+    if let Some(idx) = preset_idx_to_toggle_favorite {
+        if let Some(preset) = config.presets.get_mut(idx) {
+            preset.is_favorite = !preset.is_favorite;
+            changed = true;
+        }
     }
 
     // Handle Clone
@@ -453,6 +462,7 @@ fn render_preset_item(
     preset_idx_to_select: &mut Option<usize>,
     preset_idx_to_delete: &mut Option<usize>,
     preset_idx_to_clone: &mut Option<usize>,
+    preset_idx_to_toggle_favorite: &mut Option<usize>,
     lang: &str,
 ) {
     let preset = &presets[idx];
@@ -533,6 +543,17 @@ fn render_preset_item(
             };
             if icon_button_sized(ui, Icon::CopySmall, 22.0).on_hover_text(copy_tooltip).clicked() {
                 *preset_idx_to_clone = Some(idx);
+            }
+
+            // Favorite Button (Star) - between copy and delete
+            let star_icon = if preset.is_favorite { Icon::StarFilled } else { Icon::Star };
+            let star_tooltip = match lang {
+                "vi" => if preset.is_favorite { "Bỏ yêu thích" } else { "Yêu thích" },
+                "ko" => if preset.is_favorite { "즐겨찾기 해제" } else { "즐겨찾기" },
+                _ => if preset.is_favorite { "Remove from favorites" } else { "Add to favorites" },
+            };
+            if icon_button_sized(ui, star_icon, 22.0).on_hover_text(star_tooltip).clicked() {
+                *preset_idx_to_toggle_favorite = Some(idx);
             }
 
             // Delete button (Small X icon)

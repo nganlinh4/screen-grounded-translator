@@ -12,6 +12,7 @@ pub mod preset_wheel; // MASTER preset wheel
 pub mod realtime_webview; // New WebView2-based with smooth scrolling
 pub mod realtime_html; // HTML generation for realtime overlay
 pub mod html_components; // Split HTML components (CSS/JS)
+pub mod favorite_bubble; // Floating bubble for favorite presets
 
 pub use selection::{show_selection_overlay, is_selection_overlay_active_and_dismiss};
 pub use recording::{show_recording_overlay, is_recording_overlay_active, stop_recording_and_submit};
