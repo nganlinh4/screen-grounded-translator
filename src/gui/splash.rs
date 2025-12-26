@@ -510,6 +510,17 @@ impl SplashScreen {
         // CRITICAL: Always use Pos2::ZERO as origin - painter works in window-local coords
         let rect = Rect::from_min_size(Pos2::ZERO, size);
         
+        // --- INTERACTION BLOCKER ---
+        // This invisible Area consumes all pointer events (hover, click, drag) to prevent
+        // the underlying UI from receiving them. This stops tooltips and button hovers.
+        egui::Area::new(egui::Id::new("splash_blocker"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(Pos2::ZERO)
+            .show(ctx, |ui| {
+                // Allocate the full screen size with full interaction sense
+                ui.allocate_response(size, egui::Sense::click_and_drag().union(egui::Sense::hover()));
+            });
+        
         // Use a Foreground layer to paint ON TOP of the main UI
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("splash_overlay")));
         
