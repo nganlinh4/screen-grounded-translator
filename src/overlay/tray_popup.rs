@@ -47,7 +47,7 @@ impl raw_window_handle::HasWindowHandle for HwndWrapper {
 
 /// Show the tray popup at cursor position
 pub fn show_tray_popup() {
-    println!("Tray: Request Open");
+
     
     // CAS loop to handle state transitions atomically-ish or just check current state
     // We used swap previously which is good, but we need to handle State 2 differently based on HWND.
@@ -61,7 +61,6 @@ pub fn show_tray_popup() {
         
         // 1. Check if fully open (HWND != 0)
         if hwnd_val == 0 {
-             println!("Tray: Request Open ignored (Already opening - debounced)");
              return;
         }
 
@@ -69,16 +68,16 @@ pub fn show_tray_popup() {
         // If the window was destroyed externally or cleanup failed, we might be stuck in State 2
         let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
         let is_valid = unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool() };
-        println!("Tray: Zombie check HWND {:?} -> {}", hwnd, is_valid);
+
         
         if !is_valid {
-            println!("Tray: CRITICAL - Detected Zombie State (State=2 but Invalid HWND). Forcing reset.");
+
             // Force reset state to 0 so we can respawn
             POPUP_STATE.store(0, Ordering::SeqCst);
             POPUP_HWND.store(0, Ordering::SeqCst);
             // Fall through to respawn logic below
         } else {
-            println!("Tray: Already open (State=2, HWND!=0), toggling close");
+
             hide_tray_popup();
             return;
         }
@@ -89,7 +88,6 @@ pub fn show_tray_popup() {
     // If current is 1 (Warmup), we want to go 1 -> 2 and let existing thread handle it.
     
     let prev = POPUP_STATE.swap(2, Ordering::SeqCst);
-    println!("Tray: State transition {} -> 2", prev);
     
     if prev == 0 {
         // Was closed, start fresh
@@ -100,18 +98,17 @@ pub fn show_tray_popup() {
         // Was pending cancel. We swapped it back to 2.
         // The running thread will see 2 at checkpoint and SHOW the window.
         // Resurrection successful!
-        println!("Tray: Resurrected from PendingCancel (3 -> 2)");
+
     }
     // If prev == 1, the running warmup thread will see the state change to 2 and upgrade itself.
 }
 
 /// Hide the tray popup
 pub fn hide_tray_popup() {
-    println!("Tray: Request Hide");
     if POPUP_STATE.load(Ordering::SeqCst) == 0 {
-        println!("Tray: Already closed (State=0)");
         return;
     }
+
 
     let hwnd_val = POPUP_HWND.load(Ordering::SeqCst);
     if hwnd_val != 0 {
@@ -119,24 +116,20 @@ pub fn hide_tray_popup() {
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
-        println!("Tray: Sent WM_CLOSE to {:?}", hwnd);
+
     } else {
         // Window creating but not ready (HWND=0). Signal Cancel (State 3).
-        println!("Tray: HWND is 0, setting State=3 (PendingCancel)");
         POPUP_STATE.store(3, Ordering::SeqCst);
     }
 }
 
 pub fn warmup_tray_popup() {
-    println!("Tray: Request Warmup");
     // Try to take lock 0 -> 1
     if POPUP_STATE.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-         println!("Tray: Starting warmup thread (State=1)");
          std::thread::spawn(|| {
             create_popup_window(true);
         });
     } else {
-        println!("Tray: Warmup skipped, state not 0");
     }
 }
 
@@ -278,9 +271,9 @@ svg {{
 <div class="container">
     <div class="menu-item" onclick="action('settings')">
         <div class="icon">
-            <svg viewBox="0 0 24 24" fill="none" class="w-6 h-6">
-                <path d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M19.4 15V15C20.2284 15 20.9 15.6716 20.9 16.5C20.9 17.3284 20.2284 18 19.4 18C18.5716 18 17.9 17.3284 17.9 16.5V16.5M19.4 9V9C20.2284 9 20.9 8.32843 20.9 7.5C20.9 6.67157 20.2284 6 19.4 6C18.5716 6 17.9 6.67157 17.9 7.5V7.5M12 21V21C11.1716 21 10.5 20.3284 10.5 19.5C10.5 18.6716 11.1716 18 12 18C12.8284 18 13.5 18.6716 13.5 19.5V19.5M12 6V6C11.1716 6 10.5 5.32843 10.5 4.5C10.5 3.67157 11.1716 3 12 3C12.8284 3 13.5 3.67157 13.5 4.5V4.5M4.6 15V15C5.42843 15 6.1 15.6716 6.1 16.5C6.1 17.3284 5.42843 18 4.6 18C3.77157 18 3.1 17.3284 3.1 16.5V16.5M4.6 9V9C5.42843 9 6.1 8.32843 6.1 7.5C6.1 6.67157 5.42843 6 4.6 6C3.77157 6 3.1 6.67157 3.1 7.5V7.5M19.071 19.071V19.071C18.4852 19.6568 18.4852 20.6065 19.071 21.1923C19.6568 21.7781 20.6065 21.7781 21.1923 21.1923C21.7781 20.6065 21.7781 19.6568 21.1923 19.071V19.071M19.071 4.92896V4.92896C18.4852 4.34317 18.4852 3.39342 19.071 2.80764C19.6568 2.22185 20.6065 2.22185 21.1923 2.80764C21.7781 3.39342 21.7781 4.34317 21.1923 4.92896V4.92896M4.92889 19.071V19.071C5.51468 19.6568 5.51468 20.6065 4.92889 21.1923C4.34311 21.1923 3.39336 21.1923 2.80757 20.6065C2.22179 20.0207 2.22179 19.071 2.80757 18.4852V18.4852M4.92889 4.92896V4.92896C5.51468 4.34317 5.51468 3.39342 4.92889 2.80764C4.34311 2.22185 3.39336 2.22185 2.80757 2.80764C2.22179 3.39342 2.22179 4.34317 2.80757 4.92896V4.92896" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.39a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
             </svg>
         </div>
         <div class="label">{settings}</div>
@@ -306,20 +299,12 @@ svg {{
     </div>
 </div>
 <script>
-let ignoreBlur = false;
 function action(cmd) {{
-    if (cmd === 'bubble') {{
-        ignoreBlur = true;
-        // Reset after a delay to allow normal blurring again later
-        setTimeout(() => {{ ignoreBlur = false; }}, 500);
-    }}
     window.ipc.postMessage(cmd);
 }}
 // Close on click outside (detect blur)
 window.addEventListener('blur', function() {{
-    if (!ignoreBlur) {{
-        window.ipc.postMessage('close');
-    }}
+    window.ipc.postMessage('close');
 }});
 </script>
 </body>
@@ -340,7 +325,6 @@ window.addEventListener('blur', function() {{
 struct StateGuard;
 impl Drop for StateGuard {
     fn drop(&mut self) {
-        println!("Tray: StateGuard Dropped - cleaning up state");
         POPUP_ACTIVE_REF.store(0, Ordering::SeqCst);
         POPUP_HWND_REF.store(0, Ordering::SeqCst);
         
@@ -366,7 +350,6 @@ lazy_static::lazy_static! {
 }
 
 fn create_popup_window(is_warmup: bool) {
-    println!("Tray: create_popup_window start (warmup={})", is_warmup);
     let _guard = StateGuard; // Will reset state to 0 on exit/panic
 
     unsafe {
@@ -421,12 +404,11 @@ fn create_popup_window(is_warmup: bool) {
         .unwrap_or_default();
 
         if hwnd.is_invalid() {
-            println!("Tray: Failed to create window");
             // Guard will clean up
             return;
         }
 
-        println!("Tray: HWND Created: {:?}", hwnd);
+
         POPUP_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
 
         // Round corners
@@ -542,7 +524,6 @@ fn create_popup_window(is_warmup: bool) {
             
             if current_state == 2 {
                 // Show it!
-                println!("Tray: Showing Window (State=2, was_warmup={})", is_warmup);
                 
                 // FORCE RESIZE/REPOSITION since we might be resurrecting a cancelled window
                 let mut pt = POINT::default();
@@ -559,12 +540,10 @@ fn create_popup_window(is_warmup: bool) {
                 let _ = SetForegroundWindow(hwnd);
             } else {
                 // State is 1 (Warmup) or 3 (Cancelled) -> Close immediately
-                println!("Tray: Not showing window, closing immediately (State={}, was_warmup={})", current_state, is_warmup);
                 let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         } else {
              // Failed to create webview? Close.
-             println!("Tray: WebView creation failed");
              let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
 
@@ -574,7 +553,7 @@ fn create_popup_window(is_warmup: bool) {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-        println!("Tray: Message loop exited");
+
         
         // Guard will handle cleanup
     }
