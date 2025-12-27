@@ -180,96 +180,114 @@ pub fn render_sidebar(
     let mut should_set_global = false;
     let mut should_set_history = false;
 
+    // Use thread_local to persist grid width across frames for header alignment
+    thread_local! {
+        static LAST_GRID_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+    }
+
+    // Get the stored grid width from previous frame, fallback to available width
+    let cached_grid_width = LAST_GRID_WIDTH.with(|w| w.get());
+    let header_width = if cached_grid_width > 0.0 {
+        cached_grid_width
+    } else {
+        ui.available_width()
+    };
+
     // --- Header Navigation (Outside Grid to avoid forcing column widths) ---
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let is_dark = ui.visuals().dark_mode;
+    // Use the cached grid width for proper right alignment that accounts for grid expansion
+    ui.allocate_ui_with_layout(
+        egui::vec2(header_width, 24.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let is_dark = ui.visuals().dark_mode;
 
-        // Theme Switcher
-        let theme_bg = if is_dark {
-            egui::Color32::from_rgb(50, 55, 70)
-        } else {
-            egui::Color32::from_rgb(230, 235, 245)
-        };
-        let (theme_text, tooltip) = match config.theme_mode {
-            ThemeMode::Dark => ("🌙", "Theme: Dark"),
-            ThemeMode::Light => ("☀", "Theme: Light"),
-            ThemeMode::System => ("💻", "Theme: System (Auto)"),
-        };
-        if ui
-            .add(
-                egui::Button::new(egui::RichText::new(theme_text).size(14.0))
-                    .fill(theme_bg)
-                    .corner_radius(6.0),
-            )
-            .on_hover_text(tooltip)
-            .clicked()
-        {
-            config.theme_mode = match config.theme_mode {
-                ThemeMode::System => ThemeMode::Dark,
-                ThemeMode::Dark => ThemeMode::Light,
-                ThemeMode::Light => ThemeMode::System,
+            // Theme Switcher
+            let theme_bg = if is_dark {
+                egui::Color32::from_rgb(50, 55, 70)
+            } else {
+                egui::Color32::from_rgb(230, 235, 245)
             };
-            changed = true;
-        }
-
-        // Language Switcher
-        let original_lang = config.ui_language.clone();
-        let lang_flag = match config.ui_language.as_str() {
-            "vi" => "🇻🇳",
-            "ko" => "🇰🇷",
-            _ => "🇺🇸",
-        };
-        egui::ComboBox::from_id_salt("header_lang_switch")
-            .width(32.0)
-            .selected_text(lang_flag)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut config.ui_language, "en".to_string(), "🇺🇸 English");
-                ui.selectable_value(&mut config.ui_language, "vi".to_string(), "🇻🇳 Tiếng Việt");
-                ui.selectable_value(&mut config.ui_language, "ko".to_string(), "🇰🇷 한국어");
-            });
-        if original_lang != config.ui_language {
-            changed = true;
-        }
-
-        // History Button
-        let history_bg = if is_dark {
-            egui::Color32::from_rgb(40, 90, 90)
-        } else {
-            egui::Color32::from_rgb(100, 180, 180)
-        };
-        if ui
-            .add(
-                egui::Button::new(
-                    egui::RichText::new(format!("📜 {}", text.history_btn))
-                        .color(egui::Color32::WHITE),
-                )
-                .fill(history_bg)
-                .corner_radius(8.0),
-            )
-            .clicked()
-        {
-            should_set_history = true;
-        }
-
-        // Global Settings (anchored to the right)
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let is_global = matches!(current_view_mode, ViewMode::Global);
+            let (theme_text, tooltip) = match config.theme_mode {
+                ThemeMode::Dark => ("🌙", "Theme: Dark"),
+                ThemeMode::Light => ("☀", "Theme: Light"),
+                ThemeMode::System => ("💻", "Theme: System (Auto)"),
+            };
             if ui
-                .selectable_label(is_global, text.global_settings)
+                .add(
+                    egui::Button::new(egui::RichText::new(theme_text).size(14.0))
+                        .fill(theme_bg)
+                        .corner_radius(6.0),
+                )
+                .on_hover_text(tooltip)
                 .clicked()
             {
-                should_set_global = true;
+                config.theme_mode = match config.theme_mode {
+                    ThemeMode::System => ThemeMode::Dark,
+                    ThemeMode::Dark => ThemeMode::Light,
+                    ThemeMode::Light => ThemeMode::System,
+                };
+                changed = true;
             }
-            draw_icon_static(ui, Icon::Settings, None);
-        });
-    });
+
+            // Language Switcher
+            let original_lang = config.ui_language.clone();
+            let lang_flag = match config.ui_language.as_str() {
+                "vi" => "🇻🇳",
+                "ko" => "🇰🇷",
+                _ => "🇺🇸",
+            };
+            egui::ComboBox::from_id_salt("header_lang_switch")
+                .width(32.0)
+                .selected_text(lang_flag)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut config.ui_language, "en".to_string(), "🇺🇸 English");
+                    ui.selectable_value(&mut config.ui_language, "vi".to_string(), "🇻🇳 Tiếng Việt");
+                    ui.selectable_value(&mut config.ui_language, "ko".to_string(), "🇰🇷 한국어");
+                });
+            if original_lang != config.ui_language {
+                changed = true;
+            }
+
+            // History Button
+            let history_bg = if is_dark {
+                egui::Color32::from_rgb(40, 90, 90)
+            } else {
+                egui::Color32::from_rgb(100, 180, 180)
+            };
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("📜 {}", text.history_btn))
+                            .color(egui::Color32::WHITE),
+                    )
+                    .fill(history_bg)
+                    .corner_radius(8.0),
+                )
+                .clicked()
+            {
+                should_set_history = true;
+            }
+
+            // Global Settings (anchored to the right using remaining space)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let is_global = matches!(current_view_mode, ViewMode::Global);
+                if ui
+                    .selectable_label(is_global, text.global_settings)
+                    .clicked()
+                {
+                    should_set_global = true;
+                }
+                draw_icon_static(ui, Icon::Settings, None);
+            });
+        },
+    );
 
     ui.add_space(8.0);
 
     // --- Presets Grid ---
-    egui::Grid::new("presets_grid")
+    let grid_response = egui::Grid::new("presets_grid")
         .num_columns(6)
         .spacing([8.0, 8.0])
         .min_col_width(67.0)
@@ -398,6 +416,9 @@ pub fn render_sidebar(
                 ui.end_row();
             }
         });
+
+    // Update the cached grid width for next frame's header alignment
+    LAST_GRID_WIDTH.with(|w| w.set(grid_response.response.rect.width()));
 
     if should_set_global {
         *view_mode = ViewMode::Global;
