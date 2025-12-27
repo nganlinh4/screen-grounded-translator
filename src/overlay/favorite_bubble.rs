@@ -351,6 +351,9 @@ fn create_bubble_window() {
 
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
+        // Warmup: Create panel hidden immediately
+        ensure_panel_created(hwnd);
+
         // Message loop
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
@@ -359,10 +362,42 @@ fn create_bubble_window() {
         }
 
         // Cleanup
-        close_panel();
+        destroy_panel();
         BUBBLE_ACTIVE.store(false, Ordering::SeqCst);
         BUBBLE_HWND.store(0, Ordering::SeqCst);
     }
+}
+
+// Warmup the panel by creating it hidden
+fn ensure_panel_created(bubble_hwnd: HWND) {
+    if PANEL_HWND.load(Ordering::SeqCst) != 0 {
+        return;
+    }
+
+    // Reuse logic from show_panel but keep hidden
+    // We can just call show_panel logic but modify it to accept a "show" flag?
+    // Or better: Create a dedicated creation function.
+    create_panel_window_internal(bubble_hwnd);
+}
+
+fn escape_js(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "")
+}
+
+fn update_panel_content(html: &str) {
+    PANEL_WEBVIEW.with(|wv| {
+        if let Some(webview) = wv.borrow().as_ref() {
+            let escaped = escape_js(html);
+            let script = format!(
+                "document.querySelector('.list').innerHTML = \"{}\";",
+                escaped
+            );
+            let _ = webview.evaluate_script(&script);
+        }
+    });
 }
 
 fn update_bubble_visual(hwnd: HWND) {
@@ -836,8 +871,81 @@ fn show_panel(bubble_hwnd: HWND) {
         return;
     }
 
-    IS_EXPANDED.store(true, Ordering::SeqCst);
+    // Ensure window exists
+    ensure_panel_created(bubble_hwnd);
 
+    let panel_val = PANEL_HWND.load(Ordering::SeqCst);
+    if panel_val == 0 {
+        return;
+    }
+
+    unsafe {
+        let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
+
+        // Update content (favorites might have changed)
+        let favorites_html = get_favorite_presets_html();
+        update_panel_content(&favorites_html);
+
+        // Recalculate size/pos
+        let mut bubble_rect = RECT::default();
+        let _ = GetWindowRect(bubble_hwnd, &mut bubble_rect);
+
+        let fav_count = APP
+            .lock()
+            .map(|app| {
+                app.config
+                    .presets
+                    .iter()
+                    .filter(|p| p.is_favorite && !p.is_upcoming && !p.is_master)
+                    .count()
+            })
+            .unwrap_or(0);
+
+        let panel_height = (70 + fav_count as i32 * 36).min(PANEL_MAX_HEIGHT).max(100);
+        let screen_w = GetSystemMetrics(SM_CXSCREEN);
+
+        let (panel_x, panel_y) = if bubble_rect.left > screen_w / 2 {
+            (
+                bubble_rect.left - PANEL_WIDTH - 8,
+                bubble_rect.top - panel_height / 2 + BUBBLE_SIZE / 2,
+            )
+        } else {
+            (
+                bubble_rect.right + 8,
+                bubble_rect.top - panel_height / 2 + BUBBLE_SIZE / 2,
+            )
+        };
+
+        // Resize WebView as well
+        PANEL_WEBVIEW.with(|wv| {
+            if let Some(webview) = wv.borrow().as_ref() {
+                let _ = webview.set_bounds(Rect {
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
+                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                        PANEL_WIDTH as u32,
+                        panel_height as u32,
+                    )),
+                });
+            }
+        });
+
+        // Show and Move
+        let _ = SetWindowPos(
+            panel_hwnd,
+            None,
+            panel_x,
+            panel_y.max(10),
+            PANEL_WIDTH,
+            panel_height,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        );
+
+        IS_EXPANDED.store(true, Ordering::SeqCst);
+        update_bubble_visual(bubble_hwnd);
+    }
+}
+
+fn create_panel_window_internal(bubble_hwnd: HWND) {
     unsafe {
         let instance = GetModuleHandleW(None).unwrap_or_default();
         let class_name = w!("SGTFavoritePanel");
@@ -854,46 +962,17 @@ fn show_panel(bubble_hwnd: HWND) {
             RegisterClassW(&wc);
         });
 
-        // Position panel next to bubble
-        let mut bubble_rect = RECT::default();
-        let _ = GetWindowRect(bubble_hwnd, &mut bubble_rect);
-
-        // Count favorites for height
-        let fav_count = APP
-            .lock()
-            .map(|app| {
-                app.config
-                    .presets
-                    .iter()
-                    .filter(|p| p.is_favorite && !p.is_upcoming && !p.is_master)
-                    .count()
-            })
-            .unwrap_or(0);
-
-        let panel_height = (70 + fav_count as i32 * 36).min(PANEL_MAX_HEIGHT).max(100);
-
-        let screen_w = GetSystemMetrics(SM_CXSCREEN);
-        let (panel_x, panel_y) = if bubble_rect.left > screen_w / 2 {
-            (
-                bubble_rect.left - PANEL_WIDTH - 8,
-                bubble_rect.top - panel_height / 2 + BUBBLE_SIZE / 2,
-            )
-        } else {
-            (
-                bubble_rect.right + 8,
-                bubble_rect.top - panel_height / 2 + BUBBLE_SIZE / 2,
-            )
-        };
-
+        // Initial creation (using default size, will be resized on show)
+        // Hidden by default (no WS_VISIBLE)
         let panel_hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             class_name,
             w!("FavPanel"),
-            WS_POPUP | WS_VISIBLE,
-            panel_x,
-            panel_y.max(10),
+            WS_POPUP, // Removed WS_VISIBLE
+            0,
+            0,
             PANEL_WIDTH,
-            panel_height,
+            100, // Dummy height
             None,
             None,
             Some(instance.into()),
@@ -914,8 +993,6 @@ fn show_panel(bubble_hwnd: HWND) {
             PANEL_HWND.store(panel_hwnd.0 as isize, Ordering::SeqCst);
             create_panel_webview(panel_hwnd);
         }
-
-        update_bubble_visual(bubble_hwnd);
     }
 }
 
@@ -956,20 +1033,17 @@ fn move_panel_to_bubble(bubble_x: i32, bubble_y: i32) {
     }
 }
 
+// Hides the panel but keeps it alive (warm)
 fn close_panel() {
     if !IS_EXPANDED.swap(false, Ordering::SeqCst) {
         return;
     }
 
-    let panel_val = PANEL_HWND.swap(0, Ordering::SeqCst);
+    let panel_val = PANEL_HWND.load(Ordering::SeqCst);
     if panel_val != 0 {
-        PANEL_WEBVIEW.with(|wv| {
-            *wv.borrow_mut() = None;
-        });
-
         unsafe {
             let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
-            let _ = DestroyWindow(panel_hwnd);
+            let _ = ShowWindow(panel_hwnd, SW_HIDE);
         }
     }
 
@@ -982,6 +1056,21 @@ fn close_panel() {
 
     // Save position
     save_bubble_position();
+}
+
+// Actually destroys the panel (cleanup)
+fn destroy_panel() {
+    let panel_val = PANEL_HWND.swap(0, Ordering::SeqCst);
+    if panel_val != 0 {
+        PANEL_WEBVIEW.with(|wv| {
+            *wv.borrow_mut() = None;
+        });
+
+        unsafe {
+            let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
+            let _ = DestroyWindow(panel_hwnd);
+        }
+    }
 }
 
 fn save_bubble_position() {

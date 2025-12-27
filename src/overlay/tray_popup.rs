@@ -4,7 +4,7 @@
 use crate::APP;
 use std::cell::RefCell;
 use std::sync::{
-    atomic::{AtomicBool, AtomicIsize, Ordering},
+    atomic::{AtomicIsize, Ordering},
     Once,
 };
 use windows::core::w;
@@ -18,7 +18,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use wry::{Rect, WebView, WebViewBuilder};
 
 static REGISTER_POPUP_CLASS: Once = Once::new();
-static POPUP_ACTIVE: AtomicBool = AtomicBool::new(false);
+// 0=Closed, 1=Warmup, 2=Open, 3=PendingCancel
+static POPUP_STATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 static POPUP_HWND: AtomicIsize = AtomicIsize::new(0);
 
 thread_local! {
@@ -26,7 +27,7 @@ thread_local! {
 }
 
 const POPUP_WIDTH: i32 = 250;
-const POPUP_HEIGHT: i32 = 160;
+const POPUP_HEIGHT: i32 = 150;
 
 // HWND wrapper for wry
 struct HwndWrapper(HWND);
@@ -46,21 +47,69 @@ impl raw_window_handle::HasWindowHandle for HwndWrapper {
 
 /// Show the tray popup at cursor position
 pub fn show_tray_popup() {
-    // Prevent duplicates
-    if POPUP_ACTIVE.swap(true, Ordering::SeqCst) {
-        // Already active - close it instead (toggle behavior)
-        hide_tray_popup();
-        return;
-    }
+    println!("Tray: Request Open");
+    
+    // CAS loop to handle state transitions atomically-ish or just check current state
+    // We used swap previously which is good, but we need to handle State 2 differently based on HWND.
+    // Let's check current state first.
+    
+    let current = POPUP_STATE.load(Ordering::SeqCst);
+    
+    if current == 2 {
+        // Already Open or Opening.
+        let hwnd_val = POPUP_HWND.load(Ordering::SeqCst);
+        
+        // 1. Check if fully open (HWND != 0)
+        if hwnd_val == 0 {
+             println!("Tray: Request Open ignored (Already opening - debounced)");
+             return;
+        }
 
-    std::thread::spawn(|| {
-        create_popup_window();
-    });
+        // 2. Validate HWND - Check for Zombie State
+        // If the window was destroyed externally or cleanup failed, we might be stuck in State 2
+        let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+        let is_valid = unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool() };
+        println!("Tray: Zombie check HWND {:?} -> {}", hwnd, is_valid);
+        
+        if !is_valid {
+            println!("Tray: CRITICAL - Detected Zombie State (State=2 but Invalid HWND). Forcing reset.");
+            // Force reset state to 0 so we can respawn
+            POPUP_STATE.store(0, Ordering::SeqCst);
+            POPUP_HWND.store(0, Ordering::SeqCst);
+            // Fall through to respawn logic below
+        } else {
+            println!("Tray: Already open (State=2, HWND!=0), toggling close");
+            hide_tray_popup();
+            return;
+        }
+    }
+    
+    // If current is 3 (PendingCancel), we want to "Resurrect" it to 2.
+    // If current is 0 (Closed), we want to go 0 -> 2 and spawn.
+    // If current is 1 (Warmup), we want to go 1 -> 2 and let existing thread handle it.
+    
+    let prev = POPUP_STATE.swap(2, Ordering::SeqCst);
+    println!("Tray: State transition {} -> 2", prev);
+    
+    if prev == 0 {
+        // Was closed, start fresh
+        std::thread::spawn(|| {
+            create_popup_window(false);
+        });
+    } else if prev == 3 {
+        // Was pending cancel. We swapped it back to 2.
+        // The running thread will see 2 at checkpoint and SHOW the window.
+        // Resurrection successful!
+        println!("Tray: Resurrected from PendingCancel (3 -> 2)");
+    }
+    // If prev == 1, the running warmup thread will see the state change to 2 and upgrade itself.
 }
 
 /// Hide the tray popup
 pub fn hide_tray_popup() {
-    if !POPUP_ACTIVE.load(Ordering::SeqCst) {
+    println!("Tray: Request Hide");
+    if POPUP_STATE.load(Ordering::SeqCst) == 0 {
+        println!("Tray: Already closed (State=0)");
         return;
     }
 
@@ -70,41 +119,73 @@ pub fn hide_tray_popup() {
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
+        println!("Tray: Sent WM_CLOSE to {:?}", hwnd);
+    } else {
+        // Window creating but not ready (HWND=0). Signal Cancel (State 3).
+        println!("Tray: HWND is 0, setting State=3 (PendingCancel)");
+        POPUP_STATE.store(3, Ordering::SeqCst);
     }
 }
 
-/// Warmup the WebView2 runtime by creating a hidden popup and immediately closing it
-/// Call this at app startup to ensure fast popup display later
 pub fn warmup_tray_popup() {
-    // Disabled to prevent startup focus stealing and race conditions.
-    // The popup will initialize on first use.
+    println!("Tray: Request Warmup");
+    // Try to take lock 0 -> 1
+    if POPUP_STATE.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+         println!("Tray: Starting warmup thread (State=1)");
+         std::thread::spawn(|| {
+            create_popup_window(true);
+        });
+    } else {
+        println!("Tray: Warmup skipped, state not 0");
+    }
 }
 
 fn generate_popup_html() -> String {
-    let (settings_text, bubble_text, quit_text, bubble_checked) = if let Ok(app) = APP.lock() {
+    use crate::config::ThemeMode;
+    
+    let (settings_text, bubble_text, quit_text, bubble_checked, is_dark_mode) = if let Ok(app) = APP.lock() {
         let lang = &app.config.ui_language;
         let settings = match lang.as_str() {
-            "vi" => "⚙️ Cài đặt",
-            "ko" => "⚙️ 설정",
-            _ => "⚙️ Settings",
+            "vi" => "Cài đặt",
+            "ko" => "설정",
+            _ => "Settings",
         };
         let bubble = match lang.as_str() {
-            "vi" => "⭐ Hiển thị bong bóng",
-            "ko" => "⭐ 즐겨찾기 버블",
-            _ => "⭐ Favorite Bubble",
+            "vi" => "Hiển thị bong bóng",
+            "ko" => "즐겨찾기 버블",
+            _ => "Favorite Bubble",
         };
         let quit = match lang.as_str() {
-            "vi" => "❌ Thoát",
-            "ko" => "❌ 종료",
-            _ => "❌ Quit",
+            "vi" => "Thoát",
+            "ko" => "종료",
+            _ => "Quit",
         };
         let checked = app.config.show_favorite_bubble;
-        (settings, bubble, quit, checked)
+        
+        // Theme detection
+        let is_dark = match app.config.theme_mode {
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+        };
+        
+        (settings, bubble, quit, checked, is_dark)
     } else {
-        ("⚙️ Settings", "⭐ Favorite Bubble", "❌ Quit", false)
+        ("Settings", "Favorite Bubble", "Quit", false, true)
     };
 
-    let check_mark = if bubble_checked { "✓ " } else { "" };
+    // Define Colors based on theme
+    let (bg_color, text_color, hover_color, border_color, separator_color) = if is_dark_mode {
+        ("#2c2c2c", "#ffffff", "#3c3c3c", "#454545", "rgba(255,255,255,0.08)")
+    } else {
+        ("#f9f9f9", "#1a1a1a", "#eaeaea", "#dcdcdc", "rgba(0,0,0,0.06)")
+    };
+
+    let check_mark = if bubble_checked {
+        r#"<svg class="check-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M13.86 3.66a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.6 9.03a.75.75 0 1 1 1.06-1.06l2.42 2.42 6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>"#
+    } else {
+        ""
+    };
 
     format!(
         r#"<!DOCTYPE html>
@@ -112,68 +193,142 @@ fn generate_popup_html() -> String {
 <head>
 <meta charset="UTF-8">
 <style>
+:root {{
+    --bg-color: {bg};
+    --text-color: {text};
+    --hover-bg: {hover};
+    --border-color: {border};
+    --separator-color: {separator};
+}}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 html, body {{
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #1e1e28;
-    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg-color);
+    font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
     user-select: none;
-    border: 1px solid #444;
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
     border-radius: 8px;
 }}
 
 .container {{
     display: flex;
     flex-direction: column;
-    padding: 6px;
+    padding: 4px;
 }}
 
 .menu-item {{
-    padding: 10px 14px;
-    border-radius: 6px;
-    cursor: pointer;
-    color: white;
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: default;
     font-size: 13px;
     margin-bottom: 2px;
     background: transparent;
-    transition: all 0.1s ease;
+    transition: background 0.1s ease;
+    height: 32px;
 }}
 
 .menu-item:hover {{
-    background: rgba(102, 126, 234, 0.4);
+    background: var(--hover-bg);
 }}
 
-.menu-item.quit:hover {{
-    background: rgba(220, 80, 80, 0.4);
+.icon {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-right: 12px;
+    opacity: 0.8;
+}}
+
+.label {{
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-bottom: 1px; /* Visual alignment */
+}}
+
+.check {{
+    width: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 8px;
 }}
 
 .separator {{
     height: 1px;
-    background: rgba(255,255,255,0.1);
-    margin: 4px 8px;
+    background: var(--separator-color);
+    margin: 4px 10px;
+}}
+
+svg {{
+    width: 16px;
+    height: 16px;
 }}
 </style>
 </head>
 <body>
 <div class="container">
-    <div class="menu-item" onclick="action('settings')">{settings}</div>
-    <div class="menu-item" onclick="action('bubble')"><span id="bubble-check">{check}</span>{bubble}</div>
+    <div class="menu-item" onclick="action('settings')">
+        <div class="icon">
+            <svg viewBox="0 0 24 24" fill="none" class="w-6 h-6">
+                <path d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M19.4 15V15C20.2284 15 20.9 15.6716 20.9 16.5C20.9 17.3284 20.2284 18 19.4 18C18.5716 18 17.9 17.3284 17.9 16.5V16.5M19.4 9V9C20.2284 9 20.9 8.32843 20.9 7.5C20.9 6.67157 20.2284 6 19.4 6C18.5716 6 17.9 6.67157 17.9 7.5V7.5M12 21V21C11.1716 21 10.5 20.3284 10.5 19.5C10.5 18.6716 11.1716 18 12 18C12.8284 18 13.5 18.6716 13.5 19.5V19.5M12 6V6C11.1716 6 10.5 5.32843 10.5 4.5C10.5 3.67157 11.1716 3 12 3C12.8284 3 13.5 3.67157 13.5 4.5V4.5M4.6 15V15C5.42843 15 6.1 15.6716 6.1 16.5C6.1 17.3284 5.42843 18 4.6 18C3.77157 18 3.1 17.3284 3.1 16.5V16.5M4.6 9V9C5.42843 9 6.1 8.32843 6.1 7.5C6.1 6.67157 5.42843 6 4.6 6C3.77157 6 3.1 6.67157 3.1 7.5V7.5M19.071 19.071V19.071C18.4852 19.6568 18.4852 20.6065 19.071 21.1923C19.6568 21.7781 20.6065 21.7781 21.1923 21.1923C21.7781 20.6065 21.7781 19.6568 21.1923 19.071V19.071M19.071 4.92896V4.92896C18.4852 4.34317 18.4852 3.39342 19.071 2.80764C19.6568 2.22185 20.6065 2.22185 21.1923 2.80764C21.7781 3.39342 21.7781 4.34317 21.1923 4.92896V4.92896M4.92889 19.071V19.071C5.51468 19.6568 5.51468 20.6065 4.92889 21.1923C4.34311 21.1923 3.39336 21.1923 2.80757 20.6065C2.22179 20.0207 2.22179 19.071 2.80757 18.4852V18.4852M4.92889 4.92896V4.92896C5.51468 4.34317 5.51468 3.39342 4.92889 2.80764C4.34311 2.22185 3.39336 2.22185 2.80757 2.80764C2.22179 3.39342 2.22179 4.34317 2.80757 4.92896V4.92896" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+        </div>
+        <div class="label">{settings}</div>
+        <div class="check"></div>
+    </div>
+    
+    <div class="menu-item" onclick="action('bubble')">
+        <div class="icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        </div>
+        <div class="label">{bubble}</div>
+        <div class="check" id="bubble-check-container">{check}</div>
+    </div>
+    
     <div class="separator"></div>
-    <div class="menu-item quit" onclick="action('quit')">{quit}</div>
+    
+    <div class="menu-item" onclick="action('quit')">
+        <div class="icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </div>
+        <div class="label">{quit}</div>
+        <div class="check"></div>
+    </div>
 </div>
 <script>
+let ignoreBlur = false;
 function action(cmd) {{
+    if (cmd === 'bubble') {{
+        ignoreBlur = true;
+        // Reset after a delay to allow normal blurring again later
+        setTimeout(() => {{ ignoreBlur = false; }}, 500);
+    }}
     window.ipc.postMessage(cmd);
 }}
 // Close on click outside (detect blur)
 window.addEventListener('blur', function() {{
-    window.ipc.postMessage('close');
+    if (!ignoreBlur) {{
+        window.ipc.postMessage('close');
+    }}
 }});
 </script>
 </body>
 </html>"#,
+        bg = bg_color,
+        text = text_color,
+        hover = hover_color,
+        border = border_color,
+        separator = separator_color,
         settings = settings_text,
         bubble = bubble_text,
         quit = quit_text,
@@ -181,7 +336,39 @@ window.addEventListener('blur', function() {{
     )
 }
 
-fn create_popup_window() {
+// RAII Guard to ensure state reset
+struct StateGuard;
+impl Drop for StateGuard {
+    fn drop(&mut self) {
+        println!("Tray: StateGuard Dropped - cleaning up state");
+        POPUP_ACTIVE_REF.store(0, Ordering::SeqCst);
+        POPUP_HWND_REF.store(0, Ordering::SeqCst);
+        
+        // Also ensure WebView is dropped on thread exit which helps with cleanup
+        POPUP_WEBVIEW.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+    }
+}
+
+// Accessors for Guard since it can't capture statics directly easily in Drop if they aren't accessible
+// Actually statics are global so we can just use them.
+// But to be clean we'll just refer to the statics in the Drop impl logic (which refers to global names).
+// Wait, Drop implementation cannot capture 'self' context easily for statics unless I put them in a struct.
+// But POPUP_STATE is static. I can access it directly.
+
+// We need to define safe access or just use the statics.
+// Since `POPUP_STATE` is static, we can access it.
+
+lazy_static::lazy_static! {
+    static ref POPUP_ACTIVE_REF: &'static std::sync::atomic::AtomicI32 = &POPUP_STATE;
+    static ref POPUP_HWND_REF: &'static AtomicIsize = &POPUP_HWND;
+}
+
+fn create_popup_window(is_warmup: bool) {
+    println!("Tray: create_popup_window start (warmup={})", is_warmup);
+    let _guard = StateGuard; // Will reset state to 0 on exit/panic
+
     unsafe {
         let instance = GetModuleHandleW(None).unwrap_or_default();
         let class_name = w!("SGTTrayPopup");
@@ -198,18 +385,24 @@ fn create_popup_window() {
             RegisterClassW(&wc);
         });
 
-        // Get cursor position for placement
-        let mut pt = POINT::default();
-        let _ = GetCursorPos(&mut pt);
+        // Get cursor position for placement (calculated later if warming up)
+        let (popup_x, popup_y) = if is_warmup {
+            (-3000, -3000)
+        } else {
+            let mut pt = POINT::default();
+            let _ = GetCursorPos(&mut pt);
 
-        // Position popup above and to the left of cursor (typical tray menu behavior)
-        let screen_w = GetSystemMetrics(SM_CXSCREEN);
-        let screen_h = GetSystemMetrics(SM_CYSCREEN);
+            // Position popup above and to the left of cursor (typical tray menu behavior)
+            let screen_w = GetSystemMetrics(SM_CXSCREEN);
+            let screen_h = GetSystemMetrics(SM_CYSCREEN);
 
-        let popup_x = (pt.x - POPUP_WIDTH / 2).max(0).min(screen_w - POPUP_WIDTH);
-        let popup_y = (pt.y - POPUP_HEIGHT - 10)
-            .max(0)
-            .min(screen_h - POPUP_HEIGHT);
+            let popup_x = (pt.x - POPUP_WIDTH / 2).max(0).min(screen_w - POPUP_WIDTH);
+            let popup_y = (pt.y - POPUP_HEIGHT - 10)
+                .max(0)
+                .min(screen_h - POPUP_HEIGHT);
+
+            (popup_x, popup_y)
+        };
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -228,10 +421,12 @@ fn create_popup_window() {
         .unwrap_or_default();
 
         if hwnd.is_invalid() {
-            POPUP_ACTIVE.store(false, Ordering::SeqCst);
+            println!("Tray: Failed to create window");
+            // Guard will clean up
             return;
         }
 
+        println!("Tray: HWND Created: {:?}", hwnd);
         POPUP_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
 
         // Round corners
@@ -295,8 +490,10 @@ fn create_popup_window() {
                         POPUP_WEBVIEW.with(|cell| {
                             if let Some(webview) = cell.borrow().as_ref() {
                                 let js = format!(
-                                    "document.getElementById('bubble-check').textContent = '{}';",
-                                    if new_state { "✓ " } else { "" }
+                                    "document.getElementById('bubble-check-container').innerHTML = '{}';",
+                                    if new_state { 
+                                        r#"<svg class="check-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M13.86 3.66a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.6 9.03a.75.75 0 1 1 1.06-1.06l2.42 2.42 6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>"#
+                                    } else { "" }
                                 );
                                 let _ = webview.evaluate_script(&js);
                             }
@@ -339,10 +536,37 @@ fn create_popup_window() {
             POPUP_WEBVIEW.with(|cell| {
                 *cell.borrow_mut() = Some(wv);
             });
-        }
 
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        let _ = SetForegroundWindow(hwnd);
+            // CHECKPOINT: Only show if strictly Open (2)
+            let current_state = POPUP_STATE.load(Ordering::SeqCst);
+            
+            if current_state == 2 {
+                // Show it!
+                println!("Tray: Showing Window (State=2, was_warmup={})", is_warmup);
+                
+                // FORCE RESIZE/REPOSITION since we might be resurrecting a cancelled window
+                let mut pt = POINT::default();
+                let _ = GetCursorPos(&mut pt);
+                let screen_w = GetSystemMetrics(SM_CXSCREEN);
+                let screen_h = GetSystemMetrics(SM_CYSCREEN);
+
+                let popup_x = (pt.x - POPUP_WIDTH / 2).max(0).min(screen_w - POPUP_WIDTH);
+                let popup_y = (pt.y - POPUP_HEIGHT - 10).max(0).min(screen_h - POPUP_HEIGHT);
+                
+                let _ = SetWindowPos(hwnd, None, popup_x, popup_y, POPUP_WIDTH, POPUP_HEIGHT, SWP_NOZORDER);
+                
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                let _ = SetForegroundWindow(hwnd);
+            } else {
+                // State is 1 (Warmup) or 3 (Cancelled) -> Close immediately
+                println!("Tray: Not showing window, closing immediately (State={}, was_warmup={})", current_state, is_warmup);
+                let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+        } else {
+             // Failed to create webview? Close.
+             println!("Tray: WebView creation failed");
+             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
 
         // Message loop
         let mut msg = MSG::default();
@@ -350,13 +574,9 @@ fn create_popup_window() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-
-        // Cleanup
-        POPUP_WEBVIEW.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
-        POPUP_ACTIVE.store(false, Ordering::SeqCst);
-        POPUP_HWND.store(0, Ordering::SeqCst);
+        println!("Tray: Message loop exited");
+        
+        // Guard will handle cleanup
     }
 }
 
@@ -368,11 +588,8 @@ unsafe extern "system" fn popup_wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_ACTIVATE => {
-            // Close when deactivated (clicked outside)
-            if wparam.0 as u32 == 0 {
-                // WA_INACTIVE
-                let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-            }
+            // We rely on JS 'blur' to close the window, because WM_ACTIVATE is too aggressive
+            // and often closes the popup when clicking a toggle (which might briefly steal focus)
             LRESULT(0)
         }
 

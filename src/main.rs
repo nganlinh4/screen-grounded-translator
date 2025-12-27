@@ -1,31 +1,31 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod config;
 mod api;
+mod config;
 mod gui;
-mod overlay;
+mod history;
 mod icon_gen;
 mod model_config;
+mod overlay;
 mod updater;
-mod history;
 pub mod win_types;
 
-use std::sync::{Arc, Mutex};
+use config::{load_config, Config, ThemeMode};
+use gui::locale::LocaleText;
+use history::HistoryManager;
+use lazy_static::lazy_static;
+use std::collections::HashMap;
 use std::panic;
-use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
-use windows::Win32::System::LibraryLoader::*;
+use std::sync::{Arc, Mutex};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuItem};
+use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::System::Threading::*;
 use windows::Win32::System::Com::CoInitialize;
-use windows::core::*;
-use lazy_static::lazy_static;
-use config::{Config, load_config, ThemeMode};
-use tray_icon::menu::{Menu, MenuItem, CheckMenuItem};
-use std::collections::HashMap;
-use history::HistoryManager;
-use gui::locale::LocaleText;
+use windows::Win32::System::LibraryLoader::*;
+use windows::Win32::System::Threading::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
 
 // Window dimensions - Increased to accommodate two-column sidebar and longer text labels
 pub const WINDOW_WIDTH: f32 = 1135.0;
@@ -38,7 +38,7 @@ const MOD_SHIFT: u32 = 0x0004;
 const MOD_WIN: u32 = 0x0008;
 
 // Wrappers for thread-safe types now imported from win_types
-use crate::win_types::{SendHwnd, SendHandle, SendHhook};
+use crate::win_types::{SendHandle, SendHhook, SendHwnd};
 
 // Global event for inter-process restore signaling (manual-reset event)
 lazy_static! {
@@ -79,7 +79,7 @@ pub struct AppState {
     pub registered_hotkey_ids: Vec<i32>, // Track IDs of currently registered hotkeys
     // New: Track API usage limits (Key: Model Full Name, Value: "Remaining / Total")
     pub model_usage_stats: HashMap<String, String>,
-    pub history: Arc<HistoryManager>, // NEW
+    pub history: Arc<HistoryManager>,         // NEW
     pub last_active_window: Option<SendHwnd>, // NEW: Store window handle for auto-paste focus restoration
 }
 
@@ -102,12 +102,12 @@ lazy_static! {
 /// Enable dark mode for Win32 native menus (context menus, tray menus)
 /// This uses the undocumented SetPreferredAppMode API from uxtheme.dll
 fn enable_dark_mode_for_app() {
-    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows::core::w;
-    
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+
     // PreferredAppMode enum values
     const ALLOW_DARK: u32 = 1; // AllowDark mode
-    
+
     unsafe {
         // Load uxtheme.dll
         if let Ok(uxtheme) = LoadLibraryW(w!("uxtheme.dll")) {
@@ -116,10 +116,11 @@ fn enable_dark_mode_for_app() {
             let ordinal = 135u16;
             let ordinal_ptr = ordinal as usize as *const u8;
             let proc_name = windows::core::PCSTR::from_raw(ordinal_ptr);
-            
+
             if let Some(set_preferred_app_mode) = GetProcAddress(uxtheme, proc_name) {
                 // Cast to function pointer: fn(u32) -> u32
-                let func: extern "system" fn(u32) -> u32 = std::mem::transmute(set_preferred_app_mode);
+                let func: extern "system" fn(u32) -> u32 =
+                    std::mem::transmute(set_preferred_app_mode);
                 func(ALLOW_DARK);
             }
         }
@@ -142,7 +143,7 @@ fn main() -> eframe::Result<()> {
         if let Some(exe_dir) = exe_path.parent() {
             let staging_path = exe_dir.join("update_pending.exe");
             let backup_path = exe_path.with_extension("exe.old");
-            
+
             // If there's a pending update, apply it
             if staging_path.exists() {
                 // Backup current exe
@@ -153,20 +154,21 @@ fn main() -> eframe::Result<()> {
                     let _ = std::fs::remove_file("temp_download");
                 }
             }
-            
+
             // --- CLEANUP OLD EXE FILES ---
             let current_exe_name = exe_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if let Ok(entries) = std::fs::read_dir(exe_dir) {
                 for entry in entries.filter_map(|e| e.ok()) {
                     let file_name = entry.file_name();
                     let name_str = file_name.to_string_lossy();
-                    
+
                     // Delete old ScreenGoatedToolbox_v*.exe files (keep only current)
-                    if (name_str.starts_with("ScreenGoatedToolbox_v") && name_str.ends_with(".exe")) 
-                        && name_str.as_ref() != current_exe_name {
+                    if (name_str.starts_with("ScreenGoatedToolbox_v") && name_str.ends_with(".exe"))
+                        && name_str.as_ref() != current_exe_name
+                    {
                         let _ = std::fs::remove_file(entry.path());
                     }
-                    
+
                     // Delete .old backup files
                     if name_str.ends_with(".exe.old") {
                         let _ = std::fs::remove_file(entry.path());
@@ -175,7 +177,7 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
-    
+
     // --- CRASH HANDLER START ---
     panic::set_hook(Box::new(|panic_info| {
         // 1. Format the error message
@@ -193,29 +195,39 @@ fn main() -> eframe::Result<()> {
             "Unknown panic payload".to_string()
         };
 
-        let error_msg = format!("CRASH DETECTED!\n\nError: {}\n\nLocation:\n{}", payload, location);
+        let error_msg = format!(
+            "CRASH DETECTED!\n\nError: {}\n\nLocation:\n{}",
+            payload, location
+        );
 
         // Show a Windows Message Box so the user knows it crashed
         let wide_msg: Vec<u16> = error_msg.encode_utf16().chain(std::iter::once(0)).collect();
-        let wide_title: Vec<u16> = "SGT Crash Report".encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_title: Vec<u16> = "SGT Crash Report"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
         unsafe {
             MessageBoxW(
                 None,
                 PCWSTR(wide_msg.as_ptr()),
                 PCWSTR(wide_title.as_ptr()),
-                MB_ICONERROR | MB_OK
+                MB_ICONERROR | MB_OK,
             );
         }
     }));
     // --- CRASH HANDLER END ---
-    
+
     // Ensure the named event exists (for first instance, for second instance to signal)
     let _ = RESTORE_EVENT.as_ref();
-    
+
     // Keep the handle alive for the duration of the program
     let _single_instance_mutex = unsafe {
-        let instance = CreateMutexW(None, true, w!("Global\\ScreenGoatedToolboxSingleInstanceMutex"));
+        let instance = CreateMutexW(
+            None,
+            true,
+            w!("Global\\ScreenGoatedToolboxSingleInstanceMutex"),
+        );
         if let Ok(handle) = instance {
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 // Another instance is running - signal it to restore
@@ -234,27 +246,27 @@ fn main() -> eframe::Result<()> {
     std::thread::spawn(|| {
         run_hotkey_listener();
     });
-    
+
     // Initialize TTS for instant speech synthesis
     api::tts::init_tts();
 
     // Offload warmups to a sequenced thread to prevent splash screen lag
     std::thread::spawn(|| {
+        // 0. Warmup tray popup immediately (as requested)
+        // Now implemented with is_warmup=true to avoid focus stealing
+        overlay::tray_popup::warmup_tray_popup();
+
         // 1. Wait for splash screen / main box to appear and settle
         std::thread::sleep(std::time::Duration::from_millis(1500));
-        
+
         // 2. Warmup text input window first (more likely to be used quickly)
         overlay::text_input::warmup();
-        
+
         // 3. Wait before next warmup to distribute CPU load
         std::thread::sleep(std::time::Duration::from_millis(2000));
-        
+
         // 4. Warmup markdown WebView
         overlay::result::markdown_view::warmup();
-        
-        // 5. Warmup tray popup WebView (so it appears fast on first right-click)
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        overlay::tray_popup::warmup_tray_popup();
     });
 
     // 1. Load config early to get theme setting and language for tray i18n
@@ -263,7 +275,7 @@ fn main() -> eframe::Result<()> {
     // --- TRAY MENU SETUP (with i18n) ---
     let tray_locale = LocaleText::get(&initial_config.ui_language);
     let tray_menu = Menu::new();
-    
+
     // Favorite bubble toggle - check if any presets are favorited
     let has_favorites = initial_config.presets.iter().any(|p| p.is_favorite);
     let favorite_bubble_text = if has_favorites {
@@ -272,13 +284,13 @@ fn main() -> eframe::Result<()> {
         tray_locale.tray_favorite_bubble_disabled
     };
     let tray_favorite_bubble_item = CheckMenuItem::with_id(
-        "1003", 
-        favorite_bubble_text, 
+        "1003",
+        favorite_bubble_text,
         has_favorites, // enabled only if has favorites
-        initial_config.show_favorite_bubble && has_favorites, 
-        None
+        initial_config.show_favorite_bubble && has_favorites,
+        None,
     );
-    
+
     let tray_settings_item = MenuItem::with_id("1002", tray_locale.tray_settings, true, None);
     let tray_quit_item = MenuItem::with_id("1001", tray_locale.tray_quit, true, None);
     let _ = tray_menu.append(&tray_favorite_bubble_item);
@@ -287,15 +299,15 @@ fn main() -> eframe::Result<()> {
 
     // --- WINDOW SETUP ---
     let mut viewport_builder = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT]) 
+        .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
         .with_resizable(true)
         .with_visible(false) // Start invisible
-        .with_transparent(false) 
+        .with_transparent(false)
         .with_decorations(true); // FIX: Start WITH decorations, opaque window
-    
+
     // 2. Detect System Theme
     let system_dark = gui::utils::is_system_in_dark_mode();
-    
+
     // 3. Resolve Initial Theme
     let effective_dark = match initial_config.theme_mode {
         ThemeMode::Dark => true,
@@ -306,18 +318,18 @@ fn main() -> eframe::Result<()> {
     // 4. Use Effective Theme for initial icon
     let icon_data = crate::icon_gen::get_window_icon(effective_dark);
     viewport_builder = viewport_builder.with_icon(std::sync::Arc::new(icon_data));
-    
+
     let options = eframe::NativeOptions {
         viewport: viewport_builder,
         ..Default::default()
     };
-    
+
     eframe::run_native(
         "Screen Goated Toolbox (SGT by nganlinh4)",
         options,
         Box::new(move |cc| {
             gui::configure_fonts(&cc.egui_ctx);
-            
+
             // 5. Set Initial Visuals Explicitly
             if effective_dark {
                 cc.egui_ctx.set_visuals(eframe::egui::Visuals::dark());
@@ -328,7 +340,15 @@ fn main() -> eframe::Result<()> {
             // 6. Set Native Icon
             gui::utils::update_window_icon_native(effective_dark);
 
-            Ok(Box::new(gui::SettingsApp::new(initial_config, APP.clone(), tray_menu, tray_settings_item, tray_quit_item, tray_favorite_bubble_item, cc.egui_ctx.clone())))
+            Ok(Box::new(gui::SettingsApp::new(
+                initial_config,
+                APP.clone(),
+                tray_menu,
+                tray_settings_item,
+                tray_quit_item,
+                tray_favorite_bubble_item,
+                cc.egui_ctx.clone(),
+            )))
         }),
     )
 }
@@ -336,20 +356,25 @@ fn main() -> eframe::Result<()> {
 fn register_all_hotkeys(hwnd: HWND) {
     let mut app = APP.lock().unwrap();
     let presets = &app.config.presets;
-    
+
     let mut registered_ids = Vec::new();
     for (p_idx, preset) in presets.iter().enumerate() {
         for (h_idx, hotkey) in preset.hotkeys.iter().enumerate() {
             // ID encoding: 1000 * preset_idx + hotkey_idx + 1
-            
+
             // Skip Mouse Buttons for RegisterHotKey (handled via hook)
             if [0x04, 0x05, 0x06].contains(&hotkey.code) {
-                continue; 
+                continue;
             }
 
             let id = (p_idx as i32 * 1000) + (h_idx as i32) + 1;
             unsafe {
-                let _ = RegisterHotKey(Some(hwnd), id, HOT_KEY_MODIFIERS(hotkey.modifiers), hotkey.code);
+                let _ = RegisterHotKey(
+                    Some(hwnd),
+                    id,
+                    HOT_KEY_MODIFIERS(hotkey.modifiers),
+                    hotkey.code,
+                );
             }
             registered_ids.push(id);
         }
@@ -360,7 +385,9 @@ fn register_all_hotkeys(hwnd: HWND) {
 fn unregister_all_hotkeys(hwnd: HWND) {
     let app = APP.lock().unwrap();
     for &id in &app.registered_hotkey_ids {
-        unsafe { let _ = UnregisterHotKey(Some(hwnd), id); }
+        unsafe {
+            let _ = UnregisterHotKey(Some(hwnd), id);
+        }
     }
 }
 
@@ -373,20 +400,38 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
             WM_XBUTTONDOWN => {
                 let info = *(lparam.0 as *const MSLLHOOKSTRUCT);
                 let xbutton = (info.mouseData >> 16) & 0xFFFF;
-                if xbutton == 1 { Some(0x05) } // VK_XBUTTON1
-                else if xbutton == 2 { Some(0x06) } // VK_XBUTTON2
-                else { None }
-            },
-            _ => None
+                if xbutton == 1 {
+                    Some(0x05)
+                }
+                // VK_XBUTTON1
+                else if xbutton == 2 {
+                    Some(0x06)
+                }
+                // VK_XBUTTON2
+                else {
+                    None
+                }
+            }
+            _ => None,
         };
 
         if let Some(vk) = vk_code {
             // Check modifiers using GetAsyncKeyState for real-time state
             let mut mods = 0;
-            if (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0 { mods |= MOD_ALT; }
-            if (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 { mods |= MOD_CONTROL; }
-            if (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 { mods |= MOD_SHIFT; }
-            if (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000) != 0 || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000) != 0 { mods |= MOD_WIN; }
+            if (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0 {
+                mods |= MOD_ALT;
+            }
+            if (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 {
+                mods |= MOD_CONTROL;
+            }
+            if (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 {
+                mods |= MOD_SHIFT;
+            }
+            if (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000) != 0
+            {
+                mods |= MOD_WIN;
+            }
 
             // Check config for a match
             let mut found_id = None;
@@ -399,7 +444,9 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                             break;
                         }
                     }
-                    if found_id.is_some() { break; }
+                    if found_id.is_some() {
+                        break;
+                    }
                 }
             }
 
@@ -407,13 +454,17 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                 if let Ok(hwnd_target) = LISTENER_HWND.lock() {
                     if !hwnd_target.0.is_invalid() {
                         // Post WM_HOTKEY to the listener window logic
-                        let _ = PostMessageW(Some(hwnd_target.0), WM_HOTKEY, WPARAM(id as usize), LPARAM(0));
+                        let _ = PostMessageW(
+                            Some(hwnd_target.0),
+                            WM_HOTKEY,
+                            WPARAM(id as usize),
+                            LPARAM(0),
+                        );
                         return LRESULT(1); // Consume/Block input
                     }
                 }
             }
         }
-
     }
     CallNextHookEx(None, code, wparam, lparam)
 }
@@ -430,28 +481,35 @@ fn run_hotkey_listener() {
                 return;
             }
         };
-        
+
         let class_name = w!("HotkeyListenerClass");
-        
+
         let wc = WNDCLASSW {
             lpfnWndProc: Some(hotkey_proc),
             hInstance: instance.into(),
             lpszClassName: class_name,
             ..Default::default()
         };
-        
+
         // RegisterClassW can fail if class already exists, which is okay
         let _ = RegisterClassW(&wc);
-        
+
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             class_name,
             w!("Listener"),
             WS_OVERLAPPEDWINDOW,
-            0, 0, 0, 0,
-            None, None, Some(instance.into()), None
-        ).unwrap_or_default();
-        
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Some(instance.into()),
+            None,
+        )
+        .unwrap_or_default();
+
         // Error handling: hwnd is invalid if creation failed
         if hwnd.is_invalid() {
             eprintln!("Error: Failed to create hotkey listener window");
@@ -464,7 +522,9 @@ fn run_hotkey_listener() {
         }
 
         // Install Mouse Hook
-        if let Ok(hhook) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), Some(instance.into()), 0) {
+        if let Ok(hhook) =
+            SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), Some(instance.into()), 0)
+        {
             if let Ok(mut hook_guard) = MOUSE_HOOK.lock() {
                 *hook_guard = SendHhook(hhook);
             }
@@ -480,9 +540,9 @@ fn run_hotkey_listener() {
                 if msg.message == WM_RELOAD_HOTKEYS {
                     unregister_all_hotkeys(hwnd);
                     register_all_hotkeys(hwnd);
-                    
+
                     if let Ok(mut app) = APP.lock() {
-                         app.hotkeys_updated = false;
+                        app.hotkeys_updated = false;
                     }
                 } else {
                     let _ = TranslateMessage(&msg);
@@ -493,7 +553,12 @@ fn run_hotkey_listener() {
     }
 }
 
-unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn hotkey_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match msg {
         WM_HOTKEY => {
             let id = wparam.0 as i32;
@@ -504,9 +569,9 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     overlay::preset_wheel::dismiss_wheel();
                     return LRESULT(0);
                 }
-                
+
                 let preset_idx = ((id - 1) / 1000) as usize;
-                
+
                 // Determine context and fetch hotkey name
                 let (preset_type, text_mode, is_audio_stopping, hotkey_name) = {
                     if let Ok(app) = APP.lock() {
@@ -514,8 +579,9 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                             let p = &app.config.presets[preset_idx];
                             let p_type = p.preset_type.clone();
                             let t_mode = p.text_input_mode.clone();
-                            let stopping = p_type == "audio" && overlay::is_recording_overlay_active();
-                            
+                            let stopping =
+                                p_type == "audio" && overlay::is_recording_overlay_active();
+
                             // Find the specific hotkey name that triggered this
                             let hk_idx = ((id - 1) % 1000) as usize;
                             let hk_name = if hk_idx < p.hotkeys.len() {
@@ -525,9 +591,21 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                             };
 
                             (p_type, t_mode, stopping, hk_name)
-                        } else { ("image".to_string(), "select".to_string(), false, String::new()) }
+                        } else {
+                            (
+                                "image".to_string(),
+                                "select".to_string(),
+                                false,
+                                String::new(),
+                            )
+                        }
                     } else {
-                        ("image".to_string(), "select".to_string(), false, String::new())
+                        (
+                            "image".to_string(),
+                            "select".to_string(),
+                            false,
+                            String::new(),
+                        )
                     }
                 };
 
@@ -546,10 +624,14 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                         if let Ok(app) = APP.lock() {
                             if preset_idx < app.config.presets.len() {
                                 app.config.presets[preset_idx].audio_processing_mode == "realtime"
-                            } else { false }
-                        } else { false }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
                     };
-                    
+
                     if is_realtime {
                         // Realtime mode - toggle realtime overlay
                         if overlay::is_realtime_overlay_active() {
@@ -602,43 +684,47 @@ unsafe extern "system" fn hotkey_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                                     right: (screen_w + 700) / 2,
                                     bottom: (screen_h + 300) / 2,
                                 };
-                                
+
                                 // Get localized preset name for display
                                 let localized_name = gui::settings_ui::get_localized_preset_name(
-                                    &preset.id, 
-                                    &config.ui_language
+                                    &preset.id,
+                                    &config.ui_language,
                                 );
-                                
+
                                 let hotkey_name_clone = hotkey_name.clone();
                                 std::thread::spawn(move || {
-                                   overlay::process::start_text_processing(String::new(), center_rect, config, preset, localized_name, hotkey_name_clone);
+                                    overlay::process::start_text_processing(
+                                        String::new(),
+                                        center_rect,
+                                        config,
+                                        preset,
+                                        localized_name,
+                                        hotkey_name_clone,
+                                    );
                                 });
-
-                                }
-                                }
-                                }
+                            }
+                        }
+                    }
                 } else {
                     // Image Mode
                     if overlay::is_selection_overlay_active_and_dismiss() {
                         return LRESULT(0);
                     }
-                    
+
                     let app_clone = APP.clone();
                     let p_idx = preset_idx;
 
-                    std::thread::spawn(move || {
-                        match capture_screen_fast() {
-                            Ok(capture) => {
-                                if let Ok(mut app) = app_clone.lock() {
-                                    app.screenshot_handle = Some(capture);
-                                } else {
-                                    return;
-                                }
-                                overlay::show_selection_overlay(p_idx);
-                            },
-                            Err(e) => {
-                                eprintln!("Capture Error: {}", e);
+                    std::thread::spawn(move || match capture_screen_fast() {
+                        Ok(capture) => {
+                            if let Ok(mut app) = app_clone.lock() {
+                                app.screenshot_handle = Some(capture);
+                            } else {
+                                return;
                             }
+                            overlay::show_selection_overlay(p_idx);
+                        }
+                        Err(e) => {
+                            eprintln!("Capture Error: {}", e);
                         }
                     });
                 }
@@ -656,35 +742,55 @@ fn capture_screen_fast() -> anyhow::Result<GdiCapture> {
         let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
         let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
         let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        
+
         // Validate dimensions
         if width <= 0 || height <= 0 {
-            return Err(anyhow::anyhow!("GDI Error: Invalid screen dimensions ({} x {})", width, height));
+            return Err(anyhow::anyhow!(
+                "GDI Error: Invalid screen dimensions ({} x {})",
+                width,
+                height
+            ));
         }
 
         let hdc_screen = GetDC(None);
         if hdc_screen.is_invalid() {
-            return Err(anyhow::anyhow!("GDI Error: Failed to get screen device context"));
+            return Err(anyhow::anyhow!(
+                "GDI Error: Failed to get screen device context"
+            ));
         }
-        
+
         let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
         if hdc_mem.is_invalid() {
             let _ = ReleaseDC(None, hdc_screen);
-            return Err(anyhow::anyhow!("GDI Error: Failed to create compatible device context"));
+            return Err(anyhow::anyhow!(
+                "GDI Error: Failed to create compatible device context"
+            ));
         }
-        
+
         let hbitmap = CreateCompatibleBitmap(hdc_screen, width, height);
-        
+
         if hbitmap.is_invalid() {
-             let _ = DeleteDC(hdc_mem);
-             let _ = ReleaseDC(None, hdc_screen);
-             return Err(anyhow::anyhow!("GDI Error: Failed to create compatible bitmap."));
+            let _ = DeleteDC(hdc_mem);
+            let _ = ReleaseDC(None, hdc_screen);
+            return Err(anyhow::anyhow!(
+                "GDI Error: Failed to create compatible bitmap."
+            ));
         }
-        
+
         SelectObject(hdc_mem, hbitmap.into());
 
         // This is the only "heavy" part, but it's purely GPU/GDI memory move. Very fast.
-        BitBlt(hdc_mem, 0, 0, width, height, Some(hdc_screen), x, y, SRCCOPY)?;
+        BitBlt(
+            hdc_mem,
+            0,
+            0,
+            width,
+            height,
+            Some(hdc_screen),
+            x,
+            y,
+            SRCCOPY,
+        )?;
 
         // Cleanup DCs, but KEEP the HBITMAP
         let _ = DeleteDC(hdc_mem);
@@ -693,7 +799,7 @@ fn capture_screen_fast() -> anyhow::Result<GdiCapture> {
         Ok(GdiCapture {
             hbitmap,
             width,
-            height
+            height,
         })
     }
 }
