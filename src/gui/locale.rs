@@ -99,6 +99,20 @@ pub struct LocaleText {
      pub add_image_preset_btn: &'static str,
      pub add_audio_preset_btn: &'static str,
      // --- PROCESSING CHAIN UI ---
+     pub node_input_prefix: &'static str,
+     pub node_input_audio: &'static str,
+     pub node_input_image: &'static str,
+     pub node_input_text: &'static str,
+     pub node_process_title: &'static str,
+     pub node_special_default: &'static str,
+     pub node_special_image_to_text: &'static str,
+     pub node_special_audio_to_text: &'static str,
+     pub node_menu_add_normal: &'static str,
+     pub node_menu_add_special_generic: &'static str,
+     pub node_menu_add_special_image: &'static str,
+     pub node_menu_add_special_audio: &'static str,
+     pub input_auto_copy_tooltip: &'static str,
+     pub input_auto_speak_tooltip: &'static str,
 
 
      pub tips_title: &'static str,
@@ -263,6 +277,20 @@ impl LocaleText {
                 add_image_preset_btn: "+ Ảnh",
                 add_audio_preset_btn: "+ Âm thanh",
                 // --- PROCESSING CHAIN UI VI ---
+                node_input_prefix: "Đầu vào:",
+                node_input_audio: "Âm thanh",
+                node_input_image: "Hình ảnh",
+                node_input_text: "Văn bản",
+                node_process_title: "Text -> Text",
+                node_special_default: "Xử lý đặc biệt",
+                node_special_image_to_text: "Ảnh -> Text",
+                node_special_audio_to_text: "Audio -> Text",
+                node_menu_add_normal: "➕ Thêm node Text -> Text",
+                node_menu_add_special_generic: "⭐ Thêm node đặc biệt",
+                node_menu_add_special_image: "⭐ Thêm node Ảnh -> Text",
+                node_menu_add_special_audio: "⭐ Thêm node Audio -> Text",
+                input_auto_copy_tooltip: "Tự động copy (Nguồn)",
+                input_auto_speak_tooltip: "Đọc to nguồn",
 
 
                 tips_title: "Mẹo sử dụng",
@@ -451,6 +479,20 @@ impl LocaleText {
                 add_image_preset_btn: "+ 이미지",
                 add_audio_preset_btn: "+ 오디오",
                 // --- PROCESSING CHAIN UI KO ---
+                node_input_prefix: "입력:",
+                node_input_audio: "오디오",
+                node_input_image: "이미지",
+                node_input_text: "텍스트",
+                node_process_title: "텍스트 -> 텍스트",
+                node_special_default: "특별 처리",
+                node_special_image_to_text: "이미지 -> 텍스트",
+                node_special_audio_to_text: "오디오 -> 텍스트",
+                node_menu_add_normal: "➕ 텍스트 -> 텍스트 노드 추가",
+                node_menu_add_special_generic: "⭐ 특별 노드 추가",
+                node_menu_add_special_image: "⭐ 이미지 -> 텍스트 노드 추가",
+                node_menu_add_special_audio: "⭐ 오디오 -> 텍스트 노드 추가",
+                input_auto_copy_tooltip: "자동 복사 (소스)",
+                input_auto_speak_tooltip: "소스 읽기",
 
 
                 tips_title: "사용 팁",
@@ -639,6 +681,20 @@ impl LocaleText {
                 add_image_preset_btn: "+ Image",
                 add_audio_preset_btn: "+ Audio",
                 // --- PROCESSING CHAIN UI EN ---
+                node_input_prefix: "Input:",
+                node_input_audio: "Audio",
+                node_input_image: "Image",
+                node_input_text: "Text",
+                node_process_title: "Text -> Text",
+                node_special_default: "Special Node",
+                node_special_image_to_text: "Image -> Text",
+                node_special_audio_to_text: "Audio -> Text",
+                node_menu_add_normal: "➕ Add Text -> Text Node",
+                node_menu_add_special_generic: "⭐ Add Special Node",
+                node_menu_add_special_image: "⭐ Add Image -> Text Node",
+                node_menu_add_special_audio: "⭐ Add Audio -> Text Node",
+                input_auto_copy_tooltip: "Auto-copy (Source)",
+                input_auto_speak_tooltip: "Speak Source",
 
 
                 tips_title: "Usage Tips",

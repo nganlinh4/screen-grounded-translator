@@ -75,7 +75,7 @@ pub fn render_preset_editor(
                     if ui.checkbox(&mut preset.show_controller_ui, text.controller_checkbox_label).clicked() {
                         if !preset.show_controller_ui && preset.blocks.is_empty() {
                             preset.blocks.push(create_default_block_for_type(&preset.preset_type));
-                            *snarl = blocks_to_snarl(&preset.blocks, &preset.block_connections);
+                            *snarl = blocks_to_snarl(&preset.blocks, &preset.block_connections, &preset.preset_type);
                         }
                         changed = true;
                     }
@@ -97,7 +97,7 @@ pub fn render_preset_editor(
                             let default_config = Config::default();
                             if let Some(default_p) = default_config.presets.iter().find(|p| p.id == preset.id) {
                                 preset = default_p.clone();
-                                *snarl = blocks_to_snarl(&preset.blocks, &preset.block_connections);
+                                *snarl = blocks_to_snarl(&preset.blocks, &preset.block_connections, &preset.preset_type);
                                 request_node_graph_view_reset(ui.ctx());
                                 changed = true;
                             }
@@ -351,7 +351,7 @@ pub fn render_preset_editor(
                 .corner_radius(8.0)
                 .show(ui, |ui| {
                     ui.set_min_height(325.0); // Allocate space for the graph
-                    if render_node_graph(ui, snarl, &config.ui_language, &preset.prompt_mode, config.use_groq, config.use_gemini, config.use_openrouter, config.use_ollama) {
+                    if render_node_graph(ui, snarl, &config.ui_language, &preset.prompt_mode, config.use_groq, config.use_gemini, config.use_openrouter, config.use_ollama, &preset.preset_type, text) {
                         changed = true;
                     }
                 });

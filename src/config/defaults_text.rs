@@ -6,26 +6,24 @@ use super::types::ProcessingBlock;
 /// Create text-based default presets
 pub fn create_text_presets() -> Vec<Preset> {
     let mut presets = Vec::new();
-    
+
     // 2b. Read aloud (Đọc to) - FIRST text preset
     let mut p2b = Preset::default();
     p2b.id = "preset_read_aloud".to_string();
     p2b.name = "Read aloud".to_string();
     p2b.preset_type = "text".to_string();
     p2b.text_input_mode = "select".to_string();
-    p2b.blocks = vec![
-        ProcessingBlock {
-            block_type: "text".to_string(),
-            model: "text_fast_120b".to_string(),
-            prompt: "Return the following text exactly as is. Output ONLY the text.".to_string(),
-            selected_language: "English".to_string(),
-            streaming_enabled: false,
-            show_overlay: false,
-            auto_copy: false,
-            auto_speak: true,
-            ..Default::default()
-        }
-    ];
+    p2b.blocks = vec![ProcessingBlock {
+        block_type: "input_adapter".to_string(), // optimized: no LLM needed
+        model: "".to_string(),
+        prompt: "".to_string(),
+        selected_language: "English".to_string(),
+        streaming_enabled: false, // input adapter is instant
+        show_overlay: false,
+        auto_copy: false,
+        auto_speak: true,
+        ..Default::default()
+    }];
     presets.push(p2b);
 
     // 3. Trans (Select text)
@@ -34,18 +32,17 @@ pub fn create_text_presets() -> Vec<Preset> {
     p3.name = "Trans (Select text)".to_string();
     p3.preset_type = "text".to_string();
     p3.text_input_mode = "select".to_string();
-    p3.blocks = vec![
-        ProcessingBlock {
-            block_type: "text".to_string(),
-            model: "text_accurate_kimi".to_string(),
-            prompt: "Translate the following text to {language1}. Output ONLY the translation.".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            streaming_enabled: true,
-            show_overlay: true,
-            auto_copy: true,
-            ..Default::default()
-        }
-    ];
+    p3.blocks = vec![ProcessingBlock {
+        block_type: "text".to_string(),
+        model: "text_accurate_kimi".to_string(),
+        prompt: "Translate the following text to {language1}. Output ONLY the translation."
+            .to_string(),
+        selected_language: "Vietnamese".to_string(),
+        streaming_enabled: true,
+        show_overlay: true,
+        auto_copy: true,
+        ..Default::default()
+    }];
     presets.push(p3);
 
     // 3h. Trans+Retrans (Select) - Dịch+Dịch lại (Bôi)
@@ -58,7 +55,8 @@ pub fn create_text_presets() -> Vec<Preset> {
         ProcessingBlock {
             block_type: "text".to_string(),
             model: "text_accurate_kimi".to_string(),
-            prompt: "Translate the following text to {language1}. Output ONLY the translation.".to_string(),
+            prompt: "Translate the following text to {language1}. Output ONLY the translation."
+                .to_string(),
             selected_language: "Korean".to_string(),
             streaming_enabled: true,
             show_overlay: true,
@@ -74,7 +72,7 @@ pub fn create_text_presets() -> Vec<Preset> {
             show_overlay: true,
             auto_copy: false,
             ..Default::default()
-        }
+        },
     ];
     presets.push(p3h);
 
@@ -85,18 +83,17 @@ pub fn create_text_presets() -> Vec<Preset> {
     p3b.preset_type = "text".to_string();
     p3b.text_input_mode = "select".to_string();
     p3b.auto_paste = true; // Replace original text
-    p3b.blocks = vec![
-        ProcessingBlock {
-            block_type: "text".to_string(),
-            model: "text_accurate_kimi".to_string(),
-            prompt: "Translate the following text to {language1}. Output ONLY the translation.".to_string(),
-            selected_language: "Vietnamese".to_string(),
-            streaming_enabled: false,
-            show_overlay: false, // Background processing
-            auto_copy: true,
-            ..Default::default()
-        }
-    ];
+    p3b.blocks = vec![ProcessingBlock {
+        block_type: "text".to_string(),
+        model: "text_accurate_kimi".to_string(),
+        prompt: "Translate the following text to {language1}. Output ONLY the translation."
+            .to_string(),
+        selected_language: "Vietnamese".to_string(),
+        streaming_enabled: false,
+        show_overlay: false, // Background processing
+        auto_copy: true,
+        ..Default::default()
+    }];
     presets.push(p3b);
 
     // 3c. Fix Grammar (Sửa ngữ pháp)
@@ -190,19 +187,17 @@ pub fn create_text_presets() -> Vec<Preset> {
     p3f2.preset_type = "text".to_string();
     p3f2.text_input_mode = "select".to_string();
     p3f2.prompt_mode = "dynamic".to_string(); // User types custom command
-    p3f2.blocks = vec![
-        ProcessingBlock {
-            block_type: "text".to_string(),
-            model: "compound_mini".to_string(),
-            prompt: "".to_string(), // Empty - user will provide
-            selected_language: "Vietnamese".to_string(),
-            streaming_enabled: true,
-            render_mode: "markdown".to_string(),
-            show_overlay: true,
-            auto_copy: false,
-            ..Default::default()
-        }
-    ];
+    p3f2.blocks = vec![ProcessingBlock {
+        block_type: "text".to_string(),
+        model: "compound_mini".to_string(),
+        prompt: "".to_string(), // Empty - user will provide
+        selected_language: "Vietnamese".to_string(),
+        streaming_enabled: true,
+        render_mode: "markdown".to_string(),
+        show_overlay: true,
+        auto_copy: false,
+        ..Default::default()
+    }];
     presets.push(p3f2);
 
     // 3f3. Edit as follows (Sửa như sau:) - dynamic prompt for text selection

@@ -5,7 +5,7 @@ edition = "2021"
 
 [build-dependencies]
 winres = "0.1"
-image = { version = "0.24", default-features = false, features = ["png"] }
+image = { version = "0.24", default-features = false, features = ["png", "bmp"] }
 
 [dependencies]
 # Network & Serialization
@@ -21,7 +21,7 @@ self_update = { version = "0.39", features = ["archive-zip", "compression-zip-de
 zip = "0.6"
 
 # Image Processing (Only PNG feature to save space)
-image = { version = "0.24", default-features = false, features = ["png"] }
+image = { version = "0.24", default-features = false, features = ["png", "bmp"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }

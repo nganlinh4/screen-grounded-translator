@@ -28,7 +28,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 // Window dimensions - Increased to accommodate two-column sidebar and longer text labels
-pub const WINDOW_WIDTH: f32 = 1200.0;
+pub const WINDOW_WIDTH: f32 = 1230.0;
 pub const WINDOW_HEIGHT: f32 = 620.0;
 
 // Modifier Constants for Hook

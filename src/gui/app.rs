@@ -1085,6 +1085,7 @@ impl eframe::App for SettingsApp {
                                         self.snarl = Some(blocks_to_snarl(
                                             &self.config.presets[idx].blocks,
                                             &self.config.presets[idx].block_connections,
+                                            &self.config.presets[idx].preset_type,
                                         ));
                                         self.last_edited_preset_idx = Some(idx);
                                     }

@@ -30,31 +30,76 @@ pub fn copy_to_clipboard(text: &str, hwnd: HWND) {
         for attempt in 0..5 {
             if OpenClipboard(Some(hwnd)).is_ok() {
                 let _ = EmptyClipboard();
-                
+
                 // Convert text to UTF-16
                 let wide_text: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
                 let mem_size = wide_text.len() * 2;
-                
+
                 // Allocate global memory
                 if let Ok(h_mem) = GlobalAlloc(GMEM_MOVEABLE, mem_size) {
                     let ptr = GlobalLock(h_mem) as *mut u16;
                     std::ptr::copy_nonoverlapping(wide_text.as_ptr(), ptr, wide_text.len());
                     let _ = GlobalUnlock(h_mem);
-                    
+
                     // Set clipboard data (CF_UNICODETEXT = 13)
                     let h_mem_handle = HANDLE(h_mem.0);
                     let _ = SetClipboardData(13u32, Some(h_mem_handle));
                 }
-                
+
                 let _ = CloseClipboard();
                 return; // Success
             }
-            
+
             // If failed and not last attempt, wait before retrying
             if attempt < 4 {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             } else {
                 eprintln!("Failed to copy to clipboard after 5 attempts");
+            }
+        }
+    }
+}
+
+pub fn copy_image_to_clipboard(image_bytes: &[u8]) {
+    // Convert PNG/etc bytes to BMP format using image crate
+    // Clipboard expects CF_DIB which is BMP without the File Header (first 14 bytes)
+    if let Ok(img) = image::load_from_memory(image_bytes) {
+        let mut bmp_data = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut bmp_data);
+        if img
+            .write_to(&mut cursor, image::ImageOutputFormat::Bmp)
+            .is_ok()
+        {
+            // Check if valid BMP (starts with BM)
+            if bmp_data.len() > 14 && bmp_data[0] == 0x42 && bmp_data[1] == 0x4D {
+                // Skip the 14-byte BITMAPFILEHEADER to get BITMAPINFOHEADER + Pixels (DIB)
+                let dib_data = &bmp_data[14..];
+
+                unsafe {
+                    // Retry loop
+                    for attempt in 0..5 {
+                        if OpenClipboard(None).is_ok() {
+                            let _ = EmptyClipboard();
+
+                            let mem_size = dib_data.len();
+                            if let Ok(h_mem) = GlobalAlloc(GMEM_MOVEABLE, mem_size) {
+                                let ptr = GlobalLock(h_mem) as *mut u8;
+                                std::ptr::copy_nonoverlapping(dib_data.as_ptr(), ptr, mem_size);
+                                let _ = GlobalUnlock(h_mem);
+
+                                // Set CF_DIB (8)
+                                let h_mem_handle = HANDLE(h_mem.0);
+                                let _ = SetClipboardData(8, Some(h_mem_handle));
+                            }
+
+                            let _ = CloseClipboard();
+                            return;
+                        }
+                        if attempt < 4 {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                    }
+                }
             }
         }
     }
@@ -66,19 +111,23 @@ pub fn copy_to_clipboard(text: &str, hwnd: HWND) {
 pub fn get_target_window_for_paste() -> Option<HWND> {
     unsafe {
         let hwnd_foreground = GetForegroundWindow();
-        if hwnd_foreground.is_invalid() { return None; }
-        
+        if hwnd_foreground.is_invalid() {
+            return None;
+        }
+
         let thread_id = GetWindowThreadProcessId(hwnd_foreground, None);
-        if thread_id == 0 { return None; }
-        
+        if thread_id == 0 {
+            return None;
+        }
+
         let mut gui_info = GUITHREADINFO::default();
         gui_info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
-        
+
         if GetGUIThreadInfo(thread_id, &mut gui_info).is_ok() {
             // Check legacy caret
             let has_caret = !gui_info.hwndCaret.is_invalid();
             let blinking = (gui_info.flags & GUI_CARETBLINKING).0 != 0;
-            
+
             // Check keyboard focus (Fix for Chrome/Electron/WPF)
             let has_focus = !gui_info.hwndFocus.is_invalid();
 
@@ -86,7 +135,7 @@ pub fn get_target_window_for_paste() -> Option<HWND> {
                 return Some(hwnd_foreground);
             }
         }
-        
+
         None
     }
 }
@@ -97,7 +146,7 @@ pub fn force_focus_and_paste(hwnd_target: HWND) {
         if IsWindow(Some(hwnd_target)).as_bool() {
             let cur_thread = GetCurrentThreadId();
             let target_thread = GetWindowThreadProcessId(hwnd_target, None);
-            
+
             if cur_thread != target_thread {
                 let _ = AttachThreadInput(cur_thread, target_thread, true);
                 let _ = SetForegroundWindow(hwnd_target);
@@ -111,33 +160,33 @@ pub fn force_focus_and_paste(hwnd_target: HWND) {
         } else {
             return;
         }
-        
+
         // 2. Wait for focus to settle
         std::thread::sleep(std::time::Duration::from_millis(350));
 
         // 3. CLEANUP MODIFIERS SMARTLY
         // Only send KeyUp if the key is actually physically pressed to avoid side effects
         let release_if_pressed = |vk: u16| {
-             let state = GetAsyncKeyState(vk as i32);
-             if (state as u16 & 0x8000) != 0 {
-                 let input = INPUT {
+            let state = GetAsyncKeyState(vk as i32);
+            if (state as u16 & 0x8000) != 0 {
+                let input = INPUT {
                     r#type: INPUT_KEYBOARD,
                     Anonymous: INPUT_0 {
                         ki: KEYBDINPUT {
                             wVk: VIRTUAL_KEY(vk),
                             dwFlags: KEYEVENTF_KEYUP,
                             ..Default::default()
-                        }
-                    }
+                        },
+                    },
                 };
                 SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
-             }
+            }
         };
 
-        release_if_pressed(VK_MENU.0);    // Alt
-        release_if_pressed(VK_SHIFT.0);   // Shift
-        release_if_pressed(VK_LWIN.0);    // Win Left
-        release_if_pressed(VK_RWIN.0);    // Win Right
+        release_if_pressed(VK_MENU.0); // Alt
+        release_if_pressed(VK_SHIFT.0); // Shift
+        release_if_pressed(VK_LWIN.0); // Win Left
+        release_if_pressed(VK_RWIN.0); // Win Right
         release_if_pressed(VK_CONTROL.0); // Ctrl
 
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -152,15 +201,15 @@ pub fn force_focus_and_paste(hwnd_target: HWND) {
                         dwFlags: flags,
                         time: 0,
                         dwExtraInfo: 0,
-                        wScan: 0, 
-                    }
-                }
+                        wScan: 0,
+                    },
+                },
             };
             SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
         };
 
         // Ctrl Down
-        send_input_event(VK_CONTROL.0, KEYBD_EVENT_FLAGS(0)); 
+        send_input_event(VK_CONTROL.0, KEYBD_EVENT_FLAGS(0));
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         // V Down
@@ -194,7 +243,7 @@ pub fn get_error_message(error: &str, lang: &str, model_name: Option<&str>) -> S
         } else {
             "API"
         };
-        
+
         return match lang {
             "vi" => format!("Bạn chưa nhập {} API key!", provider),
             "ko" => format!("{} API 키를 입력하지 않았습니다!", provider),
@@ -203,8 +252,8 @@ pub fn get_error_message(error: &str, lang: &str, model_name: Option<&str>) -> S
             _ => format!("You haven't entered a {} API key!", provider),
         };
     }
-    
-    // Parse INVALID_API_KEY:provider format  
+
+    // Parse INVALID_API_KEY:provider format
     if error.starts_with("INVALID_API_KEY") {
         let provider = if error.contains(':') {
             let parts: Vec<&str> = error.split(':').collect();
@@ -221,7 +270,7 @@ pub fn get_error_message(error: &str, lang: &str, model_name: Option<&str>) -> S
         } else {
             "API"
         };
-        
+
         return match lang {
             "vi" => format!("{} API key không hợp lệ!", provider),
             "ko" => format!("{} API 키가 유효하지 않습니다!", provider),
@@ -230,14 +279,14 @@ pub fn get_error_message(error: &str, lang: &str, model_name: Option<&str>) -> S
             _ => format!("Invalid {} API key!", provider),
         };
     }
-    
+
     // Parse HTTP status codes from API error messages
     // Example: "Error: https://api.groq.com/openai/v1/chat/completions: status code 429"
     if let Some(status_code) = extract_http_status_code(error) {
         let provider = extract_provider_from_error(error);
         return format_http_error(status_code, &provider, model_name, lang);
     }
-    
+
     // Fallback for other errors
     match lang {
         "vi" => format!("Lỗi: {}", error),
@@ -256,11 +305,18 @@ fn extract_http_status_code(error: &str) -> Option<u16> {
         let code_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
         return code_str.parse().ok();
     }
-    
+
     // Also check for patterns like ": 429" at the end
     let trimmed = error.trim();
     if trimmed.len() >= 3 {
-        let last_3: String = trimmed.chars().rev().take(3).collect::<String>().chars().rev().collect();
+        let last_3: String = trimmed
+            .chars()
+            .rev()
+            .take(3)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
         if last_3.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(code) = last_3.parse::<u16>() {
                 if (400..=599).contains(&code) {
@@ -269,14 +325,14 @@ fn extract_http_status_code(error: &str) -> Option<u16> {
             }
         }
     }
-    
+
     // Check for "XXX" anywhere (common error codes)
     for code in [429, 400, 401, 403, 404, 500, 502, 503, 504] {
         if error.contains(&code.to_string()) {
             return Some(code);
         }
     }
-    
+
     None
 }
 
@@ -296,14 +352,19 @@ fn extract_provider_from_error(error: &str) -> String {
 }
 
 /// Formats HTTP error with localized message
-fn format_http_error(status_code: u16, provider: &str, model_name: Option<&str>, lang: &str) -> String {
+fn format_http_error(
+    status_code: u16,
+    provider: &str,
+    model_name: Option<&str>,
+    lang: &str,
+) -> String {
     // Format the model/provider info for display
     let model_info = if let Some(model) = model_name {
         format!("{} ({})", model, provider)
     } else {
         provider.to_string()
     };
-    
+
     match status_code {
         429 => match lang {
             "vi" => format!("Lỗi 429: Đã vượt quá hạn mức của mô hình {} (Rate Limit). Vui lòng chờ một lát rồi thử lại.", model_info),
@@ -377,4 +438,3 @@ fn format_http_error(status_code: u16, provider: &str, model_name: Option<&str>,
         },
     }
 }
-
