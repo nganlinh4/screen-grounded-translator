@@ -105,14 +105,22 @@ pub fn hide_favorite_bubble() {
 
 fn get_favorite_presets_html(presets: &[crate::config::Preset], lang: &str) -> String {
     let mut html_items = String::new();
-    let mut image_items = String::new();
-    let mut text_items = String::new();
-    let mut audio_items = String::new();
 
-    // SVG Icons
-    let icon_text = r#"<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>"#;
-    let icon_audio = r#"<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zM17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>"#;
-    let icon_image = r#"<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>"#;
+    // --- SVGs ---
+    // Image (Camera/Photo)
+    let icon_image = r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>"#;
+
+    // Text: Type (Serif T)
+    let icon_text_type = r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M9 5v2h1v10H9v2h6v-2h-1V7h1V5H9z M5 2v2h14V2H5z"/></svg>"#;
+    // Text: Select (Selection Action - Text Lines with highlight)
+    let icon_text_select = r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h10v2H3v-2z M15 15h7v4h-7v-4z" opacity="0.9"/></svg>"#;
+
+    // Audio: Mic
+    let icon_mic = r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zM17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>"#;
+    // Audio: Device (Speaker)
+    let icon_device = r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>"#;
+    // Audio: Realtime (Wave/Bolt)
+    let icon_realtime = r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>"#; // Bolt icon
 
     for (idx, preset) in presets.iter().enumerate() {
         if preset.is_favorite && !preset.is_upcoming && !preset.is_master {
@@ -122,46 +130,52 @@ fn get_favorite_presets_html(presets: &[crate::config::Preset], lang: &str) -> S
                 preset.name.clone()
             };
 
-            let icon = match preset.preset_type.as_str() {
-                "text" => icon_text,
-                "audio" => icon_audio,
-                _ => icon_image,
+            // Determine Icon and Color based on granular type
+            let (icon_svg, color_hex) = match preset.preset_type.as_str() {
+                "audio" => {
+                    if preset.audio_processing_mode == "realtime" {
+                        (icon_realtime, "#ff5555") // Realtime = Red/Pink
+                    } else if preset.audio_source == "device" {
+                        (icon_device, "#ffaa33") // Speaker = Orange
+                    } else {
+                        (icon_mic, "#ffaa33") // Mic = Orange
+                    }
+                }
+                "text" => {
+                    let c = "#55ff88"; // Green
+                    if preset.text_input_mode == "select" {
+                        (icon_text_select, c)
+                    } else {
+                        (icon_text_type, c)
+                    }
+                }
+                _ => {
+                    // Image
+                    (icon_image, "#44ccff") // Blue
+                }
             };
 
             let item = format!(
-                r#"<div class="preset-item" onclick="trigger({})"><span class="icon">{}</span><span class="name">{}</span></div>"#,
+                r#"<div class="preset-item" onclick="trigger({})"><span class="icon" style="color: {};">{}</span><span class="name">{}</span></div>"#,
                 idx,
-                icon,
+                color_hex,
+                icon_svg,
                 html_escape(&name)
             );
 
-            match preset.preset_type.as_str() {
-                "text" => text_items.push_str(&item),
-                "audio" => audio_items.push_str(&item),
-                _ => image_items.push_str(&item),
-            }
+            html_items.push_str(&item);
         }
-    }
-
-    // Build grouped HTML without headers if possible, or very subtle ones
-    if !image_items.is_empty() {
-        html_items.push_str(r#"<div class="group">"#);
-        html_items.push_str(&image_items);
-        html_items.push_str("</div>");
-    }
-    if !text_items.is_empty() {
-        html_items.push_str(r#"<div class="group">"#);
-        html_items.push_str(&text_items);
-        html_items.push_str("</div>");
-    }
-    if !audio_items.is_empty() {
-        html_items.push_str(r#"<div class="group">"#);
-        html_items.push_str(&audio_items);
-        html_items.push_str("</div>");
     }
 
     if html_items.is_empty() {
         html_items = r#"<div class="empty">No favorites</div>"#.to_string();
+    } else {
+        // Wrap in a single list container if needed, but simple items stack is fine with .list css
+        // Using "group" class might add margin we don't want if they are not separated.
+        // Let's just wrap all in one "group" or just return raw items since usage puts them in .list
+        // actually .list css has gap: 4px.
+        // We will wrap them in one group just to be safe if css expects it, but distinct icons make grouping less critical visually.
+        // Actually, let's just return the items. The styling `html_items.push_str(&item)` creates a flat list.
     }
 
     html_items
@@ -200,16 +214,8 @@ html, body {{
 }}
 
 .list {{
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}}
-
-.group {{
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-bottom: 4px;
+    display: block;
+    column-gap: 4px;
 }}
 
 .preset-item {{
@@ -225,6 +231,9 @@ html, body {{
     backdrop-filter: blur(12px);
     transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    margin-bottom: 4px;
+    break-inside: avoid;
+    page-break-inside: avoid;
 }}
 
 .preset-item:hover {{
@@ -246,6 +255,8 @@ html, body {{
 }}
 
 .name {{
+    flex: 1;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -260,6 +271,9 @@ html, body {{
     border-radius: 12px;
     border: 1px solid rgba(255, 255, 255, 0.1);
 }}
+
+.condense {{ letter-spacing: -0.5px; }}
+.condense-more {{ letter-spacing: -1px; }}
 </style>
 </head>
 <body>
@@ -267,6 +281,22 @@ html, body {{
     <div class="list">{favorites}</div>
 </div>
 <script>
+function fitText() {{
+    requestAnimationFrame(() => {{
+        document.querySelectorAll('.name').forEach(el => {{
+            el.className = 'name';
+            if (el.scrollWidth > el.clientWidth) {{
+                el.classList.add('condense');
+                if (el.scrollWidth > el.clientWidth) {{
+                    el.classList.remove('condense');
+                    el.classList.add('condense-more');
+                }}
+            }}
+        }});
+    }});
+}}
+window.onload = fitText;
+
 function startDrag(e) {{
     if (e.button === 0) window.ipc.postMessage('drag');
 }}
@@ -375,13 +405,13 @@ fn escape_js(text: &str) -> String {
         .replace('\r', "")
 }
 
-fn update_panel_content(html: &str) {
+fn update_panel_content(html: &str, cols: usize) {
     PANEL_WEBVIEW.with(|wv| {
         if let Some(webview) = wv.borrow().as_ref() {
             let escaped = escape_js(html);
             let script = format!(
-                "document.querySelector('.list').innerHTML = \"{}\";",
-                escaped
+                "document.querySelector('.list').style.columnCount = '{}'; document.querySelector('.list').innerHTML = \"{}\"; if(window.fitText) window.fitText();",
+                cols, escaped
             );
             let _ = webview.evaluate_script(&script);
         }
@@ -902,8 +932,8 @@ unsafe fn refresh_panel_layout_and_content(
     let _ = GetWindowRect(bubble_hwnd, &mut bubble_rect);
 
     // Adjusted height calculation for compactness
-    let height_per_item = 44;
-    let spacing_per_group = 12;
+    // INCREASED to 48px to prevent truncation, removed grouping logic to be safer
+    let height_per_item = 48;
 
     let favs: Vec<_> = presets
         .iter()
@@ -912,26 +942,32 @@ unsafe fn refresh_panel_layout_and_content(
 
     let fav_count = favs.len();
 
-    let has_image = favs
-        .iter()
-        .any(|p| p.preset_type != "text" && p.preset_type != "audio");
-    let has_text = favs.iter().any(|p| p.preset_type == "text");
-    let has_audio = favs.iter().any(|p| p.preset_type == "audio");
+    // Multi-column logic: > 15 items triggers columns
+    let num_cols = if fav_count > 15 {
+        (fav_count + 14) / 15 // equivalent to ceil(fav_count / 15)
+    } else {
+        1
+    };
 
-    let group_count = (if has_image { 1 } else { 0 })
-        + (if has_text { 1 } else { 0 })
-        + (if has_audio { 1 } else { 0 });
+    // Distribute items evenly among columns
+    let items_per_col = if fav_count > 0 {
+        (fav_count + num_cols - 1) / num_cols
+    } else {
+        0
+    };
 
-    // Calculate total height: items + spacing between groups + minimal padding
-    let panel_height =
-        (fav_count as i32 * height_per_item) + (group_count as i32 * spacing_per_group) + 16;
+    // Calculate dimensions
+    let panel_width = (PANEL_WIDTH as usize * num_cols) as i32;
+    // Calculate total height: items + minimal padding
+    let panel_height = (items_per_col as i32 * height_per_item) + 24;
     let panel_height = panel_height.max(50);
 
     let screen_w = GetSystemMetrics(SM_CXSCREEN);
 
+    // Calculate Position: Center vertically relative to bubble, place on Left or Right
     let (panel_x, panel_y) = if bubble_rect.left > screen_w / 2 {
         (
-            bubble_rect.left - PANEL_WIDTH - 8,
+            bubble_rect.left - panel_width - 8,
             bubble_rect.top - panel_height / 2 + BUBBLE_SIZE / 2,
         )
     } else {
@@ -948,7 +984,7 @@ unsafe fn refresh_panel_layout_and_content(
         None,
         panel_x,
         panel_y.max(10),
-        PANEL_WIDTH,
+        panel_width,
         panel_height,
         SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOCOPYBITS,
     );
@@ -959,7 +995,7 @@ unsafe fn refresh_panel_layout_and_content(
             let _ = webview.set_bounds(Rect {
                 position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
                 size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                    PANEL_WIDTH as u32,
+                    panel_width as u32,
                     panel_height as u32,
                 )),
             });
@@ -968,7 +1004,7 @@ unsafe fn refresh_panel_layout_and_content(
 
     // Update content LAST to ensure container is ready
     let favorites_html = get_favorite_presets_html(presets, lang);
-    update_panel_content(&favorites_html);
+    update_panel_content(&favorites_html, num_cols);
 }
 
 fn create_panel_window_internal(bubble_hwnd: HWND) {
@@ -1028,12 +1064,13 @@ fn move_panel_to_bubble(bubble_x: i32, bubble_y: i32) {
         let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
         let mut panel_rect = RECT::default();
         let _ = GetWindowRect(panel_hwnd, &mut panel_rect);
+        let panel_w = panel_rect.right - panel_rect.left;
         let panel_h = panel_rect.bottom - panel_rect.top;
 
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let (panel_x, panel_y) = if bubble_x > screen_w / 2 {
             (
-                bubble_x - PANEL_WIDTH - 8,
+                bubble_x - panel_w - 8,
                 bubble_y - panel_h / 2 + BUBBLE_SIZE / 2,
             )
         } else {
