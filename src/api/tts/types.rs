@@ -1,8 +1,3 @@
-use std::sync::atomic::AtomicU64;
-use std::sync::mpsc;
-
-pub static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-
 /// Model for TTS (same native audio model, configured for output only)
 pub const TTS_MODEL: &str = "gemini-2.5-flash-native-audio-preview-12-2025";
 
@@ -30,6 +25,6 @@ pub struct QueuedRequest {
 pub struct TtsRequest {
     pub _id: u64,
     pub text: String,
-    pub hwnd: isize, // Window handle to update state when audio starts
+    pub hwnd: isize,       // Window handle to update state when audio starts
     pub is_realtime: bool, // True if this is from realtime translation (uses REALTIME_TTS_SPEED)
 }

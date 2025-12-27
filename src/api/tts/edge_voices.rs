@@ -189,27 +189,3 @@ pub fn get_voices_for_language(lang_code: &str) -> Vec<EdgeVoice> {
         .cloned()
         .unwrap_or_default()
 }
-
-/// Get language display name for a language code
-/// Falls back to uppercase code if not found in cache
-pub fn get_language_name(lang_code: &str) -> String {
-    let cache = EDGE_VOICE_CACHE.lock().unwrap();
-
-    // Try to find the language name from any voice with this language code
-    for voice in &cache.voices {
-        let voice_lang = voice.locale.split('-').next().unwrap_or("").to_lowercase();
-        if voice_lang == lang_code.to_lowercase() {
-            if let Some(dash_pos) = voice.friendly_name.rfind(" - ") {
-                let lang_region = &voice.friendly_name[dash_pos + 3..];
-                if let Some(paren_pos) = lang_region.find(" (") {
-                    return lang_region[..paren_pos].to_string();
-                } else {
-                    return lang_region.to_string();
-                }
-            }
-        }
-    }
-
-    // Fallback to uppercase code
-    lang_code.to_uppercase()
-}

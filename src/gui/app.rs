@@ -70,12 +70,12 @@ pub struct SettingsApp {
     search_query: String,
     tray_icon: Option<TrayIcon>,
     _tray_menu: Menu,
-    tray_menu: Menu,                          // Store menu for lazy icon creation
-    tray_settings_item: MenuItem,             // Store for dynamic i18n update
-    tray_quit_item: MenuItem,                 // Store for dynamic i18n update
+
+    tray_settings_item: MenuItem, // Store for dynamic i18n update
+    tray_quit_item: MenuItem,     // Store for dynamic i18n update
     tray_favorite_bubble_item: CheckMenuItem, // Store for favorite bubble toggle
-    last_ui_language: String,                 // Track language to detect changes
-    tray_retry_timer: f64,                    // Timer for lazy tray icon creation
+    last_ui_language: String,     // Track language to detect changes
+    tray_retry_timer: f64,        // Timer for lazy tray icon creation
     event_rx: Receiver<UserEvent>,
     is_quitting: bool,
     run_at_startup: bool,
@@ -340,8 +340,7 @@ impl SettingsApp {
             app_state_ref: app_state,
             search_query: String::new(),
             tray_icon: None, // INITIALIZE AS NONE - will be created lazily in update()
-            _tray_menu: tray_menu.clone(),
-            tray_menu, // Store for lazy initialization
+            _tray_menu: tray_menu,
             tray_settings_item,
             tray_quit_item,
             tray_favorite_bubble_item,

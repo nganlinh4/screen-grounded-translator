@@ -3,7 +3,6 @@ use std::io::{Cursor, Read};
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant};
 use tungstenite::{client, Message};
-use url::Url;
 
 use super::manager::TtsManager;
 use super::types::AudioEvent;
@@ -12,10 +11,9 @@ use super::websocket::{
     connect_tts_websocket, is_turn_complete, parse_audio_data, send_tts_setup, send_tts_text,
 };
 use crate::api::client::UREQ_AGENT;
-use crate::config::{EdgeTtsSettings, TtsMethod};
+
 use crate::APP;
 use isolang::Language;
-use whatlang::{Lang, Script};
 
 /// Socket Worker thread - fetches audio data and pipes it to the player
 pub fn run_socket_worker(manager: Arc<TtsManager>) {

@@ -17,7 +17,6 @@ pub mod wsola;
 // Re-export public API for backward compatibility
 pub use instance::TTS_MANAGER;
 pub use manager::TtsManager;
-pub use types::TtsRequest;
 
 /// Initialize the TTS system - call this at app startup
 pub fn init_tts() {

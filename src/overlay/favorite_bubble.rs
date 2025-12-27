@@ -10,9 +10,7 @@ use std::sync::{
 };
 use windows::core::w;
 use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
-};
+
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -46,7 +44,7 @@ thread_local! {
 
 const BUBBLE_SIZE: i32 = 40;
 const PANEL_WIDTH: i32 = 220;
-const PANEL_MAX_HEIGHT: i32 = 350;
+
 const OPACITY_INACTIVE: u8 = 80; // ~31% opacity when not hovered
 const OPACITY_ACTIVE: u8 = 255; // 100% opacity when hovered/expanded
 
@@ -580,208 +578,6 @@ fn draw_bubble_pixels(pixels: &mut [u32], size: i32, _is_active: bool) {
     }
 }
 
-fn get_bubble_color(t: f32, is_active: bool) -> (u8, u8, u8) {
-    // Vibrant purple gradient
-    if is_active {
-        // Active: Bright vibrant purple
-        let r = (120.0 + 40.0 * t) as u8;
-        let g = (80.0 + 30.0 * t) as u8;
-        let b = (220.0 + 35.0 * (1.0 - t)) as u8;
-        (r, g, b)
-    } else {
-        // Inactive: Slightly darker but still visible purple
-        let r = (100.0 + 30.0 * t) as u8;
-        let g = (70.0 + 20.0 * t) as u8;
-        let b = (180.0 + 30.0 * (1.0 - t)) as u8;
-        (r, g, b)
-    }
-}
-
-fn draw_border_ring(pixels: &mut [u32], size: i32, center: f32, radius: f32, is_active: bool) {
-    let border_inner = radius - 2.5;
-    let border_outer = radius;
-
-    for y in 0..size {
-        for x in 0..size {
-            let idx = (y * size + x) as usize;
-            let fx = x as f32 + 0.5;
-            let fy = y as f32 + 0.5;
-
-            let dx = fx - center;
-            let dy = fy - center;
-            let dist = (dx * dx + dy * dy).sqrt();
-
-            // Check if in border region
-            if dist > border_inner && dist < border_outer + 1.0 {
-                // Border color - bright glow
-                let glow_t = 1.0
-                    - ((dist - border_inner) / (border_outer - border_inner + 1.0)).clamp(0.0, 1.0);
-                let alpha = (glow_t * 200.0) as u32;
-
-                if alpha > 0 {
-                    let (br, bg, bb) = if is_active {
-                        (200u8, 180u8, 255u8) // Bright glow
-                    } else {
-                        (160u8, 140u8, 220u8) // Subtle glow
-                    };
-
-                    // Blend with existing pixel
-                    let existing = pixels[idx];
-                    let ea = (existing >> 24) & 0xFF;
-                    let er = (existing >> 16) & 0xFF;
-                    let eg = (existing >> 8) & 0xFF;
-                    let eb = existing & 0xFF;
-
-                    let blend = alpha as f32 / 255.0;
-                    let inv = 1.0 - blend;
-
-                    let nr = (br as f32 * blend + er as f32 * inv) as u32;
-                    let ng = (bg as f32 * blend + eg as f32 * inv) as u32;
-                    let nb = (bb as f32 * blend + eb as f32 * inv) as u32;
-                    let na = ea.max(alpha);
-
-                    pixels[idx] = (na << 24) | (nr << 16) | (ng << 8) | nb;
-                }
-            }
-        }
-    }
-}
-
-fn draw_star_pixels(pixels: &mut [u32], size: i32, cx: i32, cy: i32, star_size: i32) {
-    use std::f32::consts::PI;
-
-    let outer_r = star_size as f32;
-    let inner_r = star_size as f32 * 0.4;
-
-    // Star polygon vertices
-    let mut verts: [(f32, f32); 10] = [(0.0, 0.0); 10];
-    for i in 0..10 {
-        let angle = (i as f32 * PI / 5.0) - PI / 2.0;
-        let r = if i % 2 == 0 { outer_r } else { inner_r };
-        verts[i] = (cx as f32 + r * angle.cos(), cy as f32 + r * angle.sin());
-    }
-
-    // Draw star using scanline fill with anti-aliasing
-    let y_min = (cy - star_size - 2).max(0);
-    let y_max = (cy + star_size + 2).min(size);
-
-    for y in y_min..y_max {
-        for x in (cx - star_size - 2).max(0)..(cx + star_size + 2).min(size) {
-            let fx = x as f32 + 0.5;
-            let fy = y as f32 + 0.5;
-
-            // Point-in-polygon test with anti-aliasing
-            let dist = point_to_star_distance(fx, fy, &verts);
-
-            if dist < 0.0 {
-                // Inside star
-                let idx = (y * size + x) as usize;
-                let alpha = (-dist).min(1.5) / 1.5;
-
-                // Gold color with slight gradient
-                let t = ((fy - (cy - star_size) as f32) / (star_size as f32 * 2.0)).clamp(0.0, 1.0);
-                let r = (255.0 - 20.0 * t) as u8;
-                let g = (215.0 - 30.0 * t) as u8;
-                let b = (0.0 + 50.0 * t) as u8;
-
-                let a = (alpha * 255.0) as u32;
-                let r_pm = (r as u32 * a / 255);
-                let g_pm = (g as u32 * a / 255);
-                let b_pm = (b as u32 * a / 255);
-
-                // Blend with existing
-                let existing = pixels[idx];
-                let ea = (existing >> 24) & 0xFF;
-
-                if a >= ea {
-                    pixels[idx] = (a << 24) | (r_pm << 16) | (g_pm << 8) | b_pm;
-                }
-            } else if dist < 1.5 {
-                // Edge of star - anti-alias
-                let idx = (y * size + x) as usize;
-                let alpha = (1.0 - dist / 1.5).clamp(0.0, 1.0);
-
-                let r = 255u8;
-                let g = 200u8;
-                let b = 50u8;
-
-                let a = (alpha * 255.0) as u32;
-
-                // Blend with existing
-                let existing = pixels[idx];
-                let ea = (existing >> 24) & 0xFF;
-                let er = (existing >> 16) & 0xFF;
-                let eg = (existing >> 8) & 0xFF;
-                let eb = existing & 0xFF;
-
-                let blend = alpha;
-                let inv = 1.0 - blend;
-
-                let nr = (r as f32 * blend + er as f32 * inv) as u32;
-                let ng = (g as f32 * blend + eg as f32 * inv) as u32;
-                let nb = (b as f32 * blend + eb as f32 * inv) as u32;
-                let na = ea.max(a);
-
-                pixels[idx] = (na << 24) | (nr << 16) | (ng << 8) | nb;
-            }
-        }
-    }
-}
-
-fn point_to_star_distance(px: f32, py: f32, verts: &[(f32, f32); 10]) -> f32 {
-    // Simplified - check if inside using winding number and estimate distance
-    let mut winding = 0i32;
-    let mut min_dist = f32::MAX;
-
-    for i in 0..10 {
-        let (x1, y1) = verts[i];
-        let (x2, y2) = verts[(i + 1) % 10];
-
-        // Winding number contribution
-        if y1 <= py {
-            if y2 > py {
-                if ((x2 - x1) * (py - y1) - (px - x1) * (y2 - y1)) > 0.0 {
-                    winding += 1;
-                }
-            }
-        } else {
-            if y2 <= py {
-                if ((x2 - x1) * (py - y1) - (px - x1) * (y2 - y1)) < 0.0 {
-                    winding -= 1;
-                }
-            }
-        }
-
-        // Distance to edge
-        let edge_dist = point_to_line_dist(px, py, x1, y1, x2, y2);
-        min_dist = min_dist.min(edge_dist);
-    }
-
-    if winding != 0 {
-        -min_dist // Inside
-    } else {
-        min_dist // Outside
-    }
-}
-
-fn point_to_line_dist(px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len_sq = dx * dx + dy * dy;
-
-    if len_sq < 0.0001 {
-        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
-    }
-
-    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-    let t = t.clamp(0.0, 1.0);
-
-    let closest_x = x1 + t * dx;
-    let closest_y = y1 + t * dy;
-
-    ((px - closest_x).powi(2) + (py - closest_y).powi(2)).sqrt()
-}
-
 unsafe extern "system" fn bubble_wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -1205,7 +1001,7 @@ unsafe fn refresh_panel_layout_and_content(
     update_panel_content(&favorites_html, num_cols);
 }
 
-fn create_panel_window_internal(bubble_hwnd: HWND) {
+fn create_panel_window_internal(_bubble_hwnd: HWND) {
     unsafe {
         let instance = GetModuleHandleW(None).unwrap_or_default();
         let class_name = w!("SGTFavoritePanel");

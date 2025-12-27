@@ -1,9 +1,6 @@
-pub mod types;
-pub mod window;
 pub mod chain;
 pub mod pipeline;
+pub mod types;
+pub mod window;
 
-pub use types::*;
-pub use window::*;
-pub use chain::*;
 pub use pipeline::*;
