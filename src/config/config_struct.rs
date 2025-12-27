@@ -4,12 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use super::preset::Preset;
 use super::types::{
-    ThemeMode, TtsLanguageCondition,
-    default_theme_mode, default_history_limit, default_graphics_mode,
-    default_true, default_realtime_translation_model, default_realtime_font_size,
-    default_realtime_window_size, default_realtime_target_language,
-    default_ollama_base_url, default_tts_voice, default_tts_speed,
-    default_tts_language_conditions,
+    default_graphics_mode, default_history_limit, default_ollama_base_url,
+    default_realtime_font_size, default_realtime_target_language,
+    default_realtime_translation_model, default_realtime_window_size, default_theme_mode,
+    default_true, default_tts_language_conditions, default_tts_method, default_tts_speed,
+    default_tts_voice, ThemeMode, TtsLanguageCondition, TtsMethod,
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -40,7 +39,7 @@ pub struct Config {
     /// Model for realtime translation: "groq-llama" or "google-gemma"
     #[serde(default = "default_realtime_translation_model")]
     pub realtime_translation_model: String,
-    
+
     // --- Realtime Overlay Persistence ---
     #[serde(default = "default_realtime_font_size")]
     pub realtime_font_size: u32,
@@ -52,7 +51,7 @@ pub struct Config {
     pub realtime_audio_source: String, // "mic" or "device"
     #[serde(default = "default_realtime_target_language")]
     pub realtime_target_language: String,
-    
+
     // --- Ollama Configuration ---
     #[serde(default)]
     pub use_ollama: bool,
@@ -64,6 +63,8 @@ pub struct Config {
     pub ollama_text_model: String,
 
     // --- TTS Settings ---
+    #[serde(default = "default_tts_method")]
+    pub tts_method: TtsMethod,
     #[serde(default = "default_tts_voice")]
     pub tts_voice: String,
     #[serde(default = "default_tts_speed")]
@@ -72,7 +73,7 @@ pub struct Config {
     pub tts_output_device: String, // Device ID
     #[serde(default = "default_tts_language_conditions")]
     pub tts_language_conditions: Vec<TtsLanguageCondition>, // Language-specific TTS conditions
-    
+
     // --- Favorite Bubble Settings ---
     #[serde(default)]
     pub show_favorite_bubble: bool,

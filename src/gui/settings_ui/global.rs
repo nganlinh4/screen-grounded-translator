@@ -1,5 +1,5 @@
 use eframe::egui;
-use crate::config::Config;
+use crate::config::{Config, TtsMethod};
 use crate::gui::locale::LocaleText;
 use crate::gui::icons::{Icon, icon_button};
 use crate::model_config::{get_all_models, get_all_models_with_ollama};
@@ -42,6 +42,7 @@ pub fn render_global_settings(
     };
 
     ui.add_space(5.0);
+    
     
     // === API KEYS CARD ===
     egui::Frame::new()
@@ -183,6 +184,7 @@ pub fn render_global_settings(
     if render_tts_settings_modal(ui, config, text, show_tts_modal) {
         changed = true;
     }
+    
 
     ui.add_space(10.0);
 
@@ -562,208 +564,248 @@ fn render_tts_settings_modal(
             ui.separator();
             ui.add_space(8.0);
             
-            // Speed and Tone & Style side by side
-            ui.columns(2, |columns| {
-                // Left column: Speed
-                columns[0].label(egui::RichText::new(text.tts_speed_label).strong());
-                columns[0].horizontal(|ui| {
-                    if ui.radio_value(&mut config.tts_speed, "Slow".to_string(), text.tts_speed_slow).clicked() { changed = true; }
-                    if ui.radio_value(&mut config.tts_speed, "Normal".to_string(), text.tts_speed_normal).clicked() { changed = true; }
-                    if ui.radio_value(&mut config.tts_speed, "Fast".to_string(), text.tts_speed_fast).clicked() { changed = true; }
-                });
-                
-                // Right column: Language-Specific Instructions
-                columns[1].label(egui::RichText::new(text.tts_instructions_label).strong());
-                
-                // Supported languages from whatlang (70 languages) with ISO 639-3 codes
-                let supported_languages = [
-                    ("afr", "Afrikaans"), ("ara", "Arabic"), ("aze", "Azerbaijani"),
-                    ("bel", "Belarusian"), ("ben", "Bengali"), ("bul", "Bulgarian"),
-                    ("cat", "Catalan"), ("ces", "Czech"), ("cmn", "Mandarin Chinese"),
-                    ("dan", "Danish"), ("deu", "German"), ("ell", "Greek"),
-                    ("eng", "English"), ("epo", "Esperanto"), ("est", "Estonian"),
-                    ("eus", "Basque"), ("fin", "Finnish"), ("fra", "French"),
-                    ("guj", "Gujarati"), ("heb", "Hebrew"), ("hin", "Hindi"),
-                    ("hrv", "Croatian"), ("hun", "Hungarian"), ("ind", "Indonesian"),
-                    ("ita", "Italian"), ("jpn", "Japanese"), ("kan", "Kannada"),
-                    ("kat", "Georgian"), ("kor", "Korean"), ("lat", "Latin"),
-                    ("lav", "Latvian"), ("lit", "Lithuanian"), ("mal", "Malayalam"),
-                    ("mar", "Marathi"), ("mkd", "Macedonian"), ("mya", "Burmese"),
-                    ("nep", "Nepali"), ("nld", "Dutch"), ("nno", "Norwegian Nynorsk"),
-                    ("nob", "Norwegian Bokmål"), ("ori", "Oriya"), ("pan", "Punjabi"),
-                    ("pes", "Persian"), ("pol", "Polish"), ("por", "Portuguese"),
-                    ("ron", "Romanian"), ("rus", "Russian"), ("sin", "Sinhala"),
-                    ("slk", "Slovak"), ("slv", "Slovenian"), ("som", "Somali"),
-                    ("spa", "Spanish"), ("sqi", "Albanian"), ("srp", "Serbian"),
-                    ("swe", "Swedish"), ("tam", "Tamil"), ("tel", "Telugu"),
-                    ("tgl", "Tagalog"), ("tha", "Thai"), ("tur", "Turkish"),
-                    ("ukr", "Ukrainian"), ("urd", "Urdu"), ("uzb", "Uzbek"),
-                    ("vie", "Vietnamese"), ("yid", "Yiddish"), ("zho", "Chinese"),
-                ];
-                
-                // Show existing conditions
-                let mut to_remove: Option<usize> = None;
-                for (idx, condition) in config.tts_language_conditions.iter_mut().enumerate() {
-                    columns[1].horizontal(|ui| {
-                        // Language dropdown (read-only display for now)
-                        let display_name = supported_languages.iter()
-                            .find(|(code, _)| code.eq_ignore_ascii_case(&condition.language_code))
-                            .map(|(_, name)| *name)
-                            .unwrap_or(&condition.language_name);
-                        
-                        ui.label(egui::RichText::new(display_name).strong().color(egui::Color32::from_rgb(100, 180, 100)));
-                        ui.label("→");
-                        
-                        // Instruction input
-                        if ui.add(
-                            egui::TextEdit::singleline(&mut condition.instruction)
-                                .desired_width(180.0)
-                                .hint_text(text.tts_instructions_hint)
-                        ).changed() {
-                            changed = true;
-                        }
-                        
-                        // Remove button - use Icon::Close for proper rendering
-                        if icon_button(ui, Icon::Close).on_hover_text("Remove").clicked() {
-                            to_remove = Some(idx);
-                        }
-                    });
-                }
-                
-                // Remove condition if needed
-                if let Some(idx) = to_remove {
-                    config.tts_language_conditions.remove(idx);
+            // === TTS METHOD SELECTION ===
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(text.tts_method_label).strong());
+                if ui.selectable_label(config.tts_method == TtsMethod::GeminiLive, text.tts_method_standard).clicked() {
+                    config.tts_method = TtsMethod::GeminiLive;
                     changed = true;
                 }
-                
-                // Add condition dropdown - selecting immediately adds the condition
-                columns[1].horizontal(|ui| {
-                    // Get languages that are not yet used
-                    let used_codes: Vec<_> = config.tts_language_conditions.iter()
-                        .map(|c| c.language_code.as_str())
-                        .collect();
-                    let available: Vec<_> = supported_languages.iter()
-                        .filter(|(code, _)| !used_codes.contains(code))
-                        .collect();
-                    
-                    if !available.is_empty() {
-                        // Dropdown that immediately adds selected language
-                        egui::ComboBox::from_id_salt("tts_add_condition")
-                            .selected_text(text.tts_add_condition)
-                            .width(140.0)
-                            .show_ui(ui, |ui| {
-                                for (code, name) in &available {
-                                    if ui.selectable_label(false, *name).clicked() {
-                                        config.tts_language_conditions.push(crate::config::TtsLanguageCondition {
-                                            language_code: code.to_string(),
-                                            language_name: name.to_string(),
-                                            instruction: String::new(),
-                                        });
-                                        changed = true;
-                                    }
-                                }
-                            });
+                if ui.selectable_label(config.tts_method == TtsMethod::GoogleTranslate, text.tts_method_fast).clicked() {
+                    config.tts_method = TtsMethod::GoogleTranslate;
+                    if config.tts_speed == "Fast" {
+                        config.tts_speed = "Normal".to_string();
                     }
-                });
+                    changed = true;
+                }
             });
-            
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(10.0);
             
-            // Voice selection - 4 columns layout to save vertical space
-            ui.columns(4, |columns| {
-                use std::sync::atomic::{AtomicUsize, Ordering};
-                use std::time::{SystemTime, UNIX_EPOCH};
-                use std::collections::hash_map::RandomState;
-                use std::hash::{BuildHasher, Hasher};
-                
-                // Shared static to ensure randomness across all columns and no repeats globally
-                static LAST_PREVIEW_IDX: AtomicUsize = AtomicUsize::new(9999);
-                
-                // Helper to render a voice item
-                let render_voice = |ui: &mut egui::Ui, name: &str, config: &mut Config, text: &LocaleText, changed: &mut bool| {
-                    ui.horizontal(|ui| {
-                        let is_selected = config.tts_voice == name;
-                        if ui.radio(is_selected, "").clicked() {
-                            config.tts_voice = name.to_string();
-                            *changed = true;
-                        }
-                        if ui.button("🔊").on_hover_text("Preview").clicked() {
-                            config.tts_voice = name.to_string();
-                            *changed = true;
-                            
-                            if !text.tts_preview_texts.is_empty() {
-                                let s = RandomState::new();
-                                let mut hasher = s.build_hasher();
-                                hasher.write_usize(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos() as usize);
-                                let rand_val = hasher.finish();
-                                let len = text.tts_preview_texts.len();
-                                let mut idx = (rand_val as usize) % len;
-                                
-                                let last = LAST_PREVIEW_IDX.load(Ordering::Relaxed);
-                                if idx == last {
-                                    idx = (idx + 1) % len;
-                                }
-                                LAST_PREVIEW_IDX.store(idx, Ordering::Relaxed);
-                                
-                                let preview_text = text.tts_preview_texts[idx].replace("{}", name);
-                                crate::api::tts::TTS_MANAGER.speak_interrupt(&preview_text, 0);
-                            } else {
-                                let preview_text = format!("Hello, I am {}. This is a voice preview.", name);
-                                crate::api::tts::TTS_MANAGER.speak_interrupt(&preview_text, 0);
-                            }
-                        }
-                        ui.label(egui::RichText::new(name).strong());
+            // Speed and Tone & Style side by side
+            if config.tts_method == TtsMethod::GeminiLive {
+                ui.columns(2, |columns| {
+                    // Left column: Speed
+                    columns[0].label(egui::RichText::new(text.tts_speed_label).strong());
+                    columns[0].horizontal(|ui| {
+                        if ui.radio_value(&mut config.tts_speed, "Slow".to_string(), text.tts_speed_slow).clicked() { changed = true; }
+                        if ui.radio_value(&mut config.tts_speed, "Normal".to_string(), text.tts_speed_normal).clicked() { changed = true; }
+                        if ui.radio_value(&mut config.tts_speed, "Fast".to_string(), text.tts_speed_fast).clicked() { changed = true; }
                     });
-                };
+                    
+                    // Right column: Language-Specific Instructions
+                    columns[1].label(egui::RichText::new(text.tts_instructions_label).strong());
+                    
+                    // Supported languages from whatlang (70 languages) with ISO 639-3 codes
+                    let supported_languages = [
+                        ("afr", "Afrikaans"), ("ara", "Arabic"), ("aze", "Azerbaijani"),
+                        ("bel", "Belarusian"), ("ben", "Bengali"), ("bul", "Bulgarian"),
+                        ("cat", "Catalan"), ("ces", "Czech"), ("cmn", "Mandarin Chinese"),
+                        ("dan", "Danish"), ("deu", "German"), ("ell", "Greek"),
+                        ("eng", "English"), ("epo", "Esperanto"), ("est", "Estonian"),
+                        ("eus", "Basque"), ("fin", "Finnish"), ("fra", "French"),
+                        ("guj", "Gujarati"), ("heb", "Hebrew"), ("hin", "Hindi"),
+                        ("hrv", "Croatian"), ("hun", "Hungarian"), ("ind", "Indonesian"),
+                        ("ita", "Italian"), ("jpn", "Japanese"), ("kan", "Kannada"),
+                        ("kat", "Georgian"), ("kor", "Korean"), ("lat", "Latin"),
+                        ("lav", "Latvian"), ("lit", "Lithuanian"), ("mal", "Malayalam"),
+                        ("mar", "Marathi"), ("mkd", "Macedonian"), ("mya", "Burmese"),
+                        ("nep", "Nepali"), ("nld", "Dutch"), ("nno", "Norwegian Nynorsk"),
+                        ("nob", "Norwegian Bokmål"), ("ori", "Oriya"), ("pan", "Punjabi"),
+                        ("pes", "Persian"), ("pol", "Polish"), ("por", "Portuguese"),
+                        ("ron", "Romanian"), ("rus", "Russian"), ("sin", "Sinhala"),
+                        ("slk", "Slovak"), ("slv", "Slovenian"), ("som", "Somali"),
+                        ("spa", "Spanish"), ("sqi", "Albanian"), ("srp", "Serbian"),
+                        ("swe", "Swedish"), ("tam", "Tamil"), ("tel", "Telugu"),
+                        ("tgl", "Tagalog"), ("tha", "Thai"), ("tur", "Turkish"),
+                        ("ukr", "Ukrainian"), ("urd", "Urdu"), ("uzb", "Uzbek"),
+                        ("vie", "Vietnamese"), ("yid", "Yiddish"), ("zho", "Chinese"),
+                    ];
+                    
+                    // Show existing conditions
+                    let mut to_remove: Option<usize> = None;
+                    for (idx, condition) in config.tts_language_conditions.iter_mut().enumerate() {
+                        columns[1].horizontal(|ui| {
+                            // Language dropdown (read-only display for now)
+                            let display_name = supported_languages.iter()
+                                .find(|(code, _)| code.eq_ignore_ascii_case(&condition.language_code))
+                                .map(|(_, name)| *name)
+                                .unwrap_or(&condition.language_name);
+                            
+                            ui.label(egui::RichText::new(display_name).strong().color(egui::Color32::from_rgb(100, 180, 100)));
+                            ui.label("→");
+                            
+                            // Instruction input
+                            if ui.add(
+                                egui::TextEdit::singleline(&mut condition.instruction)
+                                    .desired_width(180.0)
+                                    .hint_text(text.tts_instructions_hint)
+                            ).changed() {
+                                changed = true;
+                            }
+                            
+                            // Remove button - use Icon::Close for proper rendering
+                            if icon_button(ui, Icon::Close).on_hover_text("Remove").clicked() {
+                                to_remove = Some(idx);
+                            }
+                        });
+                    }
+                    
+                    // Remove condition if needed
+                    if let Some(idx) = to_remove {
+                        config.tts_language_conditions.remove(idx);
+                        changed = true;
+                    }
+                    
+                    // Add condition dropdown - selecting immediately adds the condition
+                    columns[1].horizontal(|ui| {
+                        // Get languages that are not yet used
+                        let used_codes: Vec<_> = config.tts_language_conditions.iter()
+                            .map(|c| c.language_code.as_str())
+                            .collect();
+                        let available: Vec<_> = supported_languages.iter()
+                            .filter(|(code, _)| !used_codes.contains(code))
+                            .collect();
+                        
+                        if !available.is_empty() {
+                            // Dropdown that immediately adds selected language
+                            egui::ComboBox::from_id_salt("tts_add_condition")
+                                .selected_text(text.tts_add_condition)
+                                .width(140.0)
+                                .show_ui(ui, |ui| {
+                                    for (code, name) in &available {
+                                        if ui.selectable_label(false, *name).clicked() {
+                                            config.tts_language_conditions.push(crate::config::TtsLanguageCondition {
+                                                language_code: code.to_string(),
+                                                language_name: name.to_string(),
+                                                instruction: String::new(),
+                                            });
+                                            changed = true;
+                                        }
+                                    }
+                                });
+                        }
+                    });
+                });
+                
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(10.0);
+                
+                // Voice selection - 4 columns layout to save vertical space
+                ui.columns(4, |columns| {
+                    use std::sync::atomic::{AtomicUsize, Ordering};
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    use std::collections::hash_map::RandomState;
+                    use std::hash::{BuildHasher, Hasher};
+                    
+                    // Shared static to ensure randomness across all columns and no repeats globally
+                    static LAST_PREVIEW_IDX: AtomicUsize = AtomicUsize::new(9999);
+                    
+                    // Helper to render a voice item
+                    let render_voice = |ui: &mut egui::Ui, name: &str, config: &mut Config, text: &LocaleText, changed: &mut bool| {
+                        ui.horizontal(|ui| {
+                            let is_selected = config.tts_voice == name;
+                            if ui.radio(is_selected, "").clicked() {
+                                config.tts_voice = name.to_string();
+                                *changed = true;
+                            }
+                            if ui.button("🔊").on_hover_text("Preview").clicked() {
+                                config.tts_voice = name.to_string();
+                                *changed = true;
+                                
+                                if !text.tts_preview_texts.is_empty() {
+                                    let s = RandomState::new();
+                                    let mut hasher = s.build_hasher();
+                                    hasher.write_usize(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos() as usize);
+                                    let rand_val = hasher.finish();
+                                    let len = text.tts_preview_texts.len();
+                                    let mut idx = (rand_val as usize) % len;
+                                    
+                                    let last = LAST_PREVIEW_IDX.load(Ordering::Relaxed);
+                                    if idx == last {
+                                        idx = (idx + 1) % len;
+                                    }
+                                    LAST_PREVIEW_IDX.store(idx, Ordering::Relaxed);
+                                    
+                                    let preview_text = text.tts_preview_texts[idx].replace("{}", name);
+                                    crate::api::tts::TTS_MANAGER.speak_interrupt(&preview_text, 0);
+                                } else {
+                                    let preview_text = format!("Hello, I am {}. This is a voice preview.", name);
+                                    crate::api::tts::TTS_MANAGER.speak_interrupt(&preview_text, 0);
+                                }
+                            }
+                            ui.label(egui::RichText::new(name).strong());
+                        });
+                    };
 
-                // Split male voices into 2 columns
-                let male_mid = (male_voices.len() + 1) / 2;
-                let male_col1: Vec<_> = male_voices.iter().take(male_mid).collect();
-                let male_col2: Vec<_> = male_voices.iter().skip(male_mid).collect();
-                
-                // Split female voices into 2 columns
-                let female_mid = (female_voices.len() + 1) / 2;
-                let female_col1: Vec<_> = female_voices.iter().take(female_mid).collect();
-                let female_col2: Vec<_> = female_voices.iter().skip(female_mid).collect();
+                    // Split male voices into 2 columns
+                    let male_mid = (male_voices.len() + 1) / 2;
+                    let male_col1: Vec<_> = male_voices.iter().take(male_mid).collect();
+                    let male_col2: Vec<_> = male_voices.iter().skip(male_mid).collect();
+                    
+                    // Split female voices into 2 columns
+                    let female_mid = (female_voices.len() + 1) / 2;
+                    let female_col1: Vec<_> = female_voices.iter().take(female_mid).collect();
+                    let female_col2: Vec<_> = female_voices.iter().skip(female_mid).collect();
 
-                // Column 0: Male (first half)
-                columns[0].vertical(|ui| {
-                    ui.label(egui::RichText::new(text.tts_male).strong().underline());
-                    ui.add_space(4.0);
-                    for (name, _) in male_col1 {
-                        render_voice(ui, name, config, text, &mut changed);
-                    }
+                    // Column 0: Male (first half)
+                    columns[0].vertical(|ui| {
+                        ui.label(egui::RichText::new(text.tts_male).strong().underline());
+                        ui.add_space(4.0);
+                        for (name, _) in male_col1 {
+                            render_voice(ui, name, config, text, &mut changed);
+                        }
+                    });
+                    
+                    // Column 1: Male (second half)
+                    columns[1].vertical(|ui| {
+                        ui.label(egui::RichText::new("").strong()); // Empty header for alignment
+                        ui.add_space(4.0);
+                        for (name, _) in male_col2 {
+                            render_voice(ui, name, config, text, &mut changed);
+                        }
+                    });
+                    
+                    // Column 2: Female (first half)
+                    columns[2].vertical(|ui| {
+                        ui.label(egui::RichText::new(text.tts_female).strong().underline());
+                        ui.add_space(4.0);
+                        for (name, _) in female_col1 {
+                            render_voice(ui, name, config, text, &mut changed);
+                        }
+                    });
+                    
+                    // Column 3: Female (second half)
+                    columns[3].vertical(|ui| {
+                        ui.label(egui::RichText::new("").strong()); // Empty header for alignment
+                        ui.add_space(4.0);
+                        for (name, _) in female_col2 {
+                            render_voice(ui, name, config, text, &mut changed);
+                        }
+                    });
                 });
-                
-                // Column 1: Male (second half)
-                columns[1].vertical(|ui| {
-                    ui.label(egui::RichText::new("").strong()); // Empty header for alignment
-                    ui.add_space(4.0);
-                    for (name, _) in male_col2 {
-                        render_voice(ui, name, config, text, &mut changed);
-                    }
+            } else {
+                // Simplified UI for Google Translate
+                ui.vertical_centered(|ui| {
+                    ui.add_space(20.0);
+                    ui.label(egui::RichText::new("Google Translate TTS (Fast Mode)").size(18.0).strong());
+                    ui.add_space(10.0);
+                    ui.label("This method is faster and doesn't require an API key.");
+                    ui.label("It uses the built-in system language or detected language automatically.");
+                    ui.add_space(20.0);
+                    
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(text.tts_speed_label).strong());
+                        if ui.radio_value(&mut config.tts_speed, "Slow".to_string(), text.tts_speed_slow).clicked() { changed = true; }
+                        if ui.radio_value(&mut config.tts_speed, "Normal".to_string(), text.tts_speed_normal).clicked() { changed = true; }
+                    });
+                    
+                    ui.add_space(20.0);
+                    ui.label("Note: Voice and language-specific instructions are disabled in Fast mode.");
                 });
-                
-                // Column 2: Female (first half)
-                columns[2].vertical(|ui| {
-                    ui.label(egui::RichText::new(text.tts_female).strong().underline());
-                    ui.add_space(4.0);
-                    for (name, _) in female_col1 {
-                        render_voice(ui, name, config, text, &mut changed);
-                    }
-                });
-                
-                // Column 3: Female (second half)
-                columns[3].vertical(|ui| {
-                    ui.label(egui::RichText::new("").strong()); // Empty header for alignment
-                    ui.add_space(4.0);
-                    for (name, _) in female_col2 {
-                        render_voice(ui, name, config, text, &mut changed);
-                    }
-                });
-            });
+            }
         });
         
     changed

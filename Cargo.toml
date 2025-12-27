@@ -47,6 +47,7 @@ tray-icon = "0.19.1"
 cpal = "0.15"
 hound = "3.5"
 wasapi = "0.22"
+minimp3 = "0.5"
 
 # Markdown Rendering
 pulldown-cmark = "0.10"

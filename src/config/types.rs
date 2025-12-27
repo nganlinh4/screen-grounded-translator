@@ -14,10 +14,17 @@ pub enum ThemeMode {
     Light,
 }
 
+// --- TTS METHOD ENUM ---
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum TtsMethod {
+    GeminiLive,      // Chuẩn (Gemini Live)
+    GoogleTranslate, // Nhanh (Google Translate)
+}
+
 pub fn get_system_ui_language() -> String {
     let sys_locale = sys_locale::get_locale().unwrap_or_default();
     let lang_code = sys_locale.split('-').next().unwrap_or("en").to_lowercase();
-    
+
     match lang_code.as_str() {
         "vi" => "vi".to_string(),
         "ko" => "ko".to_string(),
@@ -47,7 +54,7 @@ pub struct ProcessingBlock {
     pub streaming_enabled: bool,
     #[serde(default = "default_render_mode")]
     pub render_mode: String, // "stream", "plain", "markdown"
-    
+
     // UI Behavior
     #[serde(default = "default_true")]
     pub show_overlay: bool,
@@ -57,9 +64,21 @@ pub struct ProcessingBlock {
     pub auto_speak: bool,
 }
 
-pub fn default_true() -> bool { true }
-pub fn default_render_mode() -> String { "stream".to_string() }
-pub fn generate_id() -> String { format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()) }
+pub fn default_true() -> bool {
+    true
+}
+pub fn default_render_mode() -> String {
+    "stream".to_string()
+}
+pub fn generate_id() -> String {
+    format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )
+}
 
 impl Default for ProcessingBlock {
     fn default() -> Self {
@@ -92,29 +111,62 @@ pub struct TtsLanguageCondition {
 }
 
 pub fn default_tts_language_conditions() -> Vec<TtsLanguageCondition> {
-    vec![
-        TtsLanguageCondition {
-            language_code: "vie".to_string(),
-            language_name: "Vietnamese".to_string(),
-            instruction: "Speak in a \"giọng miền Tây\" accent.".to_string(),
-        }
-    ]
+    vec![TtsLanguageCondition {
+        language_code: "vie".to_string(),
+        language_name: "Vietnamese".to_string(),
+        instruction: "Speak in a \"giọng miền Tây\" accent.".to_string(),
+    }]
 }
 
 // --- Default Function Helpers ---
-pub fn default_preset_type() -> String { "image".to_string() }
-pub fn default_audio_source() -> String { "mic".to_string() }
-pub fn default_prompt_mode() -> String { "fixed".to_string() }
-pub fn default_text_input_mode() -> String { "select".to_string() }
-pub fn default_theme_mode() -> ThemeMode { ThemeMode::System }
-pub fn default_auto_paste_newline() -> bool { true }
-pub fn default_history_limit() -> usize { DEFAULT_HISTORY_LIMIT }
-pub fn default_graphics_mode() -> String { "standard".to_string() }
-pub fn default_audio_processing_mode() -> String { "record_then_process".to_string() }
-pub fn default_tts_voice() -> String { "Aoede".to_string() }
-pub fn default_tts_speed() -> String { "Fast".to_string() }
-pub fn default_realtime_translation_model() -> String { "groq-llama".to_string() }
-pub fn default_realtime_font_size() -> u32 { 16 }
-pub fn default_realtime_window_size() -> (i32, i32) { (500, 180) }
-pub fn default_realtime_target_language() -> String { "Vietnamese".to_string() }
-pub fn default_ollama_base_url() -> String { "http://localhost:11434".to_string() }
+pub fn default_preset_type() -> String {
+    "image".to_string()
+}
+pub fn default_audio_source() -> String {
+    "mic".to_string()
+}
+pub fn default_prompt_mode() -> String {
+    "fixed".to_string()
+}
+pub fn default_text_input_mode() -> String {
+    "select".to_string()
+}
+pub fn default_theme_mode() -> ThemeMode {
+    ThemeMode::System
+}
+pub fn default_auto_paste_newline() -> bool {
+    true
+}
+pub fn default_history_limit() -> usize {
+    DEFAULT_HISTORY_LIMIT
+}
+pub fn default_graphics_mode() -> String {
+    "standard".to_string()
+}
+pub fn default_audio_processing_mode() -> String {
+    "record_then_process".to_string()
+}
+pub fn default_tts_voice() -> String {
+    "Aoede".to_string()
+}
+pub fn default_tts_speed() -> String {
+    "Fast".to_string()
+}
+pub fn default_realtime_translation_model() -> String {
+    "groq-llama".to_string()
+}
+pub fn default_realtime_font_size() -> u32 {
+    16
+}
+pub fn default_realtime_window_size() -> (i32, i32) {
+    (500, 180)
+}
+pub fn default_realtime_target_language() -> String {
+    "Vietnamese".to_string()
+}
+pub fn default_ollama_base_url() -> String {
+    "http://localhost:11434".to_string()
+}
+pub fn default_tts_method() -> TtsMethod {
+    TtsMethod::GeminiLive
+}

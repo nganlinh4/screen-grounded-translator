@@ -1,5 +1,5 @@
 //! Configuration module for screen-goated-toolbox.
-//! 
+//!
 //! This module is split into several sub-modules:
 //! - `types`: Core types, enums, and helper functions
 //! - `preset`: Preset struct definition
@@ -10,17 +10,17 @@
 //! - `defaults_audio`: Audio and master default presets
 //! - `io`: Config loading, saving, and language utilities
 
-mod types;
-mod preset;
 mod config_struct;
 mod defaults;
+mod defaults_audio;
 mod defaults_image;
 mod defaults_text;
-mod defaults_audio;
 mod io;
+mod preset;
+mod types;
 
 // Re-export public types for external use
-pub use types::{ThemeMode, Hotkey, ProcessingBlock, TtsLanguageCondition};
-pub use preset::Preset;
 pub use config_struct::Config;
-pub use io::{load_config, save_config, get_all_languages};
+pub use io::{get_all_languages, load_config, save_config};
+pub use preset::Preset;
+pub use types::{Hotkey, ProcessingBlock, ThemeMode, TtsLanguageCondition, TtsMethod};
