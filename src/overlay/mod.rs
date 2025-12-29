@@ -1,5 +1,6 @@
 pub mod auto_copy_badge; // Auto-copy notification badge
 pub mod broom_assets;
+pub mod input_history; // Persistent input history for arrow up/down navigation
 pub mod paint_utils;
 pub mod preset_wheel;
 pub mod process;

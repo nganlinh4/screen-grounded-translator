@@ -155,7 +155,7 @@ pub fn show_preset_wheel(
         });
 
         let overlay_hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
             overlay_class,
             w!("WheelOverlay"),
             WS_POPUP,
@@ -191,7 +191,7 @@ pub fn show_preset_wheel(
         });
 
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED, // Reverted: Removed WS_EX_NOACTIVATE
             class_name,
             w!("PresetWheel"),
             WS_POPUP,
@@ -375,7 +375,8 @@ unsafe extern "system" fn wheel_wnd_proc(
         }
 
         WM_DESTROY => {
-            PostQuitMessage(0);
+            // Do NOT call PostQuitMessage here because we share the thread with text_input!
+            // PostQuitMessage(0);
             LRESULT(0)
         }
 

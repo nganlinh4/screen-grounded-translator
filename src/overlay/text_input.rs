@@ -273,6 +273,24 @@ fn get_editor_html(placeholder: &str) -> String {
                 e.preventDefault();
                 window.ipc.postMessage('cancel');
             }}
+            
+            // Arrow Up: History Up
+            if (e.key === 'ArrowUp') {{
+                const isSingleLine = !editor.value.includes('\n');
+                if ((isSingleLine || editor.selectionStart === 0) && !e.shiftKey) {{
+                    e.preventDefault();
+                    window.ipc.postMessage('history_up:' + editor.value);
+                }}
+            }}
+
+            // Arrow Down: History Down
+            if (e.key === 'ArrowDown') {{
+                const isSingleLine = !editor.value.includes('\n');
+                if ((isSingleLine || editor.selectionStart === editor.value.length) && !e.shiftKey) {{
+                    e.preventDefault();
+                    window.ipc.postMessage('history_down:' + editor.value);
+                }}
+            }}
         }});
         
         // Mic button click
@@ -292,6 +310,13 @@ fn get_editor_html(placeholder: &str) -> String {
         
         // Prevent context menu
         document.addEventListener('contextmenu', e => e.preventDefault());
+        
+        // Function to set editor text (called from Rust via evaluate_script)
+        window.setEditorText = (text) => {{
+            editor.value = text;
+            editor.selectionStart = editor.selectionEnd = text.length;
+            editor.focus();
+        }};
     </script>
 </body>
 </html>"#
@@ -333,7 +358,15 @@ pub fn set_editor_text(text: &str) {
 fn apply_pending_text() {
     let text = PENDING_TEXT.lock().unwrap().take();
     if let Some(text) = text {
-        let escaped = text
+        // Check if this is a history replacement (replace all) or insertion
+        let (is_replace_all, actual_text) =
+            if let Some(stripped) = text.strip_prefix("__REPLACE_ALL__") {
+                (true, stripped.to_string())
+            } else {
+                (false, text)
+            };
+
+        let escaped = actual_text
             .replace('\\', "\\\\")
             .replace('`', "\\`")
             .replace("${", "\\${")
@@ -342,19 +375,33 @@ fn apply_pending_text() {
 
         TEXT_INPUT_WEBVIEW.with(|webview| {
             if let Some(wv) = webview.borrow().as_ref() {
-                // Insert at cursor position instead of replacing all text
-                let script = format!(
-                    r#"(function() {{
-                        const editor = document.getElementById('editor');
-                        const start = editor.selectionStart;
-                        const end = editor.selectionEnd;
-                        const text = `{}`;
-                        editor.value = editor.value.substring(0, start) + text + editor.value.substring(end);
-                        editor.selectionStart = editor.selectionEnd = start + text.length;
-                        editor.focus();
-                    }})();"#,
-                    escaped
-                );
+                let script = if is_replace_all {
+                    // Replace all text (for history navigation)
+                    format!(
+                        r#"(function() {{
+                            const editor = document.getElementById('editor');
+                            const text = `{}`;
+                            editor.value = text;
+                            editor.selectionStart = editor.selectionEnd = text.length;
+                            editor.focus();
+                        }})();"#,
+                        escaped
+                    )
+                } else {
+                    // Insert at cursor position (for paste/transcription)
+                    format!(
+                        r#"(function() {{
+                            const editor = document.getElementById('editor');
+                            const start = editor.selectionStart;
+                            const end = editor.selectionEnd;
+                            const text = `{}`;
+                            editor.value = editor.value.substring(0, start) + text + editor.value.substring(end);
+                            editor.selectionStart = editor.selectionEnd = start + text.length;
+                            editor.focus();
+                        }})();"#,
+                        escaped
+                    )
+                };
                 let _ = wv.evaluate_script(&script);
             }
         });
@@ -492,7 +539,7 @@ fn internal_create_window_loop() {
 
         // Start HIDDEN logic
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
             class_name,
             w!("Text Input"),
             WS_POPUP, // Start invisible (not WS_VISIBLE)
@@ -582,11 +629,47 @@ unsafe fn init_webview(hwnd: HWND, w: i32, h: i32) {
                 if body.starts_with("submit:") {
                     let text = body.strip_prefix("submit:").unwrap_or("").to_string();
                     if !text.trim().is_empty() {
+                        // Save to history before submitting
+                        crate::overlay::input_history::add_to_history(&text);
                         *SUBMITTED_TEXT.lock().unwrap() = Some(text);
                         *SHOULD_CLOSE.lock().unwrap() = true;
                     }
                 } else if body == "cancel" {
+                    crate::overlay::input_history::reset_history_navigation();
                     *SHOULD_CLOSE.lock().unwrap() = true;
+                } else if body.starts_with("history_up:") {
+                    let current = body.strip_prefix("history_up:").unwrap_or("");
+                    if let Some(text) = crate::overlay::input_history::navigate_history_up(current)
+                    {
+                        *PENDING_TEXT.lock().unwrap() = Some(format!("__REPLACE_ALL__{}", text));
+                        unsafe {
+                            if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
+                                let _ = PostMessageW(
+                                    Some(INPUT_HWND.0),
+                                    WM_APP_SET_TEXT,
+                                    WPARAM(0),
+                                    LPARAM(0),
+                                );
+                            }
+                        }
+                    }
+                } else if body.starts_with("history_down:") {
+                    let current = body.strip_prefix("history_down:").unwrap_or("");
+                    if let Some(text) =
+                        crate::overlay::input_history::navigate_history_down(current)
+                    {
+                        *PENDING_TEXT.lock().unwrap() = Some(format!("__REPLACE_ALL__{}", text));
+                        unsafe {
+                            if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
+                                let _ = PostMessageW(
+                                    Some(INPUT_HWND.0),
+                                    WM_APP_SET_TEXT,
+                                    WPARAM(0),
+                                    LPARAM(0),
+                                );
+                            }
+                        }
+                    }
                 } else if body == "mic" {
                     // Trigger transcription preset
                     let transcribe_idx = {
@@ -628,6 +711,9 @@ unsafe extern "system" fn input_wnd_proc(
         WM_APP_SHOW => {
             // Reset state
             FADE_ALPHA = 0;
+
+            // Reset history navigation when showing
+            crate::overlay::input_history::reset_history_navigation();
 
             // Get current config
             let prompt_guide = CFG_TITLE.lock().unwrap().clone();
@@ -700,7 +786,21 @@ unsafe extern "system" fn input_wnd_proc(
             LRESULT(0)
         }
 
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+
         WM_ERASEBKGND => LRESULT(1),
+
+        WM_SETFOCUS => {
+            TEXT_INPUT_WEBVIEW.with(|webview| {
+                if let Some(wv) = webview.borrow().as_ref() {
+                    let _ = wv.focus();
+                }
+            });
+            LRESULT(0)
+        }
 
         WM_TIMER => {
             if wparam.0 == 1 {

@@ -15,6 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use wry::{Rect, WebContext, WebViewBuilder};
 
 const WM_APP_SET_TEXT: u32 = WM_USER + 200; // Custom message for cross-thread text injection
+const WM_APP_HISTORY_SET: u32 = WM_USER + 201; // Custom message for history text replacement
 
 lazy_static::lazy_static! {
     /// Track which parent windows have refine input active
@@ -22,6 +23,9 @@ lazy_static::lazy_static! {
 
     /// Cross-thread text injection: (parent_key, text_to_insert)
     static ref PENDING_TEXT: Mutex<Option<(isize, String)>> = Mutex::new(None);
+
+    /// Cross-thread history text replacement: (parent_key, text_to_replace_all)
+    static ref PENDING_HISTORY_TEXT: Mutex<Option<(isize, String)>> = Mutex::new(None);
 }
 
 /// State for a refine input instance
@@ -72,6 +76,12 @@ unsafe extern "system" fn refine_wnd_proc(
             LRESULT(0)
         }
 
+        _ if msg == WM_APP_HISTORY_SET => {
+            // Apply history text replacement from cross-thread call
+            apply_history_text();
+            LRESULT(0)
+        }
+
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
@@ -98,6 +108,36 @@ fn apply_pending_text() {
                         const text = `{}`;
                         editor.value = editor.value.substring(0, start) + text + editor.value.substring(end);
                         editor.selectionStart = editor.selectionEnd = start + text.length;
+                        editor.focus();
+                    }})();"#,
+                    escaped
+                );
+                let _ = wv.evaluate_script(&script);
+            }
+        });
+    }
+}
+
+/// Internal function to apply history text (replace all content)
+fn apply_history_text() {
+    let pending = PENDING_HISTORY_TEXT.lock().unwrap().take();
+    if let Some((parent_key, text)) = pending {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('`', "\\`")
+            .replace("${", "\\${")
+            .replace('\n', " ")
+            .replace('\r', "");
+
+        REFINE_WEBVIEWS.with(|webviews| {
+            if let Some(wv) = webviews.borrow().get(&parent_key) {
+                // Replace all text (for history navigation)
+                let script = format!(
+                    r#"(function() {{
+                        const editor = document.getElementById('editor');
+                        const text = `{}`;
+                        editor.value = text;
+                        editor.selectionStart = editor.selectionEnd = text.length;
                         editor.focus();
                     }})();"#,
                     escaped
@@ -276,6 +316,18 @@ fn get_refine_html(placeholder: &str) -> String {
                 e.preventDefault();
                 window.ipc.postMessage('cancel');
             }}
+            
+            // Arrow Up = Navigate history (older)
+            if (e.key === 'ArrowUp') {{
+                e.preventDefault();
+                window.ipc.postMessage('history_up:' + editor.value);
+            }}
+            
+            // Arrow Down = Navigate history (newer)
+            if (e.key === 'ArrowDown') {{
+                e.preventDefault();
+                window.ipc.postMessage('history_down:' + editor.value);
+            }}
         }});
         
         micBtn.addEventListener('click', (e) => {{
@@ -392,10 +444,53 @@ pub fn show_refine_input(parent_hwnd: HWND, placeholder: &str) -> bool {
                     let mut states = REFINE_STATES.lock().unwrap();
                     if let Some(state) = states.get_mut(&parent_key_for_ipc) {
                         if body.starts_with("submit:") {
-                            state.text = body.strip_prefix("submit:").unwrap_or("").to_string();
+                            let text = body.strip_prefix("submit:").unwrap_or("").to_string();
+                            // Save to history before submitting
+                            crate::overlay::input_history::add_to_history(&text);
+                            state.text = text;
                             state.submitted = true;
                         } else if body == "cancel" {
+                            crate::overlay::input_history::reset_history_navigation();
                             state.cancelled = true;
+                        } else if body.starts_with("history_up:") {
+                            let current = body.strip_prefix("history_up:").unwrap_or("");
+                            if let Some(text) =
+                                crate::overlay::input_history::navigate_history_up(current)
+                            {
+                                // Get the child window handle for posting message
+                                let child_hwnd = state.hwnd;
+                                drop(states); // Release lock before posting
+                                *PENDING_HISTORY_TEXT.lock().unwrap() =
+                                    Some((parent_key_for_ipc, text));
+                                unsafe {
+                                    let _ = PostMessageW(
+                                        Some(child_hwnd),
+                                        WM_APP_HISTORY_SET,
+                                        WPARAM(0),
+                                        LPARAM(0),
+                                    );
+                                }
+                                return;
+                            }
+                        } else if body.starts_with("history_down:") {
+                            let current = body.strip_prefix("history_down:").unwrap_or("");
+                            if let Some(text) =
+                                crate::overlay::input_history::navigate_history_down(current)
+                            {
+                                let child_hwnd = state.hwnd;
+                                drop(states);
+                                *PENDING_HISTORY_TEXT.lock().unwrap() =
+                                    Some((parent_key_for_ipc, text));
+                                unsafe {
+                                    let _ = PostMessageW(
+                                        Some(child_hwnd),
+                                        WM_APP_HISTORY_SET,
+                                        WPARAM(0),
+                                        LPARAM(0),
+                                    );
+                                }
+                                return;
+                            }
                         } else if body == "mic" {
                             // Trigger transcription preset
                             let transcribe_idx = {
@@ -486,6 +581,9 @@ pub fn poll_refine_input(parent_hwnd: HWND) -> (bool, bool, String) {
 
 /// Hide and destroy the refine input
 pub fn hide_refine_input(parent_hwnd: HWND) {
+    // Reset history navigation when hiding
+    crate::overlay::input_history::reset_history_navigation();
+
     let parent_key = parent_hwnd.0 as isize;
 
     // Remove WebView first
