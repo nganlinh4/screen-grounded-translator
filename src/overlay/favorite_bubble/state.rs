@@ -7,7 +7,7 @@ use wry::{WebContext, WebView};
 
 // Constants
 pub const BUBBLE_SIZE: i32 = 40;
-pub const PANEL_WIDTH: i32 = 220;
+pub const PANEL_WIDTH: i32 = 260;
 pub const DRAG_THRESHOLD: i32 = 5; // Pixels of movement before counting as a drag
 
 // Smooth opacity animation state

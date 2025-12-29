@@ -25,7 +25,19 @@ html, body {{
 .container {{
     display: flex;
     flex-direction: column;
-    padding: 30px 20px; /* Breathing room for hover and bounce */
+    padding: 30px 20px; /* Default padding, will be overridden by side class */
+}}
+
+/* Bubble on right = panel on left = overshoot goes left */
+.container.side-right {{
+    padding-left: 100px;  /* More room for left overshoot */
+    padding-right: 10px;  /* Less gap to bubble */
+}}
+
+/* Bubble on left = panel on right = overshoot goes right */
+.container.side-left {{
+    padding-left: 10px;   /* Less gap to bubble */
+    padding-right: 100px; /* More room for right overshoot */
 }}
 
 .list {{
@@ -231,7 +243,12 @@ function closePanel() {{
     }}, items.length * 15 + 450);
 }}
 
-window.setSide = (side) => {{ currentSide = side; }};
+window.setSide = (side) => {{ 
+    currentSide = side;
+    const container = document.querySelector('.container');
+    container.classList.remove('side-left', 'side-right');
+    container.classList.add('side-' + side);
+}};
 </script>
 </body>
 </html>"#,

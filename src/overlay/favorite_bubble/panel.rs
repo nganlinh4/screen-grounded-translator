@@ -258,7 +258,8 @@ unsafe fn refresh_panel_layout_and_content(
     };
 
     // Buffer for bloom bounce and hover scaling
-    let buffer_x = 40;
+    // CSS uses asymmetric padding: 100px on overshoot side, 10px on bubble side.
+    let buffer_x = 110;
     let buffer_y = 60;
 
     let panel_width = if fav_count == 0 {
