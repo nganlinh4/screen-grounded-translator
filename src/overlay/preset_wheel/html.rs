@@ -359,10 +359,12 @@ window.updateContent = function(itemsHtml, dismissLabel) {
     // Re-query items
     items = Array.from(document.querySelectorAll('.preset-item'));
     
-    // Start animation
-    requestAnimationFrame(() => {
-        animateIn();
-    });
+    // Notify Rust we are ready to be visible immediately (robust against rAF throttling)
+    setTimeout(() => {
+        window.ipc.postMessage('ready_to_show');
+        // Start animation frame loop
+        requestAnimationFrame(animateIn);
+    }, 0);
 };
 
 document.addEventListener('keydown', (e) => {
