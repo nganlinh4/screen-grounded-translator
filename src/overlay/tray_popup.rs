@@ -27,7 +27,16 @@ thread_local! {
 }
 
 const POPUP_WIDTH: i32 = 250;
-const POPUP_HEIGHT: i32 = 150;
+const BASE_POPUP_HEIGHT: i32 = 118; // Base height at 100% scaling (96 DPI)
+
+/// Get DPI-scaled popup height
+fn get_scaled_popup_height() -> i32 {
+    let dpi = unsafe {
+        windows::Win32::UI::HiDpi::GetDpiForSystem()
+    };
+    // Scale: 96 DPI = 100%, 120 DPI = 125%, 144 DPI = 150%, etc.
+    (BASE_POPUP_HEIGHT * dpi as i32) / 93
+}
 
 // HWND wrapper for wry
 struct HwndWrapper(HWND);
@@ -368,6 +377,9 @@ fn create_popup_window(is_warmup: bool) {
             RegisterClassW(&wc);
         });
 
+        // Get DPI-scaled height once
+        let popup_height = get_scaled_popup_height();
+
         // Get cursor position for placement (calculated later if warming up)
         let (popup_x, popup_y) = if is_warmup {
             (-3000, -3000)
@@ -380,9 +392,9 @@ fn create_popup_window(is_warmup: bool) {
             let screen_h = GetSystemMetrics(SM_CYSCREEN);
 
             let popup_x = (pt.x - POPUP_WIDTH / 2).max(0).min(screen_w - POPUP_WIDTH);
-            let popup_y = (pt.y - POPUP_HEIGHT - 10)
+            let popup_y = (pt.y - popup_height - 10)
                 .max(0)
-                .min(screen_h - POPUP_HEIGHT);
+                .min(screen_h - popup_height);
 
             (popup_x, popup_y)
         };
@@ -395,7 +407,7 @@ fn create_popup_window(is_warmup: bool) {
             popup_x,
             popup_y,
             POPUP_WIDTH,
-            POPUP_HEIGHT,
+            popup_height,
             None,
             None,
             Some(instance.into()),
@@ -429,7 +441,7 @@ fn create_popup_window(is_warmup: bool) {
                 position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(0.0, 0.0)),
                 size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
                     POPUP_WIDTH as u32,
-                    POPUP_HEIGHT as u32,
+                    popup_height as u32,
                 )),
             })
             .with_transparent(true)
@@ -532,9 +544,9 @@ fn create_popup_window(is_warmup: bool) {
                 let screen_h = GetSystemMetrics(SM_CYSCREEN);
 
                 let popup_x = (pt.x - POPUP_WIDTH / 2).max(0).min(screen_w - POPUP_WIDTH);
-                let popup_y = (pt.y - POPUP_HEIGHT - 10).max(0).min(screen_h - POPUP_HEIGHT);
+                let popup_y = (pt.y - popup_height - 10).max(0).min(screen_h - popup_height);
                 
-                let _ = SetWindowPos(hwnd, None, popup_x, popup_y, POPUP_WIDTH, POPUP_HEIGHT, SWP_NOZORDER);
+                let _ = SetWindowPos(hwnd, None, popup_x, popup_y, POPUP_WIDTH, popup_height, SWP_NOZORDER);
                 
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 let _ = SetForegroundWindow(hwnd);
