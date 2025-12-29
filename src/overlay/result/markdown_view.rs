@@ -968,6 +968,106 @@ pub fn has_markdown_webview(parent_hwnd: HWND) -> bool {
     states.get(&hwnd_key).copied().unwrap_or(false)
 }
 
+/// Generate a filename using Groq's llama-3.1-8b-instant model
+fn generate_filename(content: &str) -> String {
+    let default_name = "game.html".to_string();
+
+    // Get API Key
+    let groq_key = if let Ok(app) = crate::APP.lock() {
+        app.config.api_key.clone()
+    } else {
+        return default_name;
+    };
+
+    if groq_key.is_empty() {
+        return default_name;
+    }
+
+    // Truncate content to avoid token limits (first 4000 chars should be enough for context)
+    let prompt_content = if content.len() > 4000 {
+        &content[..4000]
+    } else {
+        content
+    };
+
+    let prompt = format!(
+        "Generate a short, kebab-case filename (without extension) for the following content. \
+        Do NOT include 'html' in the name. \
+        The filename must be descriptive but concise (max 5 words). \
+        Output ONLY the filename, nothing else. No markdown, no quotes, no explanations.\n\nContent:\n{}",
+        prompt_content
+    );
+
+    let payload = serde_json::json!({
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            { "role": "user", "content": prompt }
+        ],
+        "temperature": 0.3,
+        "max_tokens": 60
+    });
+
+    match crate::api::client::UREQ_AGENT
+        .post("https://api.groq.com/openai/v1/chat/completions")
+        .set("Authorization", &format!("Bearer {}", groq_key))
+        .send_json(payload)
+    {
+        Ok(resp) => {
+            if let Ok(json) = resp.into_json::<serde_json::Value>() {
+                if let Some(choice) = json
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|c| c.first())
+                {
+                    if let Some(content) = choice
+                        .get("message")
+                        .and_then(|m| m.get("content"))
+                        .and_then(|s| s.as_str())
+                    {
+                        let mut name = content.trim().to_string();
+
+                        // Clean up quotes/markdown
+                        name = name.replace('"', "").replace('\'', "").replace('`', "");
+
+                        // Remove potential .html extension if the model disobeyed
+                        if name.to_lowercase().ends_with(".html") {
+                            name = name[..name.len() - 5].to_string();
+                        }
+
+                        // Remove trailing -html or _html if present to avoid redundancy
+                        if name.to_lowercase().ends_with("-html") {
+                            name = name[..name.len() - 5].to_string();
+                        } else if name.to_lowercase().ends_with("_html") {
+                            name = name[..name.len() - 5].to_string();
+                        }
+
+                        // Basic validation: remove invalid characters for Windows filenames
+                        let invalid_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+                        name = name
+                            .chars()
+                            .filter(|c| !invalid_chars.contains(c))
+                            .collect();
+
+                        if name.is_empty() {
+                            return default_name;
+                        }
+
+                        // Always append .html
+                        name.push_str(".html");
+
+                        return name;
+                    }
+                }
+            }
+            default_name
+        }
+        Err(e) => {
+            eprintln!("Failed to generate filename: {}", e);
+            default_name
+        }
+    }
+}
+
 /// Save the current content as HTML file using Windows File Save dialog
 /// Returns true if file was saved successfully
 pub fn save_html_file(markdown_text: &str) -> bool {
@@ -1035,7 +1135,8 @@ pub fn save_html_file(markdown_text: &str) -> bool {
         let _ = dialog.SetDefaultExtension(windows::core::PCWSTR(default_ext.as_ptr()));
 
         // Set default filename
-        let default_name: Vec<u16> = OsStr::new("game.html")
+        let filename = generate_filename(markdown_text);
+        let default_name: Vec<u16> = OsStr::new(&filename)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
