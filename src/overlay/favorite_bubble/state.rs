@@ -34,6 +34,7 @@ pub static DRAG_START_Y: AtomicIsize = AtomicIsize::new(0);
 // Animation state
 pub static CURRENT_OPACITY: AtomicU8 = AtomicU8::new(80); // Start at inactive opacity
 pub static BLINK_STATE: AtomicU8 = AtomicU8::new(0); // 0=None, 1..4=Blink Phases
+pub static FADE_OUT_STATE: AtomicBool = AtomicBool::new(false); // True = fading out before close
 
 // Focus restoration: Track the foreground window before any bubble interaction
 // This is critical for text-select presets, which need to send Ctrl+C to the original window

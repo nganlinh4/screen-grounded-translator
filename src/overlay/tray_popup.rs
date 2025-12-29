@@ -534,6 +534,11 @@ fn create_popup_window(is_warmup: bool) {
 
                                 if enabled {
                                     crate::overlay::favorite_bubble::show_favorite_bubble();
+                                    // Slight delay so the window is created before blinking
+                                    std::thread::spawn(|| {
+                                        std::thread::sleep(std::time::Duration::from_millis(150));
+                                        crate::overlay::favorite_bubble::trigger_blink_animation();
+                                    });
                                 } else {
                                     crate::overlay::favorite_bubble::hide_favorite_bubble();
                                 }

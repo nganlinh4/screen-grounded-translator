@@ -21,12 +21,17 @@ pub fn show_favorite_bubble() {
         return; // Already active
     }
 
+    // Reset opacity to 0 for fade-in animation
+    CURRENT_OPACITY.store(0, Ordering::SeqCst);
+    // Clear any pending fade-out
+    FADE_OUT_STATE.store(false, Ordering::SeqCst);
+
     std::thread::spawn(|| {
         create_bubble_window();
     });
 }
 
-// Hide the favorite bubble overlay
+// Hide the favorite bubble overlay with fade-out animation
 pub fn hide_favorite_bubble() {
     if !BUBBLE_ACTIVE.load(Ordering::SeqCst) {
         return;
@@ -34,9 +39,12 @@ pub fn hide_favorite_bubble() {
 
     let hwnd_val = BUBBLE_HWND.load(Ordering::SeqCst);
     if hwnd_val != 0 {
+        // Start fade-out animation
+        FADE_OUT_STATE.store(true, Ordering::SeqCst);
         let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
         unsafe {
-            let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            // Start opacity timer to handle fade-out
+            let _ = SetTimer(Some(hwnd), OPACITY_TIMER_ID, 16, None);
         }
     }
 }
@@ -104,10 +112,13 @@ fn create_bubble_window() {
 
         BUBBLE_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
 
-        // Paint the bubble
+        // Paint the bubble (starts invisible due to CURRENT_OPACITY = 0)
         update_bubble_visual(hwnd);
 
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+
+        // Start fade-in animation immediately
+        let _ = SetTimer(Some(hwnd), OPACITY_TIMER_ID, 16, None);
 
         // Warmup: Create panel window AND WebView2 process immediately.
         // We do this here (hidden) so the first click shows the panel instantly.
@@ -288,27 +299,28 @@ unsafe extern "system" fn bubble_wnd_proc(
                 let is_hovered = IS_HOVERED.load(Ordering::SeqCst);
                 let is_expanded = IS_EXPANDED.load(Ordering::SeqCst);
                 let blink_state = BLINK_STATE.load(Ordering::SeqCst);
+                let is_fading_out = FADE_OUT_STATE.load(Ordering::SeqCst);
 
-                let mut target = if is_hovered || is_expanded {
+                // Fade-out takes priority over everything
+                let target = if is_fading_out {
+                    0u8
+                } else if blink_state > 0 {
+                    // Blink animation: Odd state = Active (255), Even state = Low (50)
+                    if blink_state % 2 != 0 {
+                        OPACITY_ACTIVE
+                    } else {
+                        50 // Drop lower than inactive to be distinct
+                    }
+                } else if is_hovered || is_expanded {
                     OPACITY_ACTIVE
                 } else {
                     OPACITY_INACTIVE
                 };
 
-                // Blink override
-                if blink_state > 0 {
-                    // Odd state = Active (255), Even state = Low (50) for visibility
-                    if blink_state % 2 != 0 {
-                        target = OPACITY_ACTIVE;
-                    } else {
-                        target = 50; // Drop lower than inactive to be distinct
-                    }
-                }
-
                 let current = CURRENT_OPACITY.load(Ordering::SeqCst);
 
                 if current != target {
-                    // Faster step for blinking
+                    // Faster step for blinking, normal step otherwise
                     let step = if blink_state > 0 { 45 } else { OPACITY_STEP };
 
                     let new_opacity = if current < target {
@@ -319,7 +331,13 @@ unsafe extern "system" fn bubble_wnd_proc(
                     CURRENT_OPACITY.store(new_opacity, Ordering::SeqCst);
                     update_bubble_visual(hwnd);
                 } else {
-                    if blink_state > 0 {
+                    // Target reached
+                    if is_fading_out && current == 0 {
+                        // Fade-out complete, now close the window
+                        let _ = KillTimer(Some(hwnd), OPACITY_TIMER_ID);
+                        FADE_OUT_STATE.store(false, Ordering::SeqCst);
+                        let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    } else if blink_state > 0 {
                         // Transition to next blink state
                         if blink_state >= 4 {
                             BLINK_STATE.store(0, Ordering::SeqCst);
