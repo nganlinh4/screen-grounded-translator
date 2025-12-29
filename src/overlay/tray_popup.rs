@@ -142,6 +142,12 @@ pub fn warmup_tray_popup() {
     }
 }
 
+/// Check if the tray popup is currently open (state 2)
+/// Used by warmup logic to defer WebView2 initialization until popup closes
+pub fn is_popup_open() -> bool {
+    POPUP_STATE.load(Ordering::SeqCst) == 2
+}
+
 fn generate_popup_html() -> String {
     use crate::config::ThemeMode;
     
@@ -400,7 +406,7 @@ fn create_popup_window(is_warmup: bool) {
         };
 
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class_name,
             w!("TrayPopup"),
             WS_POPUP,

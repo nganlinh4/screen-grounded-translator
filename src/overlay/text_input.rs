@@ -1,15 +1,17 @@
+use crate::gui::locale::LocaleText;
+use raw_window_handle::{
+    HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle,
+};
+use std::cell::RefCell;
+use std::num::NonZeroIsize;
+use std::sync::{Mutex, Once};
+use windows::core::*;
 use windows::Win32::Foundation::*;
-use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
-use windows::core::*;
-use std::sync::{Once, Mutex};
-use std::num::NonZeroIsize;
-use std::cell::RefCell;
-use crate::gui::locale::LocaleText;
-use wry::{WebViewBuilder, Rect};
-use raw_window_handle::{HasWindowHandle, RawWindowHandle, WindowHandle, Win32WindowHandle, HandleError};
+use windows::Win32::UI::WindowsAndMessaging::*;
+use wry::{Rect, WebViewBuilder};
 
 use crate::win_types::SendHwnd;
 
@@ -23,14 +25,14 @@ lazy_static::lazy_static! {
     static ref SUBMITTED_TEXT: Mutex<Option<String>> = Mutex::new(None);
     static ref SHOULD_CLOSE: Mutex<bool> = Mutex::new(false);
     static ref SHOULD_CLEAR_ONLY: Mutex<bool> = Mutex::new(false);
-    
+
     // Config Storage (Thread-safe for persistent window)
     static ref CFG_TITLE: Mutex<String> = Mutex::new(String::new());
     static ref CFG_LANG: Mutex<String> = Mutex::new(String::new());
     static ref CFG_CANCEL: Mutex<String> = Mutex::new(String::new());
     static ref CFG_CALLBACK: Mutex<Option<Box<dyn Fn(String, HWND) + Send>>> = Mutex::new(None);
     static ref CFG_CONTINUOUS: Mutex<bool> = Mutex::new(false);
-    
+
     // Cross-thread text injection (for auto-paste from transcription)
     static ref PENDING_TEXT: Mutex<Option<String>> = Mutex::new(None);
 }
@@ -48,7 +50,7 @@ struct HwndWrapper(HWND);
 
 impl HasWindowHandle for HwndWrapper {
     fn window_handle(&self) -> std::result::Result<WindowHandle<'_>, HandleError> {
-        let hwnd = self.0.0 as isize;
+        let hwnd = self.0 .0 as isize;
         if let Some(non_zero) = NonZeroIsize::new(hwnd) {
             let mut handle = Win32WindowHandle::new(non_zero);
             handle.hinstance = None;
@@ -216,8 +218,9 @@ fn get_editor_html(placeholder: &str) -> String {
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n");
-    
-    format!(r#"<!DOCTYPE html>
+
+    format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -288,11 +291,15 @@ fn get_editor_html(placeholder: &str) -> String {
         document.addEventListener('contextmenu', e => e.preventDefault());
     </script>
 </body>
-</html>"#)
+</html>"#
+    )
 }
 
 pub fn is_active() -> bool {
-    unsafe { !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() && IsWindowVisible(INPUT_HWND.0).as_bool() }
+    unsafe {
+        !std::ptr::addr_of!(INPUT_HWND).read().is_invalid()
+            && IsWindowVisible(INPUT_HWND.0).as_bool()
+    }
 }
 
 pub fn cancel_input() {
@@ -310,7 +317,7 @@ pub fn set_editor_text(text: &str) {
     unsafe {
         // Store the text in the mutex
         *PENDING_TEXT.lock().unwrap() = Some(text.to_string());
-        
+
         // Post message to the text input window to trigger the injection
         if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
             let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SET_TEXT, WPARAM(0), LPARAM(0));
@@ -329,7 +336,7 @@ fn apply_pending_text() {
             .replace("${", "\\${")
             .replace('\n', "\\n")
             .replace('\r', "");
-        
+
         TEXT_INPUT_WEBVIEW.with(|webview| {
             if let Some(wv) = webview.borrow().as_ref() {
                 // Insert at cursor position instead of replacing all text
@@ -376,14 +383,16 @@ pub fn update_ui_text(header_text: String) {
 pub fn refocus_editor() {
     unsafe {
         if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
-            use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, BringWindowToTop, SetTimer};
             use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
-            
+            use windows::Win32::UI::WindowsAndMessaging::{
+                BringWindowToTop, SetForegroundWindow, SetTimer,
+            };
+
             // Aggressive focus: try multiple methods
             let _ = BringWindowToTop(INPUT_HWND.0);
             let _ = SetForegroundWindow(INPUT_HWND.0);
             let _ = SetFocus(Some(INPUT_HWND.0));
-            
+
             // Focus the webview editor immediately
             TEXT_INPUT_WEBVIEW.with(|webview| {
                 if let Some(wv) = webview.borrow().as_ref() {
@@ -393,7 +402,7 @@ pub fn refocus_editor() {
                     let _ = wv.evaluate_script("document.getElementById('editor').focus();");
                 }
             });
-            
+
             // Schedule another focus attempt after 200ms via timer ID 3
             // This will be handled in WM_TIMER in the same thread
             let _ = SetTimer(Some(INPUT_HWND.0), 3, 200, None);
@@ -426,7 +435,7 @@ pub fn show(
     ui_language: String,
     cancel_hotkey_name: String,
     continuous_mode: bool,
-    on_submit: impl Fn(String, HWND) + Send + 'static
+    on_submit: impl Fn(String, HWND) + Send + 'static,
 ) {
     unsafe {
         // Update shared state
@@ -435,7 +444,7 @@ pub fn show(
         *CFG_CANCEL.lock().unwrap() = cancel_hotkey_name;
         *CFG_CONTINUOUS.lock().unwrap() = continuous_mode;
         *CFG_CALLBACK.lock().unwrap() = Some(Box::new(on_submit));
-        
+
         *SUBMITTED_TEXT.lock().unwrap() = None;
         *SHOULD_CLOSE.lock().unwrap() = false;
         *SHOULD_CLEAR_ONLY.lock().unwrap() = false;
@@ -449,7 +458,7 @@ pub fn show(
             // Sleep a bit and retry (simple handling for race on first cold start)
             std::thread::sleep(std::time::Duration::from_millis(100));
             if !std::ptr::addr_of!(INPUT_HWND).read().is_invalid() {
-                 let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(INPUT_HWND.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -480,13 +489,20 @@ fn internal_create_window_loop() {
 
         // Start HIDDEN logic
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
             class_name,
             w!("Text Input"),
             WS_POPUP, // Start invisible (not WS_VISIBLE)
-            x, y, win_w, win_h,
-            None, None, Some(instance.into()), None
-        ).unwrap_or_default();
+            x,
+            y,
+            win_w,
+            win_h,
+            None,
+            None,
+            Some(instance.into()),
+            None,
+        )
+        .unwrap_or_default();
 
         INPUT_HWND = SendHwnd(hwnd);
 
@@ -499,7 +515,7 @@ fn internal_create_window_loop() {
 
         // Create webview
         init_webview(hwnd, win_w, win_h);
-        
+
         // Message Loop
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -516,61 +532,74 @@ fn internal_create_window_loop() {
 }
 
 unsafe fn init_webview(hwnd: HWND, w: i32, h: i32) {
-        let edit_x = 20;
-        let edit_y = 50;
-        let edit_w = w - 40;
-        let edit_h = h - 90;
-        let corner_inset = 6;
-        let webview_x = edit_x + corner_inset;
-        let webview_y = edit_y + corner_inset;
-        let webview_w = edit_w - (corner_inset * 2);
-        let webview_h = edit_h - (corner_inset * 2);
-        
-        let placeholder = "Ready..."; 
-        let html = get_editor_html(placeholder);
-        let wrapper = HwndWrapper(hwnd);
-        
-        let result = WebViewBuilder::new()
-            .with_bounds(Rect {
-                position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(webview_x, webview_y)),
-                size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(webview_w as u32, webview_h as u32)),
-            })
-            .with_html(&html)
-            .with_transparent(false)
-            .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                let body = msg.body();
-                if body.starts_with("submit:") {
-                    let text = body.strip_prefix("submit:").unwrap_or("").to_string();
-                    if !text.trim().is_empty() {
-                        *SUBMITTED_TEXT.lock().unwrap() = Some(text);
-                        *SHOULD_CLOSE.lock().unwrap() = true;
-                    }
-                } else if body == "cancel" {
+    let edit_x = 20;
+    let edit_y = 50;
+    let edit_w = w - 40;
+    let edit_h = h - 90;
+    let corner_inset = 6;
+    let webview_x = edit_x + corner_inset;
+    let webview_y = edit_y + corner_inset;
+    let webview_w = edit_w - (corner_inset * 2);
+    let webview_h = edit_h - (corner_inset * 2);
+
+    let placeholder = "Ready...";
+    let html = get_editor_html(placeholder);
+    let wrapper = HwndWrapper(hwnd);
+
+    let result = WebViewBuilder::new()
+        .with_bounds(Rect {
+            position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
+                webview_x, webview_y,
+            )),
+            size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                webview_w as u32,
+                webview_h as u32,
+            )),
+        })
+        .with_html(&html)
+        .with_transparent(false)
+        .with_ipc_handler(move |msg: wry::http::Request<String>| {
+            let body = msg.body();
+            if body.starts_with("submit:") {
+                let text = body.strip_prefix("submit:").unwrap_or("").to_string();
+                if !text.trim().is_empty() {
+                    *SUBMITTED_TEXT.lock().unwrap() = Some(text);
                     *SHOULD_CLOSE.lock().unwrap() = true;
-                } else if body == "mic" {
-                    // Trigger transcription preset
-                    let transcribe_idx = {
-                        let app = crate::APP.lock().unwrap();
-                        app.config.presets.iter().position(|p| p.id == "preset_transcribe")
-                    };
-                    
-                    if let Some(preset_idx) = transcribe_idx {
-                        std::thread::spawn(move || {
-                            crate::overlay::recording::show_recording_overlay(preset_idx);
-                        });
-                    }
                 }
-            })
-            .build_as_child(&wrapper);
-        
-        if let Ok(webview) = result {
-             TEXT_INPUT_WEBVIEW.with(|wv| {
-                *wv.borrow_mut() = Some(webview);
-            });
-        }
+            } else if body == "cancel" {
+                *SHOULD_CLOSE.lock().unwrap() = true;
+            } else if body == "mic" {
+                // Trigger transcription preset
+                let transcribe_idx = {
+                    let app = crate::APP.lock().unwrap();
+                    app.config
+                        .presets
+                        .iter()
+                        .position(|p| p.id == "preset_transcribe")
+                };
+
+                if let Some(preset_idx) = transcribe_idx {
+                    std::thread::spawn(move || {
+                        crate::overlay::recording::show_recording_overlay(preset_idx);
+                    });
+                }
+            }
+        })
+        .build_as_child(&wrapper);
+
+    if let Ok(webview) = result {
+        TEXT_INPUT_WEBVIEW.with(|wv| {
+            *wv.borrow_mut() = Some(webview);
+        });
+    }
 }
 
-unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn input_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     // State variables for this window instance
     static mut FADE_ALPHA: i32 = 0;
     // IS_DRAGGING is no longer needed with native drag
@@ -579,7 +608,7 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
         WM_APP_SHOW => {
             // Reset state
             FADE_ALPHA = 0;
-            
+
             // Get current config
             let prompt_guide = CFG_TITLE.lock().unwrap().clone();
             let ui_language = CFG_LANG.lock().unwrap().clone();
@@ -599,7 +628,7 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                      let _ = webview.evaluate_script(&script);
                 }
             });
-            
+
             // RE-CENTER WINDOW
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let screen_h = GetSystemMetrics(SM_CYSCREEN);
@@ -609,20 +638,28 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let h = rect.bottom - rect.top;
             let x = (screen_w - w) / 2;
             let y = (screen_h - h) / 2;
-            let _ = SetWindowPos(hwnd, Some(HWND::default()), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-            
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND::default()),
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER,
+            );
+
             // Reset alpha to 0 before show
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
-            
+
             // Show and bring to front
             let _ = ShowWindow(hwnd, SW_SHOW);
             let _ = SetForegroundWindow(hwnd);
             let _ = SetFocus(Some(hwnd)); // CRITICAL: Set keyboard focus to window
             let _ = UpdateWindow(hwnd);
-            
+
             // Start Fade Timer
             SetTimer(Some(hwnd), 1, 16, None);
-            
+
             // IPC check timer
             SetTimer(Some(hwnd), 2, 50, None);
 
@@ -646,15 +683,18 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
         WM_ERASEBKGND => LRESULT(1),
 
         WM_TIMER => {
-            if wparam.0 == 1 { 
+            if wparam.0 == 1 {
                 // Fade In Logic
                 if FADE_ALPHA < 245 {
                     FADE_ALPHA += 25;
-                    if FADE_ALPHA > 245 { FADE_ALPHA = 245; }
-                    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), FADE_ALPHA as u8, LWA_ALPHA);
+                    if FADE_ALPHA > 245 {
+                        FADE_ALPHA = 245;
+                    }
+                    let _ =
+                        SetLayeredWindowAttributes(hwnd, COLORREF(0), FADE_ALPHA as u8, LWA_ALPHA);
                 } else {
                     let _ = KillTimer(Some(hwnd), 1);
-                    
+
                     // CRITICAL: Focus the editor AFTER fade completes (window fully visible)
                     // WebView2 won't accept focus properly if window is transparent
                     let _ = SetForegroundWindow(hwnd);
@@ -664,12 +704,13 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                             // First focus the WebView itself (native focus)
                             let _ = wv.focus();
                             // Then focus the textarea inside via JavaScript
-                            let _ = wv.evaluate_script("document.getElementById('editor').focus();");
+                            let _ =
+                                wv.evaluate_script("document.getElementById('editor').focus();");
                         }
                     });
                 }
             }
-            
+
             if wparam.0 == 2 {
                 // IPC messages
                 let should_close = *SHOULD_CLOSE.lock().unwrap();
@@ -680,12 +721,16 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                         let continuous = *CFG_CONTINUOUS.lock().unwrap();
                         if continuous {
                             let cb_lock = CFG_CALLBACK.lock().unwrap();
-                            if let Some(cb) = cb_lock.as_ref() { cb(text, hwnd); }
+                            if let Some(cb) = cb_lock.as_ref() {
+                                cb(text, hwnd);
+                            }
                             clear_editor_text();
                         } else {
                             let _ = ShowWindow(hwnd, SW_HIDE);
                             let cb_lock = CFG_CALLBACK.lock().unwrap();
-                            if let Some(cb) = cb_lock.as_ref() { cb(text, hwnd); }
+                            if let Some(cb) = cb_lock.as_ref() {
+                                cb(text, hwnd);
+                            }
                         }
                     } else {
                         let _ = ShowWindow(hwnd, SW_HIDE);
@@ -708,17 +753,17 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
         WM_LBUTTONDOWN => {
             let x = (lparam.0 & 0xFFFF) as i16 as i32;
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
-            
+
             let mut rect = RECT::default();
             let _ = GetClientRect(hwnd, &mut rect);
             let w = rect.right;
-            
+
             // Close Button
             let close_x = w - 30;
             let close_y = 20;
             if (x - close_x).abs() < 15 && (y - close_y).abs() < 15 {
-                 let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-                 return LRESULT(0);
+                let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                return LRESULT(0);
             }
 
             // Title Bar Drag - Use Native Drag (Fix drifting issues)
@@ -764,20 +809,26 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             let edit_h = h - 90;
             let corner_radius = 12.0f32;
             let fill_color: u32 = 0xF0F0F0;
-            
+
             let cx = (edit_w as f32) / 2.0;
             let cy = (edit_h as f32) / 2.0;
             let half_w = cx;
             let half_h = cy;
-            
+
             for py_local in 0..edit_h {
                 for px_local in 0..edit_w {
                     let px_screen = edit_x + px_local;
                     let py_screen = edit_y + py_local;
                     let px_rel = (px_local as f32) - cx;
                     let py_rel = (py_local as f32) - cy;
-                    let d = crate::overlay::paint_utils::sd_rounded_box(px_rel, py_rel, half_w, half_h, corner_radius);
-                    
+                    let d = crate::overlay::paint_utils::sd_rounded_box(
+                        px_rel,
+                        py_rel,
+                        half_w,
+                        half_h,
+                        corner_radius,
+                    );
+
                     if d < -1.0 {
                         SetPixel(mem_dc, px_screen, py_screen, COLORREF(fill_color));
                     } else if d < 1.0 {
@@ -793,7 +844,12 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
                             let r = (fg_r * alpha + bg_r * (1.0 - alpha)) as u32;
                             let g = (fg_g * alpha + bg_g * (1.0 - alpha)) as u32;
                             let b = (fg_b * alpha + bg_b * (1.0 - alpha)) as u32;
-                            SetPixel(mem_dc, px_screen, py_screen, COLORREF((r << 16) | (g << 8) | b));
+                            SetPixel(
+                                mem_dc,
+                                px_screen,
+                                py_screen,
+                                COLORREF((r << 16) | (g << 8) | b),
+                            );
                         }
                     }
                 }
@@ -801,30 +857,89 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
 
             // 3. Draw Text Labels
             SetBkMode(mem_dc, TRANSPARENT);
-            SetTextColor(mem_dc, COLORREF(0x00FFFFFF)); 
-            
-            let h_font = CreateFontW(19, 0, 0, 0, FW_SEMIBOLD.0 as i32, 0, 0, 0, FONT_CHARSET(DEFAULT_CHARSET.0 as u8), FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8), FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8), FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8), std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32), w!("Segoe UI"));
+            SetTextColor(mem_dc, COLORREF(0x00FFFFFF));
+
+            let h_font = CreateFontW(
+                19,
+                0,
+                0,
+                0,
+                FW_SEMIBOLD.0 as i32,
+                0,
+                0,
+                0,
+                FONT_CHARSET(DEFAULT_CHARSET.0 as u8),
+                FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8),
+                FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8),
+                FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8),
+                std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32),
+                w!("Segoe UI"),
+            );
             let old_font = SelectObject(mem_dc, h_font.into());
-            
+
             // USE NEW MUTEX CONFIG
             let title_str = CFG_TITLE.lock().unwrap().clone();
             let cur_lang = CFG_LANG.lock().unwrap().clone();
             let cur_cancel = CFG_CANCEL.lock().unwrap().clone();
-            
+
             let locale = LocaleText::get(&cur_lang);
-            let display_title = if !title_str.is_empty() { title_str } else { locale.text_input_title_default.to_string() };
+            let display_title = if !title_str.is_empty() {
+                title_str
+            } else {
+                locale.text_input_title_default.to_string()
+            };
             let mut title_w = crate::overlay::utils::to_wstring(&display_title);
-            let mut r_title = RECT { left: 20, top: 15, right: w - 50, bottom: 45 };
-            DrawTextW(mem_dc, &mut title_w, &mut r_title, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-            
-            let h_font_small = CreateFontW(13, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, FONT_CHARSET(DEFAULT_CHARSET.0 as u8), FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8), FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8), FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8), std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32), w!("Segoe UI"));
+            let mut r_title = RECT {
+                left: 20,
+                top: 15,
+                right: w - 50,
+                bottom: 45,
+            };
+            DrawTextW(
+                mem_dc,
+                &mut title_w,
+                &mut r_title,
+                DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS,
+            );
+
+            let h_font_small = CreateFontW(
+                13,
+                0,
+                0,
+                0,
+                FW_NORMAL.0 as i32,
+                0,
+                0,
+                0,
+                FONT_CHARSET(DEFAULT_CHARSET.0 as u8),
+                FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8),
+                FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8),
+                FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8),
+                std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32),
+                w!("Segoe UI"),
+            );
             SelectObject(mem_dc, h_font_small.into());
-            SetTextColor(mem_dc, COLORREF(0x00AAAAAA)); 
-            
-            let esc_text = if cur_cancel.is_empty() { "Esc".to_string() } else { format!("Esc / {}", cur_cancel) };
-            let hint = format!("{}  |  {}  |  {} {}", locale.text_input_footer_submit, locale.text_input_footer_newline, esc_text, locale.text_input_footer_cancel);
+            SetTextColor(mem_dc, COLORREF(0x00AAAAAA));
+
+            let esc_text = if cur_cancel.is_empty() {
+                "Esc".to_string()
+            } else {
+                format!("Esc / {}", cur_cancel)
+            };
+            let hint = format!(
+                "{}  |  {}  |  {} {}",
+                locale.text_input_footer_submit,
+                locale.text_input_footer_newline,
+                esc_text,
+                locale.text_input_footer_cancel
+            );
             let mut hint_w = crate::overlay::utils::to_wstring(&hint);
-            let mut r_hint = RECT { left: 20, top: h - 30, right: w - 20, bottom: h - 5 };
+            let mut r_hint = RECT {
+                left: 20,
+                top: h - 30,
+                right: w - 20,
+                bottom: h - 5,
+            };
             DrawTextW(mem_dc, &mut hint_w, &mut r_hint, DT_CENTER | DT_SINGLELINE);
 
             SelectObject(mem_dc, old_font);
@@ -848,7 +963,7 @@ unsafe extern "system" fn input_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
             SelectObject(mem_dc, old_bmp);
             let _ = DeleteObject(mem_bmp.into());
             let _ = DeleteDC(mem_dc);
-            
+
             let _ = EndPaint(hwnd, &mut ps);
             LRESULT(0)
         }

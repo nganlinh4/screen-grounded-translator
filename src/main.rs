@@ -252,23 +252,34 @@ fn main() -> eframe::Result<()> {
 
     // Offload warmups to a sequenced thread to prevent splash screen lag
     std::thread::spawn(|| {
+        // Helper: Wait for tray popup to close before proceeding
+        // This prevents WebView2 focus stealing from closing the popup
+        let wait_for_popup_close = || {
+            while overlay::tray_popup::is_popup_open() {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        };
+
         // 0. Wait briefly for main window to initialize and show
         // This prevents the warmup window from interfering with main window visibility
         std::thread::sleep(std::time::Duration::from_millis(500));
 
         // 1. Warmup tray popup (with is_warmup=true to avoid focus stealing)
+        wait_for_popup_close();
         overlay::tray_popup::warmup_tray_popup();
 
         // 2. Wait for splash screen / main box to appear and settle
         std::thread::sleep(std::time::Duration::from_millis(1500));
 
         // 3. Warmup text input window first (more likely to be used quickly)
+        wait_for_popup_close();
         overlay::text_input::warmup();
 
         // 4. Wait before next warmup to distribute CPU load
         std::thread::sleep(std::time::Duration::from_millis(2000));
 
         // 5. Warmup markdown WebView
+        wait_for_popup_close();
         overlay::result::markdown_view::warmup();
     });
 

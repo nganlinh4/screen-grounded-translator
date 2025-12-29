@@ -1,14 +1,16 @@
-use windows::Win32::Foundation::*;
-use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::System::LibraryLoader::*;
-use std::sync::{Mutex, Once};
+use pulldown_cmark::{html, Options, Parser};
+use raw_window_handle::{
+    HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle,
+};
 use std::collections::HashMap;
 use std::num::NonZeroIsize;
-use pulldown_cmark::{Parser, Options, html};
-use wry::{WebViewBuilder, Rect};
-use raw_window_handle::{HasWindowHandle, RawWindowHandle, WindowHandle, Win32WindowHandle, HandleError};
+use std::sync::{Mutex, Once};
 use windows::core::w;
+use windows::Win32::Foundation::*;
+use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::LibraryLoader::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
+use wry::{Rect, WebViewBuilder};
 
 lazy_static::lazy_static! {
     // Store WebViews per parent window - wrapped in thread-local storage to avoid Send issues
@@ -35,7 +37,7 @@ struct HwndWrapper(HWND);
 
 impl HasWindowHandle for HwndWrapper {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        let hwnd = self.0.0 as isize;
+        let hwnd = self.0 .0 as isize;
         if let Some(non_zero) = NonZeroIsize::new(hwnd) {
             let mut handle = Win32WindowHandle::new(non_zero);
             // hinstance is optional, can be null
@@ -72,18 +74,25 @@ fn warmup_internal() {
             let _ = RegisterClassW(&wc);
         });
 
-        // Create a small hidden window
+        // Create a small hidden window with WS_EX_NOACTIVATE to prevent focus stealing
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
             class_name,
             w!("MarkdownWarmup"),
             WS_POPUP,
-            0, 0, 100, 100,
-            None, None, Some(instance.into()), None
-        ).unwrap_or_default();
+            0,
+            0,
+            100,
+            100,
+            None,
+            None,
+            Some(instance.into()),
+            None,
+        )
+        .unwrap_or_default();
 
         WARMUP_HWND = hwnd;
-        
+
         // Make it transparent (invisible)
         let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
 
@@ -122,7 +131,12 @@ fn warmup_internal() {
     }
 }
 
-unsafe extern "system" fn warmup_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn warmup_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
@@ -266,9 +280,9 @@ fn is_html_content(content: &str) -> bool {
 fn is_html_fragment(content: &str) -> bool {
     let lower = content.to_lowercase();
     // Has script or style tags but no html/doctype wrapper
-    (lower.contains("<script") || lower.contains("<style")) &&
-    !lower.contains("<!doctype") && 
-    !lower.contains("<html")
+    (lower.contains("<script") || lower.contains("<style"))
+        && !lower.contains("<!doctype")
+        && !lower.contains("<html")
 }
 
 /// Wrap an HTML fragment in a proper document structure
@@ -300,7 +314,7 @@ fn inject_storage_polyfill(html: &str) -> String {
     } else {
         html.to_string()
     };
-    
+
     // Polyfill script that provides in-memory storage when real storage is blocked
     let polyfill = r#"<script>
 (function() {
@@ -335,11 +349,11 @@ fn inject_storage_polyfill(html: &str) -> String {
     }
 })();
 </script>"#;
-    
+
     // Find the best place to inject the polyfill (before any other scripts)
     // Priority: after <head>, after <html>, or at the very start
     let lower = html.to_lowercase();
-    
+
     if let Some(pos) = lower.find("<head>") {
         // Inject right after <head>
         let insert_pos = pos + 6; // length of "<head>"
@@ -381,7 +395,12 @@ fn inject_storage_polyfill(html: &str) -> String {
 }
 
 /// Convert markdown text to styled HTML, or pass through raw HTML
-pub fn markdown_to_html(markdown: &str, is_refining: bool, preset_prompt: &str, input_text: &str) -> String {
+pub fn markdown_to_html(
+    markdown: &str,
+    is_refining: bool,
+    preset_prompt: &str,
+    input_text: &str,
+) -> String {
     if is_refining && crate::overlay::utils::SHOW_REFINING_CONTEXT_QUOTE {
         let combined = if input_text.is_empty() {
             preset_prompt.to_string()
@@ -414,9 +433,7 @@ pub fn markdown_to_html(markdown: &str, is_refining: bool, preset_prompt: &str, 
 </head>
 <body>{}</body>
 </html>"#,
-            GOOGLE_FONTS_LINK,
-            MARKDOWN_CSS,
-            quote
+            GOOGLE_FONTS_LINK, MARKDOWN_CSS, quote
         );
     }
 
@@ -425,17 +442,17 @@ pub fn markdown_to_html(markdown: &str, is_refining: bool, preset_prompt: &str, 
     if is_html_content(markdown) {
         return inject_storage_polyfill(markdown);
     }
-    
+
     // Otherwise, parse as Markdown
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
-    
+
     let parser = Parser::new_ext(markdown, options);
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
-    
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -447,9 +464,7 @@ pub fn markdown_to_html(markdown: &str, is_refining: bool, preset_prompt: &str, 
 </head>
 <body>{}</body>
 </html>"#,
-        GOOGLE_FONTS_LINK,
-        MARKDOWN_CSS,
-        html_output
+        GOOGLE_FONTS_LINK, MARKDOWN_CSS, html_output
     )
 }
 
@@ -460,58 +475,83 @@ pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovere
     let (is_refining, preset_prompt, input_text) = {
         let states = super::state::WINDOW_STATES.lock().unwrap();
         if let Some(state) = states.get(&hwnd_key) {
-            (state.is_refining, state.preset_prompt.clone(), state.input_text.clone())
+            (
+                state.is_refining,
+                state.preset_prompt.clone(),
+                state.input_text.clone(),
+            )
         } else {
             (false, String::new(), String::new())
         }
     };
-    create_markdown_webview_ex(parent_hwnd, markdown_text, is_hovered, is_refining, &preset_prompt, &input_text)
+    create_markdown_webview_ex(
+        parent_hwnd,
+        markdown_text,
+        is_hovered,
+        is_refining,
+        &preset_prompt,
+        &input_text,
+    )
 }
 
 /// Create a WebView child window for markdown rendering (Internal version, call without lock if possible)
-pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hovered: bool, is_refining: bool, preset_prompt: &str, input_text: &str) -> bool {
+pub fn create_markdown_webview_ex(
+    parent_hwnd: HWND,
+    markdown_text: &str,
+    is_hovered: bool,
+    is_refining: bool,
+    preset_prompt: &str,
+    input_text: &str,
+) -> bool {
     let hwnd_key = parent_hwnd.0 as isize;
-    
+
     // Check if we already have a webview
-    let exists = WEBVIEWS.with(|webviews| {
-        webviews.borrow().contains_key(&hwnd_key)
-    });
-    
+    let exists = WEBVIEWS.with(|webviews| webviews.borrow().contains_key(&hwnd_key));
+
     if exists {
-        return update_markdown_content_ex(parent_hwnd, markdown_text, is_refining, preset_prompt, input_text);
+        return update_markdown_content_ex(
+            parent_hwnd,
+            markdown_text,
+            is_refining,
+            preset_prompt,
+            input_text,
+        );
     }
-    
-    
+
     // Get parent window rect
     let mut rect = RECT::default();
-    unsafe { let _ = GetClientRect(parent_hwnd, &mut rect); }
-    
+    unsafe {
+        let _ = GetClientRect(parent_hwnd, &mut rect);
+    }
+
     let html_content = markdown_to_html(markdown_text, is_refining, preset_prompt, input_text);
-    
+
     let wrapper = HwndWrapper(parent_hwnd);
-    
+
     // Small margin on edges for resize handle accessibility (2px)
     // 52px at bottom for buttons (btn_size 28 + margin 12 * 2) if hovered
     let edge_margin = 2.0;
     let button_area_height = if is_hovered { 52.0 } else { 0.0 };
     let content_width = ((rect.right - rect.left) as f64 - edge_margin * 2.0).max(50.0);
-    let content_height = ((rect.bottom - rect.top) as f64 - edge_margin - button_area_height).max(50.0);
-    
+    let content_height =
+        ((rect.bottom - rect.top) as f64 - edge_margin - button_area_height).max(50.0);
 
-    
     // Create WebView with small margins so resize handles remain accessible
     // Use Physical coordinates since GetClientRect returns physical pixels
     let _hwnd_copy = parent_hwnd;
     let hwnd_key_for_nav = hwnd_key;
-    
-    // SIMPLIFIED FOR DEBUGGING - minimal WebView creation  
+
+    // SIMPLIFIED FOR DEBUGGING - minimal WebView creation
     // CRITICAL: with_transparent(false) matches text_input's working config
     let result = WebViewBuilder::new()
         .with_bounds(Rect {
-            position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(edge_margin as i32, edge_margin as i32)),
+            position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
+                edge_margin as i32,
+                edge_margin as i32,
+            )),
             size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
                 content_width as u32,
-                content_height as u32
+                content_height as u32,
             )),
         })
         .with_html(&html_content)
@@ -527,17 +567,22 @@ pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hov
                     false
                 }
             };
-            
+
             if should_skip {
                 // This navigation was from history.back(), don't increment depth
                 return true;
             }
-            
+
             // Detect when user navigates to an external URL (clicked a link)
             // CRITICAL: Exclude wry internal URLs to prevent counting original content as browsing
-            let is_internal = url.contains("wry.localhost") || url.contains("localhost") || url.contains("127.0.0.1") || url.starts_with("data:") || url.starts_with("about:");
-            let is_external = (url.starts_with("http://") || url.starts_with("https://")) && !is_internal;
-            
+            let is_internal = url.contains("wry.localhost")
+                || url.contains("localhost")
+                || url.contains("127.0.0.1")
+                || url.starts_with("data:")
+                || url.starts_with("about:");
+            let is_external =
+                (url.starts_with("http://") || url.starts_with("https://")) && !is_internal;
+
             if is_external {
                 // Update browsing state and increment depth counter
                 if let Ok(mut states) = super::state::WINDOW_STATES.lock() {
@@ -546,10 +591,12 @@ pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hov
                         state.navigation_depth += 1;
                         // For a new navigation (not history back/forward), reset max depth to current depth
                         state.max_navigation_depth = state.navigation_depth;
-                        
+
                         if state.is_editing {
                             state.is_editing = false;
-                            super::refine_input::hide_refine_input(HWND(hwnd_key_for_nav as *mut std::ffi::c_void));
+                            super::refine_input::hide_refine_input(HWND(
+                                hwnd_key_for_nav as *mut std::ffi::c_void,
+                            ));
                         }
                     }
                 }
@@ -565,24 +612,28 @@ pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hov
                             state.max_navigation_depth = 0;
                             // Ensure repaint to hide buttons
                             unsafe {
-                                let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(HWND(hwnd_key_for_nav as *mut std::ffi::c_void)), None, false);
+                                let _ = windows::Win32::Graphics::Gdi::InvalidateRect(
+                                    Some(HWND(hwnd_key_for_nav as *mut std::ffi::c_void)),
+                                    None,
+                                    false,
+                                );
                             }
                         }
                     }
                 }
             }
-            
+
             // Allow all navigation
             true
         })
         .build_as_child(&wrapper);
-    
+
     match result {
         Ok(webview) => {
             WEBVIEWS.with(|webviews| {
                 webviews.borrow_mut().insert(hwnd_key, webview);
             });
-            
+
             let mut states = WEBVIEW_STATES.lock().unwrap();
             states.insert(hwnd_key, true);
             true
@@ -597,7 +648,7 @@ pub fn create_markdown_webview_ex(parent_hwnd: HWND, markdown_text: &str, is_hov
 /// Navigate back in browser history
 pub fn go_back(parent_hwnd: HWND) {
     let hwnd_key = parent_hwnd.0 as isize;
-    
+
     // Determine if we need to recreate the webview (returning to original content)
     // or just go back in browser history.
     let (returning_to_original, markdown_text, is_hovered) = {
@@ -606,7 +657,7 @@ pub fn go_back(parent_hwnd: HWND) {
             if state.navigation_depth > 0 {
                 state.navigation_depth -= 1;
             }
-            
+
             // If depth is now 0, we are returning to the starting result content.
             // We recreate the WebView to ensure a clean state and avoid "white screen"
             // issues that happen when document.write is blocked by website CSP.
@@ -621,11 +672,11 @@ pub fn go_back(parent_hwnd: HWND) {
             (false, String::new(), false)
         }
     };
-    
+
     if returning_to_original {
         // Full recreation of the WebView with the desired content
         create_markdown_webview(parent_hwnd, &markdown_text, is_hovered);
-        
+
         // Trigger repaint to hide navigation buttons
         unsafe {
             let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(parent_hwnd), None, false);
@@ -637,7 +688,7 @@ pub fn go_back(parent_hwnd: HWND) {
             let mut skip_map = SKIP_NEXT_NAVIGATION.lock().unwrap();
             skip_map.insert(hwnd_key, true);
         }
-        
+
         WEBVIEWS.with(|webviews| {
             if let Some(webview) = webviews.borrow().get(&hwnd_key) {
                 let _ = webview.evaluate_script("history.back();");
@@ -649,13 +700,13 @@ pub fn go_back(parent_hwnd: HWND) {
 /// Navigate forward in browser history
 pub fn go_forward(parent_hwnd: HWND) {
     let hwnd_key = parent_hwnd.0 as isize;
-    
+
     // Set skip flag to prevent navigation_handler from incrementing depth
     {
         let mut skip_map = SKIP_NEXT_NAVIGATION.lock().unwrap();
         skip_map.insert(hwnd_key, true);
     }
-    
+
     // Increment navigation depth since we're going forward
     {
         let mut states = super::state::WINDOW_STATES.lock().unwrap();
@@ -668,7 +719,7 @@ pub fn go_forward(parent_hwnd: HWND) {
             }
         }
     }
-    
+
     WEBVIEWS.with(|webviews| {
         if let Some(webview) = webviews.borrow().get(&hwnd_key) {
             let _ = webview.evaluate_script("history.forward();");
@@ -682,12 +733,22 @@ pub fn update_markdown_content(parent_hwnd: HWND, markdown_text: &str) -> bool {
     let (is_refining, preset_prompt, input_text) = {
         let states = super::state::WINDOW_STATES.lock().unwrap();
         if let Some(state) = states.get(&hwnd_key) {
-            (state.is_refining, state.preset_prompt.clone(), state.input_text.clone())
+            (
+                state.is_refining,
+                state.preset_prompt.clone(),
+                state.input_text.clone(),
+            )
         } else {
             (false, String::new(), String::new())
         }
     };
-    update_markdown_content_ex(parent_hwnd, markdown_text, is_refining, &preset_prompt, &input_text)
+    update_markdown_content_ex(
+        parent_hwnd,
+        markdown_text,
+        is_refining,
+        &preset_prompt,
+        &input_text,
+    )
 }
 
 /// Check if HTML content contains scripts that need full browser capabilities
@@ -696,8 +757,8 @@ fn content_needs_recreation(html: &str) -> bool {
     let lower = html.to_lowercase();
     // If content has <script> tags that might use storage APIs, it needs recreation
     // to get a proper origin instead of the sandboxed document.write context
-    lower.contains("<script") && 
-    (lower.contains("localstorage") || 
+    lower.contains("<script")
+        && (lower.contains("localstorage") || 
      lower.contains("sessionstorage") || 
      lower.contains("indexeddb") ||
      lower.contains("const ") ||  // Variable declarations can conflict  
@@ -708,16 +769,22 @@ fn content_needs_recreation(html: &str) -> bool {
 /// Update the markdown content in an existing WebView (Raw version, does not fetch state)
 /// For interactive HTML with scripts: recreates WebView to get proper origin
 /// For simple content: uses fast inline update
-pub fn update_markdown_content_ex(parent_hwnd: HWND, markdown_text: &str, is_refining: bool, preset_prompt: &str, input_text: &str) -> bool {
+pub fn update_markdown_content_ex(
+    parent_hwnd: HWND,
+    markdown_text: &str,
+    is_refining: bool,
+    preset_prompt: &str,
+    input_text: &str,
+) -> bool {
     let hwnd_key = parent_hwnd.0 as isize;
-    let html = markdown_to_html(markdown_text, is_refining, preset_prompt, input_text); 
-    
+    let html = markdown_to_html(markdown_text, is_refining, preset_prompt, input_text);
+
     // Check if this content has scripts that need full browser capabilities
     // If so, we must recreate the WebView to get proper origin access
     if content_needs_recreation(&html) {
         // Destroy existing WebView and create fresh one
         destroy_markdown_webview(parent_hwnd);
-        
+
         // Get hover state for sizing
         let is_hovered = {
             if let Ok(states) = super::state::WINDOW_STATES.lock() {
@@ -726,17 +793,25 @@ pub fn update_markdown_content_ex(parent_hwnd: HWND, markdown_text: &str, is_ref
                 false
             }
         };
-        
+
         // Recreate WebView with fresh content (will use with_html for proper origin)
-        return create_markdown_webview_ex(parent_hwnd, markdown_text, is_hovered, is_refining, preset_prompt, input_text);
+        return create_markdown_webview_ex(
+            parent_hwnd,
+            markdown_text,
+            is_hovered,
+            is_refining,
+            preset_prompt,
+            input_text,
+        );
     }
-    
+
     // Fast path for simple content without scripts
     WEBVIEWS.with(|webviews| {
         if let Some(webview) = webviews.borrow().get(&hwnd_key) {
             // For simple markdown, update body content via DOM manipulation
             // This is safe because we verified there are no conflicting scripts
-            let escaped_html = html.replace('\\', "\\\\")
+            let escaped_html = html
+                .replace('\\', "\\\\")
                 .replace('`', "\\`")
                 .replace("${", "\\${");
             let script = format!(
@@ -756,31 +831,35 @@ pub fn update_markdown_content_ex(parent_hwnd: HWND, markdown_text: &str, is_ref
 /// When refine input active: starts 44px from top (40px input + 4px gap)
 pub fn resize_markdown_webview(parent_hwnd: HWND, is_hovered: bool) {
     let hwnd_key = parent_hwnd.0 as isize;
-    
+
     // Check if refine input is active
     let refine_input_active = super::refine_input::is_refine_input_active(parent_hwnd);
     let top_offset = if refine_input_active { 44.0 } else { 2.0 }; // 40px input + 4px gap, or 2px edge margin
-    
+
     unsafe {
         let mut rect = RECT::default();
         let _ = GetClientRect(parent_hwnd, &mut rect);
-        
+
         // 2px edge margin for resize handles
         let edge_margin = 2.0;
         // Only reserve button area when hovered
         let button_area_height = if is_hovered { 52.0 } else { edge_margin };
-        
+
         let content_width = ((rect.right - rect.left) as f64 - edge_margin * 2.0).max(50.0);
-        let content_height = ((rect.bottom - rect.top) as f64 - top_offset - button_area_height).max(50.0);
-        
+        let content_height =
+            ((rect.bottom - rect.top) as f64 - top_offset - button_area_height).max(50.0);
+
         WEBVIEWS.with(|webviews| {
             if let Some(webview) = webviews.borrow().get(&hwnd_key) {
                 // Use Physical coordinates since GetClientRect returns physical pixels
                 let _ = webview.set_bounds(Rect {
-                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(edge_margin as i32, top_offset as i32)),
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
+                        edge_margin as i32,
+                        top_offset as i32,
+                    )),
                     size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
                         content_width as u32,
-                        content_height as u32
+                        content_height as u32,
                     )),
                 });
             }
@@ -791,7 +870,7 @@ pub fn resize_markdown_webview(parent_hwnd: HWND, is_hovered: bool) {
 /// Hide the WebView (toggle back to plain text)
 pub fn hide_markdown_webview(parent_hwnd: HWND) {
     let hwnd_key = parent_hwnd.0 as isize;
-    
+
     WEBVIEWS.with(|webviews| {
         if let Some(webview) = webviews.borrow().get(&hwnd_key) {
             let _ = webview.set_visible(false);
@@ -802,7 +881,7 @@ pub fn hide_markdown_webview(parent_hwnd: HWND) {
 /// Show the WebView (toggle to markdown mode)
 pub fn show_markdown_webview(parent_hwnd: HWND) {
     let hwnd_key = parent_hwnd.0 as isize;
-    
+
     WEBVIEWS.with(|webviews| {
         if let Some(webview) = webviews.borrow().get(&hwnd_key) {
             let _ = webview.set_visible(true);
@@ -813,11 +892,11 @@ pub fn show_markdown_webview(parent_hwnd: HWND) {
 /// Destroy the WebView when window closes
 pub fn destroy_markdown_webview(parent_hwnd: HWND) {
     let hwnd_key = parent_hwnd.0 as isize;
-    
+
     WEBVIEWS.with(|webviews| {
         webviews.borrow_mut().remove(&hwnd_key);
     });
-    
+
     let mut states = WEBVIEW_STATES.lock().unwrap();
     states.remove(&hwnd_key);
 }
@@ -834,22 +913,22 @@ pub fn has_markdown_webview(parent_hwnd: HWND) -> bool {
 pub fn save_html_file(markdown_text: &str) -> bool {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
-    use windows::Win32::UI::Shell::{
-        IFileSaveDialog, FileSaveDialog, FOS_OVERWRITEPROMPT, FOS_STRICTFILETYPES,
-        SIGDN_FILESYSPATH, SHGetKnownFolderPath, FOLDERID_Downloads, SHCreateItemFromParsingName, IShellItem
-    };
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoCreateInstance, CoUninitialize, 
-        CLSCTX_ALL, COINIT_APARTMENTTHREADED
-    };
-    use windows::Win32::UI::Shell::KNOWN_FOLDER_FLAG;
     use windows::core::PCWSTR;
-    
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    use windows::Win32::UI::Shell::KNOWN_FOLDER_FLAG;
+    use windows::Win32::UI::Shell::{
+        FOLDERID_Downloads, FileSaveDialog, IFileSaveDialog, IShellItem,
+        SHCreateItemFromParsingName, SHGetKnownFolderPath, FOS_OVERWRITEPROMPT,
+        FOS_STRICTFILETYPES, SIGDN_FILESYSPATH,
+    };
+
     unsafe {
         // Initialize COM
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        
+
         // Create file dialog
         let dialog: IFileSaveDialog = match CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL) {
             Ok(d) => d,
@@ -858,7 +937,7 @@ pub fn save_html_file(markdown_text: &str) -> bool {
                 return false;
             }
         };
-        
+
         // Set file type filter - HTML files
         let filter_name: Vec<u16> = OsStr::new("HTML Files (*.html)")
             .encode_wide()
@@ -868,48 +947,49 @@ pub fn save_html_file(markdown_text: &str) -> bool {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
-            
+
         let file_types = [COMDLG_FILTERSPEC {
             pszName: windows::core::PCWSTR(filter_name.as_ptr()),
             pszSpec: windows::core::PCWSTR(filter_pattern.as_ptr()),
         }];
-        
+
         let _ = dialog.SetFileTypes(&file_types);
         let _ = dialog.SetFileTypeIndex(1);
-        
+
         // Set default folder to Downloads
-        if let Ok(downloads_path) = SHGetKnownFolderPath(&FOLDERID_Downloads, KNOWN_FOLDER_FLAG(0), None) {
-            if let Ok(folder_item) = SHCreateItemFromParsingName::<PCWSTR, _, IShellItem>(
-                PCWSTR(downloads_path.0),
-                None,
-            ) {
+        if let Ok(downloads_path) =
+            SHGetKnownFolderPath(&FOLDERID_Downloads, KNOWN_FOLDER_FLAG(0), None)
+        {
+            if let Ok(folder_item) =
+                SHCreateItemFromParsingName::<PCWSTR, _, IShellItem>(PCWSTR(downloads_path.0), None)
+            {
                 let _ = dialog.SetFolder(&folder_item);
             }
         }
-        
+
         // Set default extension
         let default_ext: Vec<u16> = OsStr::new("html")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
         let _ = dialog.SetDefaultExtension(windows::core::PCWSTR(default_ext.as_ptr()));
-        
+
         // Set default filename
         let default_name: Vec<u16> = OsStr::new("game.html")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
         let _ = dialog.SetFileName(windows::core::PCWSTR(default_name.as_ptr()));
-        
+
         // Set options
         let _ = dialog.SetOptions(FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES);
-        
+
         // Show dialog
         if dialog.Show(None).is_err() {
             CoUninitialize();
             return false; // User cancelled
         }
-        
+
         // Get result
         let result: windows::Win32::UI::Shell::IShellItem = match dialog.GetResult() {
             Ok(r) => r,
@@ -918,7 +998,7 @@ pub fn save_html_file(markdown_text: &str) -> bool {
                 return false;
             }
         };
-        
+
         // Get file path
         let path: windows::core::PWSTR = match result.GetDisplayName(SIGDN_FILESYSPATH) {
             Ok(p) => p,
@@ -927,18 +1007,18 @@ pub fn save_html_file(markdown_text: &str) -> bool {
                 return false;
             }
         };
-        
+
         // Convert path to String
         let path_str = path.to_string().unwrap_or_default();
-        
+
         // Free the path memory
         windows::Win32::System::Com::CoTaskMemFree(Some(path.0 as *const _));
-        
+
         CoUninitialize();
-        
+
         // Generate HTML content
         let html_content = markdown_to_html(markdown_text, false, "", "");
-        
+
         // Write to file
         match std::fs::write(&path_str, html_content) {
             Ok(_) => true,
@@ -946,4 +1026,3 @@ pub fn save_html_file(markdown_text: &str) -> bool {
         }
     }
 }
-
