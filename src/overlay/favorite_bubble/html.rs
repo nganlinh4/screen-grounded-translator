@@ -28,16 +28,16 @@ html, body {{
     padding: 30px 20px; /* Default padding, will be overridden by side class */
 }}
 
-/* Bubble on right = panel on left = overshoot goes left */
+/* Bubble on right = panel on left */
 .container.side-right {{
-    padding-left: 100px;  /* More room for left overshoot */
-    padding-right: 10px;  /* Less gap to bubble */
+    padding-left: 30px;
+    padding-right: 10px;
 }}
 
-/* Bubble on left = panel on right = overshoot goes right */
+/* Bubble on left = panel on right */
 .container.side-left {{
-    padding-left: 10px;   /* Less gap to bubble */
-    padding-right: 100px; /* More room for right overshoot */
+    padding-left: 10px;
+    padding-right: 30px;
 }}
 
 .list {{
@@ -64,10 +64,10 @@ html, body {{
     /* Animation state */
     opacity: 0;
     pointer-events: none;
-    transform: scale(0.1);
+    transform: scale(0.01);
     transition: 
-        transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1),
-        opacity 0.4s ease,
+        transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 0.25s ease-out,
         background 0.2s ease,
         box-shadow 0.2s ease,
         font-variation-settings 0.2s ease;
@@ -189,14 +189,14 @@ function animateIn(bx, by) {{
         // 1. Force initial state (at bubble, invisible)
         item.style.transition = 'none';
         item.style.opacity = '0';
-        item.style.transform = `translate(${{dx}}px, ${{dy}}px) scale(0.1)`;
+        item.style.transform = `translate(${{dx}}px, ${{dy}}px) scale(0.01)`;
         item.classList.remove('visible');
         
         item.offsetHeight; // Flush
         
         // 2. Set transition and target state
         item.style.transition = ''; 
-        item.style.transitionDelay = `${{i * 25}}ms`;
+        item.style.transitionDelay = `${{i * 15}}ms`;
         
         requestAnimationFrame(() => {{
             // Add class and set target state explicitly
@@ -212,7 +212,7 @@ function animateIn(bx, by) {{
                     item.style.transition = '';
                     item.style.transitionDelay = '';
                 }}
-            }}, 500 + (i * 25));
+            }}, 300 + (i * 15));
         }});
     }});
 }}
@@ -231,16 +231,17 @@ function closePanel() {{
         const dx = bx - ix;
         const dy = by - iy;
 
-        // Animate back to bubble
-        item.style.transitionDelay = `${{(items.length - 1 - i) * 15}}ms`;
+        // Animate back to bubble with fade out
+        item.style.transitionDelay = `${{(items.length - 1 - i) * 8}}ms`;
         item.classList.remove('visible');
-        item.style.transform = `translate(${{dx}}px, ${{dy}}px) scale(0.1)`;
+        item.style.opacity = '0';
+        item.style.transform = `translate(${{dx}}px, ${{dy}}px) scale(0.01)`;
     }});
 
     currentTimeout = setTimeout(() => {{
         window.ipc.postMessage('close_now');
         currentTimeout = null;
-    }}, items.length * 15 + 450);
+    }}, items.length * 8 + 300);
 }}
 
 window.setSide = (side) => {{ 

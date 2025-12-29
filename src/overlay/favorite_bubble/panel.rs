@@ -257,9 +257,8 @@ unsafe fn refresh_panel_layout_and_content(
         0
     };
 
-    // Buffer for bloom bounce and hover scaling
-    // CSS uses asymmetric padding: 100px on overshoot side, 10px on bubble side.
-    let buffer_x = 110;
+    // Buffer for padding (no bounce overshoot with smooth easing)
+    let buffer_x = 40;
     let buffer_y = 60;
 
     let panel_width = if fav_count == 0 {
@@ -291,11 +290,14 @@ unsafe fn refresh_panel_layout_and_content(
         )
     };
 
+    // Use the actual clamped panel_y for positioning
+    let actual_panel_y = panel_y.max(10);
+
     let _ = SetWindowPos(
         panel_hwnd,
         None,
         panel_x,
-        panel_y.max(10),
+        actual_panel_y,
         panel_width,
         panel_height,
         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
@@ -322,12 +324,13 @@ unsafe fn refresh_panel_layout_and_content(
     update_panel_content(&favorites_html, num_cols);
 
     // Pass side and bubble center relative to panel to JS
+    // Use actual_panel_y (clamped) to match the real window position
     let bx = if side == "left" {
         -(BUBBLE_SIZE as i32 / 2) - 4
     } else {
         panel_width + (BUBBLE_SIZE as i32 / 2) + 4
     };
-    let by = (bubble_rect.top + BUBBLE_SIZE as i32 / 2) - panel_y;
+    let by = (bubble_rect.top + BUBBLE_SIZE as i32 / 2) - actual_panel_y;
 
     PANEL_WEBVIEW.with(|wv| {
         if let Some(webview) = wv.borrow().as_ref() {
