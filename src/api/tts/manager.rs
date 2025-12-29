@@ -171,6 +171,21 @@ impl TtsManager {
         false
     }
 
+    /// Check if there's any pending TTS audio (in work queue or playback queue)
+    pub fn has_pending_audio(&self) -> bool {
+        let wq_has = self
+            .work_queue
+            .lock()
+            .map(|q| !q.is_empty())
+            .unwrap_or(false);
+        let pq_has = self
+            .playback_queue
+            .lock()
+            .map(|q| !q.is_empty())
+            .unwrap_or(false);
+        wq_has || pq_has
+    }
+
     /// Shutdown the TTS manager
     pub fn _shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);

@@ -31,7 +31,7 @@ thread_local! {
 }
 
 const POPUP_WIDTH: i32 = 250;
-const BASE_POPUP_HEIGHT: i32 = 118; // Base height at 100% scaling (96 DPI)
+const BASE_POPUP_HEIGHT: i32 = 152; // Base height at 100% scaling (96 DPI) - includes stop TTS row
 
 /// Get DPI-scaled popup height
 fn get_scaled_popup_height() -> i32 {
@@ -155,7 +155,7 @@ pub fn is_popup_open() -> bool {
 fn generate_popup_html() -> String {
     use crate::config::ThemeMode;
     
-    let (settings_text, bubble_text, quit_text, bubble_checked, is_dark_mode) = if let Ok(app) = APP.lock() {
+    let (settings_text, bubble_text, stop_tts_text, quit_text, bubble_checked, is_dark_mode) = if let Ok(app) = APP.lock() {
         let lang = &app.config.ui_language;
         let settings = match lang.as_str() {
             "vi" => "Cài đặt",
@@ -166,6 +166,11 @@ fn generate_popup_html() -> String {
             "vi" => "Hiển thị bong bóng",
             "ko" => "즐겨찾기 버블",
             _ => "Favorite Bubble",
+        };
+        let stop_tts = match lang.as_str() {
+            "vi" => "Dừng tất cả giọng đang đọc",
+            "ko" => "재생 중인 모든 음성 중지",
+            _ => "Stop All Playing TTS",
         };
         let quit = match lang.as_str() {
             "vi" => "Thoát",
@@ -181,10 +186,13 @@ fn generate_popup_html() -> String {
             ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
         };
         
-        (settings, bubble, quit, checked, is_dark)
+        (settings, bubble, stop_tts, quit, checked, is_dark)
     } else {
-        ("Settings", "Favorite Bubble", "Quit", false, true)
+        ("Settings", "Favorite Bubble", "Stop All TTS", "Quit", false, true)
     };
+
+    // Check if TTS has pending audio
+    let has_tts_pending = crate::api::tts::TTS_MANAGER.has_pending_audio();
 
     // Define Colors based on theme
     let (bg_color, text_color, hover_color, border_color, separator_color) = if is_dark_mode {
@@ -204,6 +212,8 @@ fn generate_popup_html() -> String {
     } else {
         ""
     };
+
+    let stop_tts_disabled_class = if has_tts_pending { "" } else { "disabled" };
 
     // Get font CSS to preload fonts into WebView2 cache (tray popup warms up first)
     let font_css = crate::overlay::html_components::font_manager::get_font_css();
@@ -305,6 +315,11 @@ svg {{
     font-variation-settings: 'wght' 700, 'wdth' 110, 'ROND' 100;
     color: var(--text-color);
 }}
+
+.menu-item.disabled {{
+    opacity: 0.4;
+    pointer-events: none;
+}}
 </style>
 </head>
 <body>
@@ -326,6 +341,14 @@ svg {{
         </div>
         <div class="label">{bubble}</div>
         <div class="check" id="bubble-check-container">{check}</div>
+    </div>
+    
+    <div class="menu-item {stop_tts_disabled}" onclick="action('stop_tts')">
+        <div class="icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+        </div>
+        <div class="label">{stop_tts}</div>
+        <div class="check"></div>
     </div>
     
     <div class="separator"></div>
@@ -371,6 +394,8 @@ window.addEventListener('blur', function() {{
         separator = separator_color,
         settings = settings_text,
         bubble = bubble_text,
+        stop_tts = stop_tts_text,
+        stop_tts_disabled = stop_tts_disabled_class,
         quit = quit_text,
         check = check_mark
     )
@@ -559,6 +584,20 @@ fn create_popup_window(is_warmup: bool) {
                                     let _ = webview.evaluate_script(&js);
                                 }
                             });
+                        }
+                        "stop_tts" => {
+                            // Stop all TTS playback and clear queues
+                            crate::api::tts::TTS_MANAGER.stop();
+                            // Close popup after action
+                            let h = POPUP_HWND.load(Ordering::SeqCst);
+                            if h != 0 {
+                                let _ = PostMessageW(
+                                    Some(HWND(h as *mut _)),
+                                    WM_CLOSE,
+                                    WPARAM(0),
+                                    LPARAM(0),
+                                );
+                            }
                         }
                         "quit" => {
                             // Close popup first
