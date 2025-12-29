@@ -196,6 +196,12 @@ fn generate_popup_html() -> String {
     } else {
         ""
     };
+    
+    let active_class = if bubble_checked {
+        "active"
+    } else {
+        ""
+    };
 
     // Get font CSS to preload fonts into WebView2 cache (tray popup warms up first)
     let font_css = crate::overlay::html_components::font_manager::get_font_css();
@@ -220,7 +226,7 @@ html, body {{
     height: 100%;
     overflow: hidden;
     background: var(--bg-color);
-    font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+    font-family: 'Google Sans Flex', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
     user-select: none;
     color: var(--text-color);
     border: 1px solid var(--border-color);
@@ -286,6 +292,16 @@ svg {{
     width: 16px;
     height: 16px;
 }}
+
+
+.bubble-item .label {{
+    transition: font-variation-settings 0.4s cubic-bezier(0.33, 1, 0.68, 1);
+    font-variation-settings: 'wght' 400, 'wdth' 100;
+}}
+.bubble-item.active .label {{
+    font-variation-settings: 'wght' 700, 'wdth' 110;
+    color: var(--text-color);
+}}
 </style>
 </head>
 <body>
@@ -301,7 +317,7 @@ svg {{
         <div class="check"></div>
     </div>
     
-    <div class="menu-item" onclick="action('bubble')">
+    <div class="menu-item bubble-item {active_class}" data-state="{active_class}" onclick="action('bubble')">
         <div class="icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         </div>
@@ -321,6 +337,17 @@ svg {{
 </div>
 <script>
 function action(cmd) {{
+    if (cmd === 'bubble') {{
+        const el = document.querySelector('.bubble-item');
+        if (el) {{
+            // Toggle active class instantly for live animation
+            if (el.classList.contains('active')) {{
+                el.classList.remove('active');
+            }} else {{
+                el.classList.add('active');
+            }}
+        }}
+    }}
     window.ipc.postMessage(cmd);
 }}
 // Close on click outside (detect blur)

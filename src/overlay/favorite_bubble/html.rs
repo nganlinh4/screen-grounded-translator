@@ -3,6 +3,7 @@ use crate::gui::settings_ui::get_localized_preset_name;
 
 pub fn generate_panel_html(presets: &[Preset], lang: &str) -> String {
     let favorites_html = get_favorite_presets_html(presets, lang);
+    let font_css = crate::overlay::html_components::font_manager::get_font_css();
 
     format!(
         r#"<!DOCTYPE html>
@@ -10,13 +11,14 @@ pub fn generate_panel_html(presets: &[Preset], lang: &str) -> String {
 <head>
 <meta charset="UTF-8">
 <style>
+{font_css}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 html, body {{
     width: 100%;
     height: 100%;
     overflow: hidden;
     background: transparent;
-    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-family: 'Google Sans Flex', 'Segoe UI', system-ui, sans-serif;
     user-select: none;
 }}
 
@@ -39,7 +41,7 @@ html, body {{
     cursor: pointer;
     color: #eeeeee;
     font-size: 13px;
-    font-weight: 500;
+    font-variation-settings: 'wght' 500, 'wdth' 100;
     background: rgba(20, 20, 30, 0.85);
     backdrop-filter: blur(12px);
     transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
@@ -53,6 +55,7 @@ html, body {{
     background: rgba(40, 40, 55, 0.95);
     border-color: rgba(255, 255, 255, 0.25);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    font-variation-settings: 'wght' 650, 'wdth' 105;
 }}
 
 .preset-item:active {{
@@ -122,6 +125,7 @@ function trigger(idx) {{
 </script>
 </body>
 </html>"#,
+        font_css = font_css,
         favorites = favorites_html
     )
 }
