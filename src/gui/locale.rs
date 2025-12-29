@@ -183,6 +183,9 @@ pub struct LocaleText {
     // --- FAVORITE BUBBLE ---
     pub favorites_empty: &'static str,
     pub recording_subtext: &'static str,
+    // --- AUTO COPY BADGE ---
+    pub auto_copied_badge: &'static str,
+    pub auto_copied_image_badge: &'static str,
 }
 
 impl LocaleText {
@@ -407,6 +410,9 @@ impl LocaleText {
                 // --- FAVORITE BUBBLE VI ---
                  favorites_empty: "Vui lòng đưa ít nhất một cấu hình vào ưa thích",
                  recording_subtext: "Bấm hotkey lần nữa hoặc ESC để xử lý âm thanh",
+                 // --- AUTO COPY BADGE VI ---
+                 auto_copied_badge: "Đã tự động copy",
+                 auto_copied_image_badge: "🖼️ Ảnh đã được sao chép",
                  },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -627,6 +633,9 @@ impl LocaleText {
                 // --- FAVORITE BUBBLE KO ---
                  favorites_empty: "즐겨찾기에 최소한 하나의 프리셋을 추가해주세요",
                  recording_subtext: "단축키를 다시 누르거나 ESC를 눌러 오디오 처리",
+                 // --- AUTO COPY BADGE KO ---
+                 auto_copied_badge: "자동으로 복사됨",
+                 auto_copied_image_badge: "🖼️ 이미지가 복사됨",
                  },
                 _ => Self {
                  history_btn: "History",
@@ -847,6 +856,9 @@ impl LocaleText {
                 // --- FAVORITE BUBBLE EN ---
                  favorites_empty: "Please add at least one configuration to favorites",
                  recording_subtext: "Press hotkey again or ESC to process audio",
+                 // --- AUTO COPY BADGE EN ---
+                 auto_copied_badge: "Auto-copied",
+                 auto_copied_image_badge: "🖼️ Image copied",
                  },
                 }
     }

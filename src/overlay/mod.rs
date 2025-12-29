@@ -1,3 +1,4 @@
+pub mod auto_copy_badge; // Auto-copy notification badge
 pub mod broom_assets;
 pub mod paint_utils;
 pub mod preset_wheel;

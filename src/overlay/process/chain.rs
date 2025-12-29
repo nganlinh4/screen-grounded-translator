@@ -501,9 +501,15 @@ pub fn run_chain_step(
 
         if has_content {
             let txt_c = result_text.clone();
+            let txt_for_badge = result_text.clone();
             std::thread::spawn(move || {
                 crate::overlay::utils::copy_to_clipboard(&txt_c, HWND::default());
+                // Show auto-copy badge notification with text snippet
+                crate::overlay::auto_copy_badge::show_auto_copy_badge_text(&txt_for_badge);
             });
+        } else if image_copied {
+            // For image-only copy, show the badge with image message
+            crate::overlay::auto_copy_badge::show_auto_copy_badge_image();
         }
 
         if has_content || image_copied {
