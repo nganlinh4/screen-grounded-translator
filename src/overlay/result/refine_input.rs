@@ -434,6 +434,9 @@ pub fn show_refine_input(parent_hwnd: HWND, placeholder: &str) -> bool {
                     },
                 );
 
+                // Immediately focus
+                focus_refine_input(parent_hwnd);
+
                 true
             }
             Err(_) => {
@@ -446,6 +449,11 @@ pub fn show_refine_input(parent_hwnd: HWND, placeholder: &str) -> bool {
 
 /// Focus the refine input WebView
 pub fn focus_refine_input(parent_hwnd: HWND) {
+    unsafe {
+        // Ensure the parent window is active so the WebView can receive input
+        let _ = SetForegroundWindow(parent_hwnd);
+    }
+
     let parent_key = parent_hwnd.0 as isize;
 
     REFINE_WEBVIEWS.with(|webviews| {
