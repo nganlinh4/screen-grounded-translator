@@ -212,32 +212,60 @@ pub fn record_audio_and_transcribe(
                 Some(d) => d,
                 None => {
                     eprintln!("Error: No default output device found for loopback.");
-                    host.default_input_device()
-                        .expect("No input device available")
+                    unsafe {
+                        let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    }
+                    return;
                 }
             }
         }
         #[cfg(not(target_os = "windows"))]
         {
-            host.default_input_device()
-                .expect("No input device available")
+            // Strict failure if not Windows (device loopback primarily supported on Windows via WASAPI)
+            eprintln!("Error: Device capture not supported on this OS or no device found.");
+            unsafe {
+                let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+            return;
         }
     } else {
-        host.default_input_device()
-            .expect("No input device available")
+        match host.default_input_device() {
+            Some(d) => d,
+            None => {
+                eprintln!("Error: No input device available.");
+                unsafe {
+                    let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+                return;
+            }
+        }
     };
 
     let config = if preset.audio_source == "device" {
         match device.default_output_config() {
             Ok(c) => c,
-            Err(_) => device
-                .default_input_config()
-                .expect("Failed to get audio config"),
+            Err(_) => match device.default_input_config() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to get audio config: {}", e);
+                    unsafe {
+                        let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    }
+                    return;
+                }
+            },
         }
     } else {
-        device
-            .default_input_config()
-            .expect("Failed to get audio config")
+        match device.default_input_config() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to get audio config: {}", e);
+                unsafe {
+                    let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+                return;
+            }
+        }
     };
 
     let sample_rate = config.sample_rate().0;
