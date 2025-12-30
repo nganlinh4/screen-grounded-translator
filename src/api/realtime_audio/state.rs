@@ -207,7 +207,7 @@ impl RealtimeState {
         let clause_delimiters = [',', ';', ':', '，', '；', '：'];
 
         // Thresholds
-        const LONG_SENTENCE_THRESHOLD: usize = 60; // Start looking for commas if buffer > 60 chars
+        const LONG_SENTENCE_THRESHOLD: usize = 30; // Start looking for commas if buffer > 60 chars
         const MIN_CLAUSE_LENGTH: usize = 20; // Don't commit tiny fragments like "Oh,"
 
         let uncommitted_len = self.uncommitted_translation.len();

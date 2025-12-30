@@ -269,18 +269,45 @@ fn render_main_ui(ui: &mut egui::Ui, state: &mut RealtimeUiState) {
                     .map(|c| c.to_uppercase())
                     .unwrap_or_else(|| current_lang.chars().take(2).collect::<String>().to_uppercase());
                 
-                ui.menu_button(&lang_code, |ui| {
-                    egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
-                        for lang in crate::config::get_all_languages() {
-                            if ui.selectable_label(current_lang == *lang, lang).clicked() {
-                                if let Ok(mut l) = NEW_TARGET_LANGUAGE.lock() { *l = lang.to_string(); }
-                                LANGUAGE_CHANGE.store(true, Ordering::SeqCst);
-                                if let Ok(mut app) = APP.lock() { app.config.realtime_target_language = lang.to_string(); }
-                                ui.close();
-                            }
+                let btn_resp = ui.button(&lang_code);
+                if btn_resp.clicked() {
+                    egui::Popup::toggle_id(ui.ctx(), btn_resp.id);
+                }
+                let popup_id = btn_resp.id;
+                
+                egui::Popup::from_toggle_button_response(&btn_resp)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui.set_min_width(120.0);
+                        let search_id = egui::Id::new("realtime_lang_search");
+                        let mut search_text: String = ui.data_mut(|d| d.get_temp(search_id).unwrap_or_default());
+                        
+                        let response = ui.add(egui::TextEdit::singleline(&mut search_text).hint_text("Search...").desired_width(120.0));
+                        if response.changed() {
+                            ui.data_mut(|d| d.insert_temp(search_id, search_text.clone()));
                         }
+                        if response.clicked() {
+                            response.request_focus();
+                        }
+
+                        ui.separator();
+
+                        egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
+                            for lang in crate::config::get_all_languages() {
+                                let matches = search_text.is_empty() || lang.to_lowercase().contains(&search_text.to_lowercase());
+                                if matches {
+                                    if ui.selectable_label(current_lang == *lang, lang).clicked() {
+                                        if let Ok(mut l) = NEW_TARGET_LANGUAGE.lock() { *l = lang.to_string(); }
+                                        LANGUAGE_CHANGE.store(true, Ordering::SeqCst);
+                                        if let Ok(mut app) = APP.lock() { app.config.realtime_target_language = lang.to_string(); }
+                                        ui.data_mut(|d| d.remove_temp::<String>(search_id));
+                                        
+                                        egui::Popup::toggle_id(ui.ctx(), popup_id);
+                                    }
+                                }
+                            }
+                        });
                     });
-                });
             }
             
             ui.separator();

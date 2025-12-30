@@ -353,13 +353,13 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
         /* New/uncommitted text styling */
         .text-chunk.new {{
             color: #ffffff;
-            font-variation-settings: 'wght' 400, 'wdth' 98, 'slnt' 0, 'GRAD' 150, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
+            font-variation-settings: 'wght' 350, 'wdth' 99, 'slnt' 0, 'GRAD' 150, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
         }}
         
         /* Appearing state - wipe animation */
         .text-chunk.appearing {{
             color: #ffffff;
-            font-variation-settings: 'wght' 400, 'wdth' 98, 'slnt' 0, 'GRAD' 150, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
+            font-variation-settings: 'wght' 350, 'wdth' 99, 'slnt' 0, 'GRAD' 150, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
             
             -webkit-mask-image: linear-gradient(to right, black 50%, transparent 100%);
             mask-image: linear-gradient(to right, black 50%, transparent 100%);
