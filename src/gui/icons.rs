@@ -34,6 +34,7 @@ pub enum Icon {
     Sun,             // New: Sun icon for light mode
     Moon,            // New: Moon icon for dark mode
     Device,          // New: Monitor/Device icon for system theme
+    DragHandle,      // New: Drag handle for reordering
 }
 
 /// Main entry point: Draw a clickable icon button (default size 24.0)
@@ -897,6 +898,23 @@ fn paint_internal(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: 
                 ],
                 stroke,
             );
+        }
+
+        Icon::DragHandle => {
+            // Hamburger menu style (3 horizontal lines)
+            // or 6 dots? 6 dots is more common for drag handles.
+            // Let's do 6 dots (2 columns of 3)
+            let w_gap = 4.0 * scale;
+            let h_gap = 4.0 * scale;
+            let r = 1.0 * scale; // dot radius
+
+            for col in 0..2 {
+                for row in -1..=1 {
+                    let cx = center.x + (col as f32 - 0.5) * w_gap;
+                    let cy = center.y + row as f32 * h_gap;
+                    painter.circle_filled(egui::pos2(cx, cy), r, color);
+                }
+            }
         }
     }
 }

@@ -180,6 +180,11 @@ pub fn render_sidebar(
     let mut preset_idx_to_delete = None;
     let mut preset_idx_to_clone = None;
     let mut preset_idx_to_toggle_favorite = None;
+    let mut preset_swap_request = None;
+
+    // Get currently dragging item index from memory (if any)
+    let dragging_idx_id = egui::Id::new("sidebar_drag_source");
+    let dragging_source_idx: Option<usize> = ui.memory(|mem| mem.data.get_temp(dragging_idx_id));
 
     let mut image_indices = Vec::new();
     let mut text_indices = Vec::new();
@@ -194,11 +199,8 @@ pub fn render_sidebar(
         }
     }
 
-    audio_video_indices.sort_by_key(|&i| match config.presets[i].preset_type.as_str() {
-        "audio" => 0,
-        "video" => 1,
-        _ => 2,
-    });
+    // Audio/Video indices are not sorted by type to allow user reordering.
+    // They will appear in the order they are defined in config.presets.
 
     let current_view_mode = view_mode.clone();
     let mut should_set_global = false;
@@ -389,11 +391,13 @@ pub fn render_sidebar(
                         ui,
                         &config.presets,
                         idx,
+                        dragging_source_idx,
                         &current_view_mode,
                         &mut preset_idx_to_select,
                         &mut preset_idx_to_delete,
                         &mut preset_idx_to_clone,
                         &mut preset_idx_to_toggle_favorite,
+                        &mut preset_swap_request,
                         &config.ui_language,
                     );
                 } else {
@@ -407,11 +411,13 @@ pub fn render_sidebar(
                         ui,
                         &config.presets,
                         idx,
+                        dragging_source_idx,
                         &current_view_mode,
                         &mut preset_idx_to_select,
                         &mut preset_idx_to_delete,
                         &mut preset_idx_to_clone,
                         &mut preset_idx_to_toggle_favorite,
+                        &mut preset_swap_request,
                         &config.ui_language,
                     );
                 } else {
@@ -425,11 +431,13 @@ pub fn render_sidebar(
                         ui,
                         &config.presets,
                         idx,
+                        dragging_source_idx,
                         &current_view_mode,
                         &mut preset_idx_to_select,
                         &mut preset_idx_to_delete,
                         &mut preset_idx_to_clone,
                         &mut preset_idx_to_toggle_favorite,
+                        &mut preset_swap_request,
                         &config.ui_language,
                     );
                 } else {
@@ -490,6 +498,20 @@ pub fn render_sidebar(
         changed = true;
     }
 
+    if let Some((idx_a, idx_b)) = preset_swap_request {
+        // Swap presets
+        config.presets.swap(idx_a, idx_b);
+        // If currently selecting one of them, update view_mode
+        if let ViewMode::Preset(current) = view_mode {
+            if *current == idx_a {
+                *view_mode = ViewMode::Preset(idx_b);
+            } else if *current == idx_b {
+                *view_mode = ViewMode::Preset(idx_a);
+            }
+        }
+        changed = true;
+    }
+
     if let Some(type_str) = preset_to_add_type {
         let mut new_preset = Preset::default();
         if type_str == "text" {
@@ -538,11 +560,13 @@ fn render_preset_item_parts(
     ui: &mut egui::Ui,
     presets: &[Preset],
     idx: usize,
+    dragging_source_idx: Option<usize>,
     current_view_mode: &ViewMode,
     preset_idx_to_select: &mut Option<usize>,
     preset_idx_to_delete: &mut Option<usize>,
     preset_idx_to_clone: &mut Option<usize>,
     preset_idx_to_toggle_favorite: &mut Option<usize>,
+    preset_swap_request: &mut Option<(usize, usize)>,
     lang: &str,
 ) {
     let preset = &presets[idx];
@@ -595,8 +619,51 @@ fn render_preset_item_parts(
             });
         } else {
             draw_icon_static(ui, icon_type, Some(14.0));
-            if ui.selectable_label(is_selected, &display_name).clicked() {
+            // Make the label draggable.
+            // SelectableLabel by default captures clicks. We want to also capture drags.
+            let response = ui.add(
+                egui::SelectableLabel::new(is_selected, &display_name)
+                    .sense(egui::Sense::click_and_drag()),
+            );
+
+            if response.clicked() {
                 *preset_idx_to_select = Some(idx);
+            }
+
+            // Drag Source Logic
+            let dragging_id = egui::Id::new("sidebar_drag_source");
+            if response.drag_started() {
+                ui.memory_mut(|mem| mem.data.insert_temp(dragging_id, idx));
+            }
+            if response.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+            if response.drag_stopped() {
+                // Clear state when drag stops
+                ui.memory_mut(|mem| mem.data.remove::<usize>(dragging_id));
+            }
+
+            // Drop Target Logic
+            // If dragging, and we are not the source, and hovered, and released
+            if let Some(source_idx) = dragging_source_idx {
+                if source_idx != idx && response.hovered() && ui.input(|i| i.pointer.any_released())
+                {
+                    // Check if they are in the same column group
+                    let source_preset = &presets[source_idx];
+                    // Target is `preset`
+
+                    let get_group = |p: &Preset| -> u8 {
+                        match p.preset_type.as_str() {
+                            "text" => 1,
+                            "audio" | "video" => 2,
+                            _ => 0, // Image or default
+                        }
+                    };
+
+                    if get_group(source_preset) == get_group(preset) {
+                        *preset_swap_request = Some((source_idx, idx));
+                    }
+                }
             }
         }
     });
@@ -606,6 +673,8 @@ fn render_preset_item_parts(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         if !preset.is_upcoming {
+            // Drag handle removed - label is now draggable
+
             if icon_button_sized(ui, Icon::CopySmall, 22.0).clicked() {
                 *preset_idx_to_clone = Some(idx);
             }
