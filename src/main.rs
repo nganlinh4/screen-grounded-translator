@@ -9,6 +9,7 @@ mod model_config;
 mod overlay;
 mod updater;
 pub mod win_types;
+mod repo_consolidator;
 
 use config::{load_config, Config, ThemeMode};
 use gui::locale::LocaleText;
