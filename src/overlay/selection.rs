@@ -15,6 +15,16 @@ lazy_static::lazy_static! {
     static ref SELECTION_ABORT_SIGNAL: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 }
 
+// FFI types for Windows Magnification API (loaded dynamically from Magnification.dll)
+type MagInitializeFn = unsafe extern "system" fn() -> BOOL;
+type MagUninitializeFn = unsafe extern "system" fn() -> BOOL;
+type MagSetFullscreenTransformFn = unsafe extern "system" fn(f32, i32, i32) -> BOOL;
+
+static mut MAG_DLL: HMODULE = HMODULE(std::ptr::null_mut());
+static mut MAG_INITIALIZE: Option<MagInitializeFn> = None;
+static mut MAG_UNINITIALIZE: Option<MagUninitializeFn> = None;
+static mut MAG_SET_FULLSCREEN_TRANSFORM: Option<MagSetFullscreenTransformFn> = None;
+
 // --- CONFIGURATION ---
 const FADE_TIMER_ID: usize = 2;
 const TARGET_OPACITY: u8 = 120;
@@ -32,10 +42,56 @@ static mut CURRENT_PRESET_IDX: usize = 0;
 static mut SELECTION_HOOK: HHOOK = HHOOK(std::ptr::null_mut());
 
 // Cached back buffer to avoid per-frame allocations
-// Only cache the bitmap (the heavy allocation ~33MB for 4K), DC creation is cheap
+// Use a 32-bit DIB section for per-pixel alpha support (opaque box on semi-transparent dim)
 static mut CACHED_BITMAP: SendHbitmap = SendHbitmap(HBITMAP(std::ptr::null_mut()));
+static mut CACHED_BITS: *mut u8 = std::ptr::null_mut();
 static mut CACHED_W: i32 = 0;
 static mut CACHED_H: i32 = 0;
+
+// --- ZOOM/MAGNIFICATION STATE ---
+const ZOOM_STEP: f32 = 0.25;
+const MIN_ZOOM: f32 = 1.0;
+const MAX_ZOOM: f32 = 4.0;
+static mut ZOOM_LEVEL: f32 = 1.0;
+static mut ZOOM_CENTER_X: i32 = 0;
+static mut ZOOM_CENTER_Y: i32 = 0;
+// Alpha override when zoomed (0 = fully transparent dim)
+static mut ZOOM_ALPHA_OVERRIDE: Option<u8> = None;
+// Track if Windows Magnification API is initialized
+static mut MAG_INITIALIZED: bool = false;
+
+#[allow(static_mut_refs)]
+unsafe fn load_magnification_api() -> bool {
+    // Correctly access static mut using addr_of for Rust 2024 compliance
+    let mag_dll = std::ptr::addr_of!(MAG_DLL).read();
+    if !mag_dll.is_invalid() {
+        return true; // Already loaded
+    }
+
+    let dll_name = w!("Magnification.dll");
+    let dll = LoadLibraryW(dll_name);
+
+    if let Ok(h) = dll {
+        MAG_DLL = h;
+
+        // Get function pointers
+        if let Some(init) = GetProcAddress(h, s!("MagInitialize")) {
+            MAG_INITIALIZE = Some(std::mem::transmute(init));
+        }
+        if let Some(uninit) = GetProcAddress(h, s!("MagUninitialize")) {
+            MAG_UNINITIALIZE = Some(std::mem::transmute(uninit));
+        }
+        if let Some(transform) = GetProcAddress(h, s!("MagSetFullscreenTransform")) {
+            MAG_SET_FULLSCREEN_TRANSFORM = Some(std::mem::transmute(transform));
+        }
+
+        let init_ptr = std::ptr::addr_of!(MAG_INITIALIZE).read();
+        let trans_ptr = std::ptr::addr_of!(MAG_SET_FULLSCREEN_TRANSFORM).read();
+        return init_ptr.is_some() && trans_ptr.is_some();
+    }
+
+    false
+}
 
 // Helper to extract bytes from the HBITMAP only for the selected area
 unsafe fn extract_crop_from_hbitmap(
@@ -131,6 +187,7 @@ pub fn is_selection_overlay_active_and_dismiss() -> bool {
     }
 }
 
+#[allow(static_mut_refs)]
 pub fn show_selection_overlay(preset_idx: usize) {
     unsafe {
         CURRENT_PRESET_IDX = preset_idx;
@@ -138,6 +195,12 @@ pub fn show_selection_overlay(preset_idx: usize) {
         CURRENT_ALPHA = 0;
         IS_FADING_OUT = false;
         IS_DRAGGING = false;
+
+        // Reset zoom state
+        ZOOM_LEVEL = 1.0;
+        ZOOM_CENTER_X = 0;
+        ZOOM_CENTER_Y = 0;
+        ZOOM_ALPHA_OVERRIDE = None;
 
         SELECTION_ABORT_SIGNAL.store(false, Ordering::SeqCst);
         let instance = GetModuleHandleW(None).unwrap();
@@ -187,7 +250,8 @@ pub fn show_selection_overlay(preset_idx: usize) {
             SELECTION_HOOK = h;
         }
 
-        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+        // Initial sync to set alpha 0
+        sync_layered_window_contents(hwnd);
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
         let _ = SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
@@ -248,6 +312,7 @@ unsafe extern "system" fn selection_hook_proc(
     CallNextHookEx(None, code, wparam, lparam)
 }
 
+#[allow(static_mut_refs)]
 unsafe extern "system" fn selection_wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -261,7 +326,7 @@ unsafe extern "system" fn selection_wnd_proc(
                 let _ = GetCursorPos(std::ptr::addr_of_mut!(START_POS));
                 CURR_POS = START_POS;
                 SetCapture(hwnd);
-                let _ = InvalidateRect(Some(hwnd), None, false);
+                sync_layered_window_contents(hwnd);
             }
             LRESULT(0)
         }
@@ -269,8 +334,74 @@ unsafe extern "system" fn selection_wnd_proc(
             if IS_DRAGGING {
                 let _ = GetCursorPos(std::ptr::addr_of_mut!(CURR_POS));
                 // Force immediate repaint for smoothness
-                let _ = InvalidateRect(Some(hwnd), None, false);
-                let _ = UpdateWindow(hwnd);
+                sync_layered_window_contents(hwnd);
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            if !IS_FADING_OUT && !IS_DRAGGING {
+                // Extract wheel delta from wparam high word (signed)
+                let delta = ((wparam.0 >> 16) as i16) as i32;
+
+                // Get cursor position for zoom center
+                let mut cursor = POINT::default();
+                let _ = GetCursorPos(&mut cursor);
+
+                let old_zoom = ZOOM_LEVEL;
+
+                if delta > 0 {
+                    // Scroll up = zoom in
+                    ZOOM_LEVEL = (ZOOM_LEVEL + ZOOM_STEP).min(MAX_ZOOM);
+                    ZOOM_CENTER_X = cursor.x;
+                    ZOOM_CENTER_Y = cursor.y;
+                } else if delta < 0 {
+                    // Scroll down = zoom out
+                    ZOOM_LEVEL = (ZOOM_LEVEL - ZOOM_STEP).max(MIN_ZOOM);
+                }
+
+                // Apply Windows Magnification API for real screen zoom
+                if (ZOOM_LEVEL - old_zoom).abs() > 0.001 {
+                    // Initialize magnification if not already done
+                    if !MAG_INITIALIZED {
+                        if load_magnification_api() {
+                            if let Some(init_fn) = MAG_INITIALIZE {
+                                if init_fn().as_bool() {
+                                    MAG_INITIALIZED = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if MAG_INITIALIZED {
+                        // Apply full-screen magnification centered on cursor
+                        if let Some(transform_fn) = MAG_SET_FULLSCREEN_TRANSFORM {
+                            if ZOOM_LEVEL > 1.0 {
+                                let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+                                let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+                                let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+                                let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+
+                                // Calculate the top-left offset to center the magnified view on the cursor
+                                let view_w = (screen_w as f32 / ZOOM_LEVEL) as i32;
+                                let view_h = (screen_h as f32 / ZOOM_LEVEL) as i32;
+
+                                let mut off_x = ZOOM_CENTER_X - view_w / 2;
+                                let mut off_y = ZOOM_CENTER_Y - view_h / 2;
+
+                                // Clamp to virtual screen bounds
+                                off_x = off_x.max(screen_x).min(screen_x + screen_w - view_w);
+                                off_y = off_y.max(screen_y).min(screen_y + screen_h - view_h);
+
+                                let _ = transform_fn(ZOOM_LEVEL, off_x, off_y);
+                            } else {
+                                // Reset screen transform completely at 1.0 zoom
+                                let _ = transform_fn(1.0, 0, 0);
+                            }
+                        }
+                    }
+
+                    sync_layered_window_contents(hwnd);
+                }
             }
             LRESULT(0)
         }
@@ -308,7 +439,9 @@ unsafe extern "system" fn selection_wnd_proc(
                         let _ = GetCursorPos(&mut cursor_pos);
 
                         // Hide selection overlay temporarily while showing wheel
-                        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 60, LWA_ALPHA);
+                        // Hide selection overlay temporarily while showing wheel
+                        ZOOM_ALPHA_OVERRIDE = Some(60);
+                        sync_layered_window_contents(hwnd);
 
                         // Show preset wheel - this blocks until user makes selection
                         let selected =
@@ -357,6 +490,14 @@ unsafe extern "system" fn selection_wnd_proc(
 
                     // 3. START FADE OUT
                     IS_FADING_OUT = true;
+                    // Reset magnification instantly
+                    unsafe {
+                        if MAG_INITIALIZED {
+                            if let Some(transform_fn) = MAG_SET_FULLSCREEN_TRANSFORM {
+                                let _ = transform_fn(1.0, 0, 0);
+                            }
+                        }
+                    }
                     let _ = SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
 
                     return LRESULT(0);
@@ -392,118 +533,221 @@ unsafe extern "system" fn selection_wnd_proc(
                 }
 
                 if changed {
-                    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), CURRENT_ALPHA, LWA_ALPHA);
+                    sync_layered_window_contents(hwnd);
                 }
             }
             LRESULT(0)
         }
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
-            let hdc = BeginPaint(hwnd, &mut ps);
-
-            let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-            let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-
-            // OPTIMIZATION: Cache the full-screen bitmap (heavy allocation ~33MB for 4K)
-            // The DC is lightweight and created per-frame, bitmap is reused
-            if std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid()
-                || CACHED_W != width
-                || CACHED_H != height
-            {
-                if !std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() {
-                    let _ = DeleteObject(CACHED_BITMAP.0.into());
-                }
-                let hbm = CreateCompatibleBitmap(hdc, width, height);
-                CACHED_BITMAP = SendHbitmap(hbm);
-                CACHED_W = width;
-                CACHED_H = height;
-            }
-
-            // Create lightweight DC per-frame (no expensive allocation)
-            let mem_dc = CreateCompatibleDC(Some(hdc));
-            let old_bmp = SelectObject(mem_dc, CACHED_BITMAP.0.into());
-
-            // 1. Clear background using stock black brush (no allocation)
-            let black_brush = GetStockObject(BLACK_BRUSH);
-            let full_rect = RECT {
-                left: 0,
-                top: 0,
-                right: width,
-                bottom: height,
-            };
-            FillRect(mem_dc, &full_rect, HBRUSH(black_brush.0));
-
-            if IS_DRAGGING {
-                let rect_abs = RECT {
-                    left: START_POS.x.min(CURR_POS.x),
-                    top: START_POS.y.min(CURR_POS.y),
-                    right: START_POS.x.max(CURR_POS.x),
-                    bottom: START_POS.y.max(CURR_POS.y),
-                };
-
-                let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-                let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-
-                let r = RECT {
-                    left: rect_abs.left - screen_x,
-                    top: rect_abs.top - screen_y,
-                    right: rect_abs.right - screen_x,
-                    bottom: rect_abs.bottom - screen_y,
-                };
-
-                let w = (r.right - r.left).abs();
-                let h = (r.bottom - r.top).abs();
-
-                if w > 0 && h > 0 {
-                    // FIX: Use Native GDI RoundRect instead of CPU-heavy SDF
-                    // This is hardware accelerated and instant for 4K+ resolutions
-
-                    // Create White Pen (2px thick)
-                    let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF));
-                    let old_pen = SelectObject(mem_dc, pen.into());
-
-                    // Use Null Brush (Transparent Fill)
-                    let null_brush = GetStockObject(NULL_BRUSH);
-                    let old_brush = SelectObject(mem_dc, null_brush);
-
-                    // Draw Rounded Rectangle
-                    let _ = RoundRect(mem_dc, r.left, r.top, r.right, r.bottom, 12, 12);
-
-                    // Cleanup
-                    SelectObject(mem_dc, old_brush);
-                    SelectObject(mem_dc, old_pen);
-                    let _ = DeleteObject(pen.into());
-                }
-            }
-
-            // Blit to screen
-            let _ = BitBlt(hdc, 0, 0, width, height, Some(mem_dc), 0, 0, SRCCOPY).ok();
-
-            // Cleanup DC (but keep cached bitmap)
-            SelectObject(mem_dc, old_bmp);
-            let _ = DeleteDC(mem_dc);
-
+            let _ = BeginPaint(hwnd, &mut ps);
+            sync_layered_window_contents(hwnd);
             let _ = EndPaint(hwnd, &mut ps);
             LRESULT(0)
         }
+        WM_ERASEBKGND => LRESULT(1), // Handle erasing to prevent flicker
         WM_CLOSE => {
             if !IS_FADING_OUT {
                 IS_FADING_OUT = true;
+                // Reset magnification instantly
+                unsafe {
+                    if MAG_INITIALIZED {
+                        if let Some(transform_fn) = MAG_SET_FULLSCREEN_TRANSFORM {
+                            let _ = transform_fn(1.0, 0, 0);
+                        }
+                    }
+                }
                 let _ = KillTimer(Some(hwnd), FADE_TIMER_ID);
                 SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
             }
             LRESULT(0)
         }
         WM_DESTROY => {
-            // Cleanup cached back buffer resources
-            if !std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() {
-                let _ = DeleteObject(CACHED_BITMAP.0.into());
-                CACHED_BITMAP = SendHbitmap::default();
+            // Reset magnification before closing
+            unsafe {
+                if MAG_INITIALIZED {
+                    if let Some(transform_fn) = MAG_SET_FULLSCREEN_TRANSFORM {
+                        let _ = transform_fn(1.0, 0, 0);
+                    }
+                    if let Some(uninit_fn) = MAG_UNINITIALIZE {
+                        let _ = uninit_fn();
+                    }
+                    MAG_INITIALIZED = false;
+                }
             }
-            CACHED_W = 0;
-            CACHED_H = 0;
+
+            // Cleanup cached back buffer resources
+            unsafe {
+                if !std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() {
+                    let _ = DeleteObject(CACHED_BITMAP.0.into());
+                    CACHED_BITMAP = SendHbitmap::default();
+                    CACHED_BITS = std::ptr::null_mut();
+                }
+                CACHED_W = 0;
+                CACHED_H = 0;
+            }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+/// New high-performance renderer using UpdateLayeredWindow
+/// This allows us to have an OPAQUE white box even when the dim background is TRANSPARENT
+#[allow(static_mut_refs)]
+unsafe fn sync_layered_window_contents(hwnd: HWND) {
+    let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    // 1. Prepare/Cache 32-bit DIB Context
+    if std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid()
+        || CACHED_W != width
+        || CACHED_H != height
+    {
+        if !std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() {
+            let _ = DeleteObject(CACHED_BITMAP.0.into());
+            CACHED_BITS = std::ptr::null_mut();
+        }
+
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height, // Top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let hdc_screen = GetDC(None);
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let hbm = CreateDIBSection(Some(hdc_screen), &bmi, DIB_RGB_COLORS, &mut bits, None, 0);
+        ReleaseDC(None, hdc_screen);
+
+        if let Ok(h) = hbm {
+            CACHED_BITMAP = SendHbitmap(h);
+            CACHED_BITS = bits as *mut u8;
+            CACHED_W = width;
+            CACHED_H = height;
+        } else {
+            return;
+        }
+    }
+
+    // 2. Draw using GDI to the DIB
+    let hdc_screen = GetDC(None);
+    let mem_dc = CreateCompatibleDC(Some(hdc_screen));
+    let old_bmp = SelectObject(mem_dc, CACHED_BITMAP.0.into());
+
+    // OPTIMIZATION: Clear background directly via memory fill (much faster than GDI)
+    let effective_alpha = if let Some(zoom_alpha) = ZOOM_ALPHA_OVERRIDE {
+        zoom_alpha.min(CURRENT_ALPHA)
+    } else {
+        CURRENT_ALPHA
+    };
+
+    let total_pixels = (width * height) as usize;
+    let pixels_u32 = std::slice::from_raw_parts_mut(CACHED_BITS as *mut u32, total_pixels);
+
+    // Fill with pre-multiplied alpha black: (0, 0, 0, alpha)
+    let bg_val = (effective_alpha as u32) << 24;
+    pixels_u32.fill(bg_val);
+
+    // Draw the selection rectangle
+    if IS_DRAGGING {
+        let rect_abs = RECT {
+            left: START_POS.x.min(CURR_POS.x),
+            top: START_POS.y.min(CURR_POS.y),
+            right: START_POS.x.max(CURR_POS.x),
+            bottom: START_POS.y.max(CURR_POS.y),
+        };
+
+        let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+
+        let r = RECT {
+            left: rect_abs.left - screen_x,
+            top: rect_abs.top - screen_y,
+            right: rect_abs.right - screen_x,
+            bottom: rect_abs.bottom - screen_y,
+        };
+
+        let w = (r.right - r.left).abs();
+        let h = (r.bottom - r.top).abs();
+
+        if w > 0 && h > 0 {
+            // Draw pure white box (GDI will set color but likely alpha 0)
+            let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF));
+            let old_pen = SelectObject(mem_dc, pen.into());
+            let null_brush = GetStockObject(NULL_BRUSH);
+            let old_brush = SelectObject(mem_dc, null_brush);
+
+            let _ = RoundRect(mem_dc, r.left, r.top, r.right, r.bottom, 12, 12);
+
+            SelectObject(mem_dc, old_brush);
+            SelectObject(mem_dc, old_pen);
+            let _ = DeleteObject(pen.into());
+
+            // 3. SECURING ALPHA: Only iterate over the bounding area of the selection
+            // This is much faster than processing the whole screen on every move
+            let b_left = (r.left - 5).max(0);
+            let b_top = (r.top - 5).max(0);
+            let b_right = (r.right + 5).min(width);
+            let b_bottom = (r.bottom + 5).min(height);
+
+            for y in b_top..b_bottom {
+                let row_start = (y * width + b_left) as usize;
+                let row_end = (y * width + b_right) as usize;
+                if row_start < pixels_u32.len() && row_end <= pixels_u32.len() {
+                    for p in &mut pixels_u32[row_start..row_end] {
+                        if (*p & 0x00FFFFFF) > 0x0A0A0A {
+                            *p = 0xFFFFFFFF; // Make the white box opaque
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Update the Layered Window
+    let blend = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: 255, // Use per-pixel alpha from the bitmap
+        AlphaFormat: AC_SRC_ALPHA as u8,
+    };
+
+    let screen_pos = POINT {
+        x: GetSystemMetrics(SM_XVIRTUALSCREEN),
+        y: GetSystemMetrics(SM_YVIRTUALSCREEN),
+    };
+    let wnd_size = SIZE {
+        cx: width,
+        cy: height,
+    };
+    let src_pos = POINT { x: 0, y: 0 };
+
+    let _ = UpdateLayeredWindow(
+        hwnd,
+        Some(hdc_screen),
+        Some(&screen_pos),
+        Some(&wnd_size),
+        Some(mem_dc),
+        Some(&src_pos),
+        COLORREF(0),
+        Some(&blend),
+        ULW_ALPHA,
+    );
+
+    // Cleanup DC
+    SelectObject(mem_dc, old_bmp);
+    let _ = DeleteDC(mem_dc);
+    ReleaseDC(None, hdc_screen);
 }

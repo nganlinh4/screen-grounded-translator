@@ -75,6 +75,7 @@ features = [
     "Win32_System_SystemInformation",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_Magnification",
 ]
 
 [profile.release]
