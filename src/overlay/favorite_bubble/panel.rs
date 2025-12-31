@@ -1,4 +1,4 @@
-use super::html::{escape_js, generate_panel_html, get_favorite_presets_html};
+use super::html::{escape_js, generate_panel_css, generate_panel_html, get_favorite_presets_html};
 use super::render::update_bubble_visual;
 use super::state::*;
 use super::utils::HwndWrapper;
@@ -8,11 +8,23 @@ use windows::core::w;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetClientRect,
+    GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, LoadCursorW,
+    PostMessageW, RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, CREATESTRUCTW, GWL_STYLE, HTCAPTION, HWND_TOPMOST, IDC_ARROW,
+    SM_CXSCREEN, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+    SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, WINDOW_LONG_PTR_INDEX, WM_ACTIVATE, WM_APP,
+    WM_CLOSE, WM_CREATE, WM_DESTROY, WM_HOTKEY, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_MOUSEACTIVATE,
+    WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_PAINT, WNDCLASSW, WS_CLIPCHILDREN,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+};
 use wry::{Rect, WebContext, WebViewBuilder};
 
 // For focus restoration
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+
+const WM_REFRESH_PANEL: u32 = WM_APP + 42;
 
 pub fn show_panel(bubble_hwnd: HWND) {
     if IS_EXPANDED.load(Ordering::SeqCst) {
@@ -46,11 +58,18 @@ pub fn show_panel(bubble_hwnd: HWND) {
         IS_EXPANDED.store(true, Ordering::SeqCst);
 
         if let Ok(app) = APP.lock() {
+            let is_dark = match app.config.theme_mode {
+                crate::config::ThemeMode::Dark => true,
+                crate::config::ThemeMode::Light => false,
+                crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+            };
+
             refresh_panel_layout_and_content(
                 bubble_hwnd,
                 panel_hwnd,
                 &app.config.presets,
                 &app.config.ui_language,
+                is_dark,
             );
         }
 
@@ -59,9 +78,22 @@ pub fn show_panel(bubble_hwnd: HWND) {
 }
 
 pub fn update_favorites_panel() {
-    // Simply close the panel if it's open, forcing a reopen (and refresh) next time the user clicks.
-    if IS_EXPANDED.load(Ordering::SeqCst) {
-        close_panel();
+    // Force a refresh of the panel and bubble visual (theme/content)
+    // We post a message to the panel window to handle this safely (locking APP in wndproc)
+    let bubble_val = BUBBLE_HWND.load(Ordering::SeqCst);
+    if bubble_val != 0 {
+        let bubble_hwnd = HWND(bubble_val as *mut std::ffi::c_void);
+
+        // Ensure panel window exists so we can compel it to refresh
+        ensure_panel_created(bubble_hwnd, false);
+
+        let panel_val = PANEL_HWND.load(Ordering::SeqCst);
+        if panel_val != 0 {
+            let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
+            unsafe {
+                PostMessageW(Some(panel_hwnd), WM_REFRESH_PANEL, WPARAM(0), LPARAM(0));
+            }
+        }
     }
 }
 
@@ -233,6 +265,7 @@ unsafe fn refresh_panel_layout_and_content(
     panel_hwnd: HWND,
     presets: &[crate::config::Preset],
     lang: &str,
+    is_dark: bool,
 ) {
     let mut bubble_rect = RECT::default();
     let _ = GetWindowRect(bubble_hwnd, &mut bubble_rect);
@@ -307,9 +340,7 @@ unsafe fn refresh_panel_layout_and_content(
     );
 
     // Explicitly show the window to ensure it's visible after a SW_HIDE
-    unsafe {
-        let _ = ShowWindow(panel_hwnd, SW_SHOWNOACTIVATE);
-    }
+    let _ = ShowWindow(panel_hwnd, SW_SHOWNOACTIVATE);
 
     PANEL_WEBVIEW.with(|wv| {
         if let Some(webview) = wv.borrow().as_ref() {
@@ -323,7 +354,27 @@ unsafe fn refresh_panel_layout_and_content(
         }
     });
 
-    let favorites_html = get_favorite_presets_html(presets, lang);
+    // Check if theme changed and inject new CSS if needed
+    let last_dark = LAST_THEME_IS_DARK.load(Ordering::SeqCst);
+    if last_dark != is_dark {
+        let new_css = generate_panel_css(is_dark);
+        let escaped_css = escape_js(&new_css); // Reuse escape_js which escapes quotes and newlines
+                                               // We need to be careful with escape_js for CSS.
+                                               // Simple escape_js replaces " with \" and \n with \\n.
+                                               // For inline script, we need to make sure we don't break the string.
+        PANEL_WEBVIEW.with(|wv| {
+            if let Some(webview) = wv.borrow().as_ref() {
+                let script = format!(
+                    "document.querySelector('style').innerHTML = \"{}\";",
+                    escaped_css
+                );
+                let _ = webview.evaluate_script(&script);
+            }
+        });
+        LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
+    }
+
+    let favorites_html = get_favorite_presets_html(presets, lang, is_dark);
     update_panel_content(&favorites_html, num_cols);
 
     // Pass side and bubble center relative to panel to JS
@@ -353,7 +404,14 @@ fn create_panel_webview(panel_hwnd: HWND) {
     }
 
     let html = if let Ok(app) = APP.lock() {
-        generate_panel_html(&app.config.presets, &app.config.ui_language)
+        let is_dark = match app.config.theme_mode {
+            crate::config::ThemeMode::Dark => true,
+            crate::config::ThemeMode::Light => false,
+            crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+        };
+        // Update static state to match initial generation
+        LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
+        generate_panel_html(&app.config.presets, &app.config.ui_language, is_dark)
     } else {
         String::new()
     };
@@ -440,6 +498,34 @@ unsafe extern "system" fn panel_wnd_proc(
             LRESULT(0)
         }
         WM_KILLFOCUS => LRESULT(0),
+        WM_ACTIVATE => {
+            if wparam.0 == 0 {
+                // Window deactivated logic (optional)
+            }
+            LRESULT(0)
+        }
+        WM_REFRESH_PANEL => {
+            if let Ok(app) = APP.lock() {
+                let is_dark = match app.config.theme_mode {
+                    crate::config::ThemeMode::Dark => true,
+                    crate::config::ThemeMode::Light => false,
+                    crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+                };
+
+                let bubble_hwnd = HWND(BUBBLE_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void);
+
+                refresh_panel_layout_and_content(
+                    bubble_hwnd,
+                    hwnd,
+                    &app.config.presets,
+                    &app.config.ui_language,
+                    is_dark,
+                );
+
+                update_bubble_visual(bubble_hwnd);
+            }
+            LRESULT(0)
+        }
         WM_NCCALCSIZE => {
             if wparam.0 != 0 {
                 LRESULT(0)

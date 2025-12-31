@@ -40,6 +40,9 @@ pub static FADE_OUT_STATE: AtomicBool = AtomicBool::new(false); // True = fading
 // This is critical for text-select presets, which need to send Ctrl+C to the original window
 pub static LAST_FOREGROUND_HWND: AtomicIsize = AtomicIsize::new(0);
 
+// Track recursive theme updates
+pub static LAST_THEME_IS_DARK: AtomicBool = AtomicBool::new(true);
+
 // Thread Locals
 thread_local! {
     pub static PANEL_WEBVIEW: RefCell<Option<WebView>> = RefCell::new(None);
@@ -50,19 +53,23 @@ thread_local! {
 
 // App icon embedded at compile time
 const ICON_PNG_BYTES: &[u8] = include_bytes!("../../../assets/app-icon-small.png");
+const ICON_LIGHT_PNG_BYTES: &[u8] = include_bytes!("../../../assets/app-icon-small-light.png");
 
 // Cached decoded RGBA pixels
 lazy_static::lazy_static! {
-    pub static ref ICON_RGBA: Vec<u8> = {
-        if let Ok(img) = image::load_from_memory(ICON_PNG_BYTES) {
-            let resized = img.resize_exact(
-                BUBBLE_SIZE as u32,
-                BUBBLE_SIZE as u32,
-                image::imageops::FilterType::Lanczos3
-            );
-            resized.to_rgba8().into_raw()
-        } else {
-            vec![]
-        }
-    };
+    pub static ref ICON_RGBA: Vec<u8> = decode_icon(ICON_PNG_BYTES);
+    pub static ref ICON_LIGHT_RGBA: Vec<u8> = decode_icon(ICON_LIGHT_PNG_BYTES);
+}
+
+fn decode_icon(bytes: &[u8]) -> Vec<u8> {
+    if let Ok(img) = image::load_from_memory(bytes) {
+        let resized = img.resize_exact(
+            BUBBLE_SIZE as u32,
+            BUBBLE_SIZE as u32,
+            image::imageops::FilterType::Lanczos3,
+        );
+        resized.to_rgba8().into_raw()
+    } else {
+        vec![]
+    }
 }

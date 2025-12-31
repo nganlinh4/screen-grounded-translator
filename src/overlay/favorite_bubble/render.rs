@@ -83,18 +83,25 @@ fn draw_bubble_pixels(pixels: &mut [u32], size: i32, _is_active: bool) {
     // Use animated opacity for smooth transitions
     let opacity = CURRENT_OPACITY.load(Ordering::SeqCst);
 
+    // Select icon based on theme
+    let icon_data = if LAST_THEME_IS_DARK.load(Ordering::SeqCst) {
+        &*ICON_RGBA
+    } else {
+        &*ICON_LIGHT_RGBA
+    };
+
     // Use embedded icon if available
-    if !ICON_RGBA.is_empty() {
+    if !icon_data.is_empty() {
         for y in 0..size {
             for x in 0..size {
                 let idx = (y * size + x) as usize;
                 let src_idx = idx * 4; // RGBA
 
-                if src_idx + 3 < ICON_RGBA.len() {
-                    let r = ICON_RGBA[src_idx] as u32;
-                    let g = ICON_RGBA[src_idx + 1] as u32;
-                    let b = ICON_RGBA[src_idx + 2] as u32;
-                    let a = ICON_RGBA[src_idx + 3] as u32;
+                if src_idx + 3 < icon_data.len() {
+                    let r = icon_data[src_idx] as u32;
+                    let g = icon_data[src_idx + 1] as u32;
+                    let b = icon_data[src_idx + 2] as u32;
+                    let a = icon_data[src_idx + 3] as u32;
 
                     // Apply opacity multiplier
                     let final_a = (a * opacity as u32) / 255;
