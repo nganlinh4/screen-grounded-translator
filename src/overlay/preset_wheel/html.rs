@@ -148,6 +148,7 @@ html, body {
     cursor: pointer;
     font-size: 12px;
     white-space: nowrap;
+    letter-spacing: 0;
     
     /* Base state */
     opacity: 0;
@@ -160,7 +161,8 @@ html, body {
         background 0.1s ease,
         box-shadow 0.1s ease,
         border-color 0.1s ease,
-        font-variation-settings 0.1s ease;
+        font-variation-settings 0.1s ease,
+        letter-spacing 0.1s ease;
 }
 
 .preset-item.visible {
@@ -185,6 +187,8 @@ html, body {
 .preset-item.hovered {
     border-color: rgba(255, 255, 255, 0.5);
     box-shadow: 0 5px 18px rgba(0, 0, 0, 0.35);
+    font-variation-settings: 'wght' 650, 'wdth' 90, 'ROND' 100;
+    letter-spacing: 0.5px;
 }
 
 .color-0.hovered  { background: rgba(51, 102, 204, 0.95); }
@@ -236,7 +240,33 @@ let mouseX = -1000;
 let mouseY = -1000;
 let isMouseInGrid = false;
 
+// Cache item positions to avoid getBoundingClientRect returning scaled positions
+// This fixes the cursor position vs hover mismatch issue
+let itemCenters = new Map();
+
+function cacheItemPositions() {
+    // Reset all items to scale(1) to get accurate positions
+    items.forEach(item => {
+        item.style.transform = 'scale(1)';
+    });
+    
+    // Cache the original center positions (before any scaling)
+    itemCenters.clear();
+    items.forEach(item => {
+        const rect = item.getBoundingClientRect();
+        itemCenters.set(item, {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
+        });
+    });
+}
+
 function getItemCenter(item) {
+    // Use cached position if available
+    const cached = itemCenters.get(item);
+    if (cached) return cached;
+    
+    // Fallback to live calculation
     const rect = item.getBoundingClientRect();
     return {
         x: rect.left + rect.width / 2,
@@ -244,10 +274,16 @@ function getItemCenter(item) {
     };
 }
 
+function isMouseInRect(rect) {
+    return mouseX >= rect.left && mouseX <= rect.right && 
+           mouseY >= rect.top && mouseY <= rect.bottom;
+}
+
 function updateFisheye() {
     items.forEach(item => {
         if (!item.classList.contains('visible')) return;
         
+        // For fisheye scaling, use cached centers
         const center = getItemCenter(item);
         const dx = mouseX - center.x;
         const dy = mouseY - center.y;
@@ -259,17 +295,25 @@ function updateFisheye() {
         // Only scale UP - never below 1.0
         const scale = MIN_SCALE + (MAX_SCALE - MIN_SCALE) * influence;
         
-        const weight = BASE_WEIGHT + (MAX_WEIGHT - BASE_WEIGHT) * influence;
-        const width = BASE_WIDTH + (MAX_WIDTH - BASE_WIDTH) * influence;
+        // For hover detection, check if mouse is actually inside this pill
+        const rect = item.getBoundingClientRect();
+        const isHovered = isMouseInGrid && isMouseInRect(rect);
         
-        item.style.transform = `scale(${scale.toFixed(3)})`;
-        item.style.fontVariationSettings = `'wght' ${weight.toFixed(0)}, 'wdth' ${width.toFixed(0)}, 'ROND' 100`;
-        
-        if (influence > 0.5) {
+        if (isHovered) {
             item.classList.add('hovered');
+            // Let CSS handle font styling for hovered items
+            item.style.fontVariationSettings = '';
+            item.style.letterSpacing = '';
         } else {
             item.classList.remove('hovered');
+            // Apply fisheye font effect for non-hovered items
+            const weight = BASE_WEIGHT + (MAX_WEIGHT - BASE_WEIGHT) * influence;
+            const width = BASE_WIDTH + (MAX_WIDTH - BASE_WIDTH) * influence;
+            item.style.fontVariationSettings = `'wght' ${weight.toFixed(0)}, 'wdth' ${width.toFixed(0)}, 'ROND' 100`;
+            item.style.letterSpacing = '0';
         }
+        
+        item.style.transform = `scale(${scale.toFixed(3)})`;
     });
 }
 
@@ -335,20 +379,19 @@ function animateIn() {
     
     // Sort by distance (closest to center first)
     itemsWithDistance.sort((a, b) => a.distance - b.distance);
-    
-    // Reset/Setup items
-    dismissBtn.classList.remove('visible');
-    items.forEach(item => item.classList.remove('visible'));
 
     // Dismiss button first (it's at top center)
-    requestAnimationFrame(() => {
-        setTimeout(() => dismissBtn.classList.add('visible'), 0);
-        
-        // Then items in ripple order from center out - fast stagger
-        itemsWithDistance.forEach(({ item }, i) => {
-            setTimeout(() => item.classList.add('visible'), i * 12);
-        });
+    setTimeout(() => dismissBtn.classList.add('visible'), 0);
+    
+    // Then items in ripple order from center out - fast stagger
+    itemsWithDistance.forEach(({ item }, i) => {
+        setTimeout(() => item.classList.add('visible'), i * 12);
     });
+    
+    // Cache positions AFTER animation completes (when items are at scale(1))
+    // Wait for all items to animate in + some buffer
+    const totalAnimationTime = itemsWithDistance.length * 12 + 150;
+    setTimeout(() => cacheItemPositions(), totalAnimationTime);
 }
 
 // Function called by Rust to update content and trigger animation
@@ -359,11 +402,18 @@ window.updateContent = function(itemsHtml, dismissLabel) {
     // Re-query items
     items = Array.from(document.querySelectorAll('.preset-item'));
     
-    // Notify Rust we are ready to be visible immediately (robust against rAF throttling)
+    // Clear cached positions
+    itemCenters.clear();
+    
+    // IMPORTANT: Reset visibility state BEFORE window becomes visible
+    dismissBtn.classList.remove('visible');
+    items.forEach(item => item.classList.remove('visible'));
+    
+    // Notify Rust we are ready to be visible
     setTimeout(() => {
         window.ipc.postMessage('ready_to_show');
-        // Start animation frame loop
-        requestAnimationFrame(animateIn);
+        // Start animation after a tiny delay to ensure window is shown
+        setTimeout(() => requestAnimationFrame(animateIn), 16);
     }, 0);
 };
 
