@@ -276,15 +276,36 @@ pub fn render_sidebar(
             should_set_history = true;
         }
 
-        // Calculate remaining space to push Global Settings to align with grid edge
+        // Push remaining items to the right side
         let used_width = ui.min_rect().width();
-        let target_width = if cached_grid_width > 0.0 {
-            cached_grid_width
-        } else {
-            ui.available_width() + used_width
-        };
-        let remaining = (target_width - used_width - 120.0).max(0.0); // 120 = approx settings button width
+        let remaining = (ui.available_width()).max(0.0);
         ui.add_space(remaining);
+
+        // Help Assistant Button
+        let help_bg = if is_dark {
+            egui::Color32::from_rgb(80, 60, 120)
+        } else {
+            egui::Color32::from_rgb(180, 160, 220)
+        };
+        if ui
+            .add(
+                egui::Button::new(
+                    egui::RichText::new(format!("❓ {}", text.help_assistant_btn))
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(help_bg)
+                .corner_radius(8.0),
+            )
+            .on_hover_text(text.help_assistant_title)
+            .clicked()
+        {
+            // Trigger the help assistant using TextInput overlay
+            std::thread::spawn(|| {
+                crate::gui::settings_ui::help_assistant::show_help_input();
+            });
+        }
+
+        ui.add_space(4.0);
 
         // Global Settings
         ui.spacing_mut().item_spacing.x = 4.0;

@@ -201,6 +201,15 @@ pub struct LocaleText {
     pub opacity_label: &'static str,
     pub downloaded_successfully: &'static str,
     pub download_recording_tooltip: &'static str,
+    // --- HELP ASSISTANT ---
+    pub help_assistant_btn: &'static str,
+    pub help_assistant_title: &'static str,
+    pub help_assistant_question_label: &'static str,
+    pub help_assistant_placeholder: &'static str,
+    pub help_assistant_ask_btn: &'static str,
+    pub help_assistant_loading: &'static str,
+    pub help_assistant_answer_label: &'static str,
+    pub help_assistant_hint: &'static str,
 }
 
 impl LocaleText {
@@ -452,6 +461,15 @@ impl LocaleText {
                  opacity_label: "Độ mờ",
                  downloaded_successfully: "Đã tải về!",
                  download_recording_tooltip: "Tải bản ghi âm",
+                 // --- HELP ASSISTANT VI ---
+                 help_assistant_btn: "Hỏi cách dùng SGT...",
+                 help_assistant_title: "Hỏi về SGT",
+                 help_assistant_question_label: "Câu hỏi của bạn:",
+                 help_assistant_placeholder: "VD: Làm sao để dịch một vùng trên màn hình?",
+                 help_assistant_ask_btn: "Hỏi",
+                 help_assistant_loading: "Đang tìm câu trả lời...",
+                 help_assistant_answer_label: "Trả lời:",
+                 help_assistant_hint: "Nhập câu hỏi về cách sử dụng SGT và nhấn Enter hoặc nút Hỏi",
                  },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -699,6 +717,15 @@ impl LocaleText {
                  opacity_label: "불투명도",
                  downloaded_successfully: "다운로드 완료!",
                  download_recording_tooltip: "녹음 다운로드",
+                 // --- HELP ASSISTANT KO ---
+                 help_assistant_btn: "SGT 사용법 물어보기...",
+                 help_assistant_title: "SGT에 대해 물어보기",
+                 help_assistant_question_label: "질문:",
+                 help_assistant_placeholder: "예: 화면 영역을 번역하려면 어떻게 하나요?",
+                 help_assistant_ask_btn: "질문",
+                 help_assistant_loading: "답변을 찾는 중...",
+                 help_assistant_answer_label: "답변:",
+                 help_assistant_hint: "SGT 사용법에 대한 질문을 입력하고 Enter 또는 질문 버튼을 누르세요",
                  },
                 _ => Self {
                  history_btn: "History",
@@ -946,6 +973,15 @@ impl LocaleText {
                  opacity_label: "Opacity",
                  downloaded_successfully: "Downloaded!",
                  download_recording_tooltip: "Download Recording",
+                 // --- HELP ASSISTANT EN ---
+                 help_assistant_btn: "Ask how to use SGT...",
+                 help_assistant_title: "Ask about SGT",
+                 help_assistant_question_label: "Your question:",
+                 help_assistant_placeholder: "E.g., How do I translate a region on screen?",
+                 help_assistant_ask_btn: "Ask",
+                 help_assistant_loading: "Finding answer...",
+                 help_assistant_answer_label: "Answer:",
+                 help_assistant_hint: "Enter a question about using SGT and press Enter or click Ask",
                  },
                 }
     }

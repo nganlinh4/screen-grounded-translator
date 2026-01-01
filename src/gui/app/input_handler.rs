@@ -247,6 +247,12 @@ pub fn handle_paste(ctx: &egui::Context) -> bool {
     use std::sync::atomic::{AtomicBool, Ordering};
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_V};
 
+    // Skip paste handling if help assistant modal is open
+    // This allows normal Ctrl+V paste into the text input field
+    if crate::gui::settings_ui::help_assistant::is_modal_open() {
+        return false;
+    }
+
     // Only process if our window has focus
     let has_focus = ctx.input(|i| i.focused);
     if !has_focus {

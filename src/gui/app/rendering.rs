@@ -103,7 +103,8 @@ impl SettingsApp {
                                 .show(ui, |ui| {
                                     for (i, tip) in tips_list_copy.iter().enumerate() {
                                         let is_dark_mode = ctx.style().visuals.dark_mode;
-                                        let layout_job = format_tip_with_bold(i + 1, tip, is_dark_mode);
+                                        let layout_job =
+                                            format_tip_with_bold(i + 1, tip, is_dark_mode);
                                         ui.label(layout_job);
                                         if i < tips_list_copy.len() - 1 {
                                             ui.add_space(8.0);
@@ -242,6 +243,9 @@ impl SettingsApp {
                 );
             });
         });
+
+        // Help assistant is now handled via TextInput overlay (show_help_input)
+        // No egui modal rendering needed
     }
 
     pub(crate) fn render_fade_overlay(&mut self, ctx: &egui::Context) {
@@ -420,38 +424,38 @@ impl SettingsApp {
 fn format_tip_with_bold(tip_number: usize, text: &str, is_dark_mode: bool) -> LayoutJob {
     let mut job = LayoutJob::default();
     let number_text = format!("{}. ", tip_number);
-    
+
     // Color scheme based on theme
     let regular_color = if is_dark_mode {
         egui::Color32::from_rgb(180, 180, 180) // Gray for dark mode
     } else {
         egui::Color32::from_rgb(100, 100, 100) // Darker gray for light mode
     };
-    
+
     let bold_color = if is_dark_mode {
         egui::Color32::from_rgb(150, 200, 255) // Soft cyan for dark mode
     } else {
         egui::Color32::from_rgb(40, 100, 180) // Dark blue for light mode
     };
-    
+
     // Create text format for regular text
     let mut text_format = TextFormat::default();
     text_format.font_id = egui::FontId::proportional(13.0);
     text_format.color = regular_color;
-    
+
     // Append number in regular color
     job.append(&number_text, 0.0, text_format.clone());
-    
+
     // Parse text for **bold** markers
     let mut current_text = String::new();
     let mut chars = text.chars().peekable();
     let mut is_bold = false;
-    
+
     while let Some(ch) = chars.next() {
         if ch == '*' && chars.peek() == Some(&'*') {
             // Found ** marker
             chars.next(); // consume second *
-            
+
             if !current_text.is_empty() {
                 // Append accumulated text
                 let mut fmt = text_format.clone();
@@ -461,13 +465,13 @@ fn format_tip_with_bold(tip_number: usize, text: &str, is_dark_mode: bool) -> La
                 job.append(&current_text, 0.0, fmt);
                 current_text.clear();
             }
-            
+
             is_bold = !is_bold;
         } else {
             current_text.push(ch);
         }
     }
-    
+
     // Append remaining text
     if !current_text.is_empty() {
         let mut fmt = text_format.clone();
@@ -476,6 +480,6 @@ fn format_tip_with_bold(tip_number: usize, text: &str, is_dark_mode: bool) -> La
         }
         job.append(&current_text, 0.0, fmt);
     }
-    
+
     job
 }

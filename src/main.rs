@@ -7,7 +7,6 @@ mod history;
 mod icon_gen;
 mod model_config;
 mod overlay;
-mod repo_consolidator;
 mod updater;
 pub mod win_types;
 
