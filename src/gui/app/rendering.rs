@@ -52,12 +52,6 @@ impl SettingsApp {
 
             let tips_list_copy = text.tips_list.clone();
             let tips_title = text.tips_title;
-            let screen_rect = ctx.input(|i| {
-                i.viewport().inner_rect.unwrap_or(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::Vec2::ZERO,
-                ))
-            });
 
             // Dark semi-transparent backdrop (disabled)
             // let backdrop_layer =

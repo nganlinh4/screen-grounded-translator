@@ -312,9 +312,7 @@ fn internal_create_window_loop() {
             cyTopHeight: -1,
             cyBottomHeight: -1,
         };
-        unsafe {
-            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
-        }
+        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
 
         let wrapper = HwndWrapper(hwnd);
 

@@ -50,13 +50,6 @@ impl raw_window_handle::HasWindowHandle for HwndWrapper {
     }
 }
 
-pub fn is_active() -> bool {
-    unsafe {
-        !std::ptr::addr_of!(BADGE_HWND).read().is_invalid()
-            && IsWindowVisible(BADGE_HWND.0).as_bool()
-    }
-}
-
 pub fn show_auto_copy_badge_text(text: &str) {
     *PENDING_CONTENT.lock().unwrap() = text.to_string();
     ensure_window_and_post(WM_APP_SHOW_TEXT);

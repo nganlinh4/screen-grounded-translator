@@ -10,14 +10,11 @@ use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetClientRect,
-    GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, LoadCursorW,
-    PostMessageW, RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, CREATESTRUCTW, GWL_STYLE, HTCAPTION, HWND_TOPMOST, IDC_ARROW,
-    SM_CXSCREEN, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
-    SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, WINDOW_LONG_PTR_INDEX, WM_ACTIVATE, WM_APP,
-    WM_CLOSE, WM_CREATE, WM_DESTROY, WM_HOTKEY, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_MOUSEACTIVATE,
-    WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_PAINT, WNDCLASSW, WS_CLIPCHILDREN,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    GetForegroundWindow, GetSystemMetrics, GetWindowRect, LoadCursorW, PostMessageW,
+    RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowPos, ShowWindow, HTCAPTION,
+    IDC_ARROW, SM_CXSCREEN, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_HOTKEY, WM_KILLFOCUS, WM_NCCALCSIZE,
+    WM_NCLBUTTONDOWN, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use wry::{Rect, WebContext, WebViewBuilder};
 
@@ -91,7 +88,7 @@ pub fn update_favorites_panel() {
         if panel_val != 0 {
             let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
             unsafe {
-                PostMessageW(Some(panel_hwnd), WM_REFRESH_PANEL, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(panel_hwnd), WM_REFRESH_PANEL, WPARAM(0), LPARAM(0));
             }
         }
     }

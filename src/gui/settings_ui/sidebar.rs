@@ -210,7 +210,6 @@ pub fn render_sidebar(
     thread_local! {
         static GRID_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
     }
-    let cached_grid_width = GRID_WIDTH.with(|w| w.get());
 
     // --- Header Navigation ---
     // Use horizontal layout that doesn't claim fixed space (avoids influencing grid)
@@ -277,7 +276,7 @@ pub fn render_sidebar(
         }
 
         // Push remaining items to the right side
-        let used_width = ui.min_rect().width();
+
         let remaining = (ui.available_width()).max(0.0);
         ui.add_space(remaining);
 
@@ -643,7 +642,8 @@ fn render_preset_item_parts(
             // Make the label draggable.
             // SelectableLabel by default captures clicks. We want to also capture drags.
             let response = ui.add(
-                egui::SelectableLabel::new(is_selected, &display_name)
+                egui::Button::new(&display_name)
+                    .selected(is_selected)
                     .sense(egui::Sense::click_and_drag()),
             );
 

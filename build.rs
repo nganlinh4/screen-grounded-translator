@@ -5,6 +5,9 @@ use std::path::Path;
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
 
+    // Declare the custom configuration 'nopack' to avoid warnings
+    println!("cargo::rustc-check-cfg=cfg(nopack)");
+
     // Ensure assets directory exists
     let assets_dir = Path::new(&manifest_dir).join("assets");
     let _ = fs::create_dir_all(&assets_dir);
