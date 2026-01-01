@@ -1,6 +1,6 @@
 // Preset Wheel Window - Persistent Hidden Window for Instant Appearance
 
-use super::html::{generate_items_html, get_wheel_template};
+use super::html::{generate_css, generate_items_html, get_wheel_template};
 use crate::config::Preset;
 use crate::APP;
 use std::cell::RefCell;
@@ -40,6 +40,7 @@ static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
 lazy_static::lazy_static! {
     static ref PENDING_ITEMS_HTML: Mutex<String> = Mutex::new(String::new());
     static ref PENDING_DISMISS_LABEL: Mutex<String> = Mutex::new(String::new());
+    static ref PENDING_CSS: Mutex<String> = Mutex::new(String::new());
     static ref PENDING_POS: Mutex<(i32, i32)> = Mutex::new((0, 0));
     static ref SELECTED_PRESET: Mutex<Option<usize>> = Mutex::new(None);
 }
@@ -80,10 +81,22 @@ pub fn show_preset_wheel(
         WHEEL_ACTIVE.store(true, Ordering::SeqCst);
         *SELECTED_PRESET.lock().unwrap() = None;
 
-        let (presets, ui_lang) = {
+        let (presets, ui_lang, is_dark) = {
             let app = APP.lock().unwrap();
-            (app.config.presets.clone(), app.config.ui_language.clone())
+            let is_dark = match app.config.theme_mode {
+                crate::config::ThemeMode::Dark => true,
+                crate::config::ThemeMode::Light => false,
+                crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+            };
+            (
+                app.config.presets.clone(),
+                app.config.ui_language.clone(),
+                is_dark,
+            )
         };
+
+        // Generate themed CSS for injection
+        let themed_css = generate_css(is_dark);
 
         let filtered: Vec<(usize, Preset)> = presets
             .iter()
@@ -146,6 +159,7 @@ pub fn show_preset_wheel(
 
         *PENDING_ITEMS_HTML.lock().unwrap() = items_html;
         *PENDING_DISMISS_LABEL.lock().unwrap() = dismiss_label.to_string();
+        *PENDING_CSS.lock().unwrap() = themed_css;
         *PENDING_POS.lock().unwrap() = (win_x, win_y);
 
         let hwnd_val = WHEEL_HWND.load(Ordering::SeqCst);
@@ -298,7 +312,7 @@ fn internal_create_window_loop() {
             };
             let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
 
-            let template_html = get_wheel_template();
+            let template_html = get_wheel_template(true); // Default dark for warmup
 
             builder
                 .with_transparent(true)
@@ -406,6 +420,7 @@ unsafe extern "system" fn wheel_wnd_proc(
         WM_APP_SHOW => {
             let items_html = PENDING_ITEMS_HTML.lock().unwrap().clone();
             let dismiss_label = PENDING_DISMISS_LABEL.lock().unwrap().clone();
+            let themed_css = PENDING_CSS.lock().unwrap().clone();
 
             // 1. Ensure Off-screen (-4000, -4000) but VISIBLE
             // Remove calls to SetLayeredWindowAttributes here to prevent black artifacts
@@ -428,9 +443,21 @@ unsafe extern "system" fn wheel_wnd_proc(
             };
             let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
 
-            // 2. Update Content via JS
+            // 2. Inject themed CSS and update content via JS
             WHEEL_WEBVIEW.with(|wv| {
                 if let Some(webview) = wv.borrow().as_ref() {
+                    // Inject themed CSS
+                    let css_escaped = themed_css
+                        .replace("\\", "\\\\")
+                        .replace("`", "\\`")
+                        .replace("$", "\\$");
+                    let css_script = format!(
+                        "document.getElementById('theme-style').textContent = `{}`;",
+                        css_escaped
+                    );
+                    let _ = webview.evaluate_script(&css_script);
+
+                    // Update content
                     let script = format!(
                         "window.updateContent(`{}`, `{}`);",
                         items_html
