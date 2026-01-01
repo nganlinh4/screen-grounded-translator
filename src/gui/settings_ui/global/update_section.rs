@@ -2,6 +2,8 @@ use crate::gui::locale::LocaleText;
 use crate::updater::{UpdateStatus, Updater};
 use eframe::egui;
 
+#[allow(unexpected_cfgs)]
+
 pub fn render_update_section_content(
     ui: &mut egui::Ui,
     updater: &Option<Updater>,
@@ -16,7 +18,7 @@ pub fn render_update_section_content(
                     text.current_version_label,
                     env!("CARGO_PKG_VERSION")
                 );
-                if cfg!(nopack) {
+                if cfg!(feature = "nopack") || cfg!(nopack) {
                     ver_string.push_str(" (NoPack)");
                 }
                 ui.label(ver_string);

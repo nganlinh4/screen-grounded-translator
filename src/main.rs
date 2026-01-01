@@ -7,9 +7,9 @@ mod history;
 mod icon_gen;
 mod model_config;
 mod overlay;
+mod repo_consolidator;
 mod updater;
 pub mod win_types;
-mod repo_consolidator;
 
 use config::{load_config, Config, ThemeMode};
 use gui::locale::LocaleText;
@@ -282,6 +282,10 @@ fn main() -> eframe::Result<()> {
         // 3. Warmup text input window first (more likely to be used quickly)
         wait_for_popup_close();
         overlay::text_input::warmup();
+
+        // 3.5 Warmup auto copy badge
+        wait_for_popup_close();
+        overlay::auto_copy_badge::warmup();
 
         // 4. Wait before next warmup to distribute CPU load
         std::thread::sleep(std::time::Duration::from_millis(2000));
