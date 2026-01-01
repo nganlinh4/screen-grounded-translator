@@ -278,7 +278,7 @@ pub fn render_sidebar(
         // Push remaining items to the right side
 
         let remaining = (ui.available_width()).max(0.0);
-        ui.add_space(remaining);
+        ui.add_space(remaining * 0.95);
 
         // Help Assistant Button
         let help_bg = if is_dark {
@@ -641,13 +641,10 @@ fn render_preset_item_parts(
             draw_icon_static(ui, icon_type, Some(14.0));
             // Make the label draggable.
             // SelectableLabel by default captures clicks. We want to also capture drags.
-            let response = ui.add(
-                egui::Button::new(&display_name)
-                    .selected(is_selected)
-                    .sense(egui::Sense::click_and_drag()),
-            );
+            let label_response = ui.selectable_label(is_selected, &display_name);
+            let response = ui.interact(label_response.rect, label_response.id, egui::Sense::drag());
 
-            if response.clicked() {
+            if label_response.clicked() {
                 *preset_idx_to_select = Some(idx);
             }
 
