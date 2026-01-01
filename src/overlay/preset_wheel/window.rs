@@ -10,6 +10,7 @@ use windows::core::w;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::Com::{CoInitialize, CoUninitialize};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -35,6 +36,7 @@ pub static WHEEL_ACTIVE: AtomicBool = AtomicBool::new(false);
 // Thread-safe handles
 static WHEEL_HWND: AtomicIsize = AtomicIsize::new(0);
 static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
+static IS_WARMING_UP: AtomicBool = AtomicBool::new(false);
 
 // Shared data
 lazy_static::lazy_static! {
@@ -66,6 +68,13 @@ impl raw_window_handle::HasWindowHandle for HwndWrapper {
 }
 
 pub fn warmup() {
+    // Prevent multiple warmup threads from spawning
+    if IS_WARMING_UP
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
     std::thread::spawn(|| {
         internal_create_window_loop();
     });
@@ -168,12 +177,21 @@ pub fn show_preset_wheel(
         if !wheel_hwnd.is_invalid() {
             let _ = PostMessageW(Some(wheel_hwnd), WM_APP_SHOW, WPARAM(0), LPARAM(0));
         } else {
-            warmup();
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            let hwnd_val = WHEEL_HWND.load(Ordering::SeqCst);
-            let wheel_hwnd = HWND(hwnd_val as *mut _);
-            if !wheel_hwnd.is_invalid() {
-                let _ = PostMessageW(Some(wheel_hwnd), WM_APP_SHOW, WPARAM(0), LPARAM(0));
+            // Check if already warming up, if not, start it
+            if !IS_WARMING_UP.load(Ordering::SeqCst) {
+                warmup();
+            }
+
+            // Polling loop: Wait up to 2 seconds for initialization to complete
+            // This prevents "failing once then working" or "spinning cursor" issues
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let hwnd_val = WHEEL_HWND.load(Ordering::SeqCst);
+                if hwnd_val != 0 {
+                    let wheel_hwnd = HWND(hwnd_val as *mut _);
+                    let _ = PostMessageW(Some(wheel_hwnd), WM_APP_SHOW, WPARAM(0), LPARAM(0));
+                    break;
+                }
             }
         }
 
@@ -217,6 +235,9 @@ pub fn is_wheel_active() -> bool {
 
 fn internal_create_window_loop() {
     unsafe {
+        // Initialize COM for the thread (Critical for WebView2/Wry)
+        let _ = CoInitialize(None);
+
         let instance = GetModuleHandleW(None).unwrap_or_default();
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
@@ -282,7 +303,8 @@ fn internal_create_window_loop() {
         )
         .unwrap_or_default();
 
-        WHEEL_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
+        // DELAYED STORE: Do not publish WHEEL_HWND yet. Wait until WebView is built.
+        // WHEEL_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
         // Use DWM to extend the "glass" frame into the entire client area for transparency
         let margins = MARGINS {
             cxLeftWidth: -1,
@@ -372,6 +394,19 @@ fn internal_create_window_loop() {
                 *cell.borrow_mut() = Some(wv);
             });
             let _ = ShowWindow(hwnd, SW_HIDE);
+
+            // Now that WebView is ready, publicize the HWND and mark warmup as done
+            WHEEL_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
+            IS_WARMING_UP.store(false, Ordering::SeqCst);
+        } else {
+            // Initialization failed - cleanup and exit
+            let _ = DestroyWindow(hwnd);
+            let _ = DestroyWindow(overlay_hwnd);
+            IS_WARMING_UP.store(false, Ordering::SeqCst);
+            OVERLAY_HWND.store(0, Ordering::SeqCst);
+            WHEEL_HWND.store(0, Ordering::SeqCst);
+            let _ = CoUninitialize(); // Cleanup COM
+            return;
         }
 
         let mut msg = MSG::default();
@@ -385,6 +420,8 @@ fn internal_create_window_loop() {
         });
         WHEEL_HWND.store(0, Ordering::SeqCst);
         OVERLAY_HWND.store(0, Ordering::SeqCst);
+        IS_WARMING_UP.store(false, Ordering::SeqCst); // Ensure flag is cleared on exit
+        let _ = CoUninitialize(); // Cleanup COM
     }
 }
 
