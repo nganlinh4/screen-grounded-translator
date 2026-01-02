@@ -18,6 +18,7 @@ static mut BADGE_HWND: SendHwnd = SendHwnd(HWND(std::ptr::null_mut()));
 // Messages
 const WM_APP_SHOW_TEXT: u32 = WM_USER + 201;
 const WM_APP_SHOW_IMAGE: u32 = WM_USER + 202;
+const WM_APP_SHOW_NOTIFICATION: u32 = WM_USER + 203;
 
 lazy_static::lazy_static! {
     static ref PENDING_CONTENT: Mutex<String> = Mutex::new(String::new());
@@ -59,11 +60,18 @@ pub fn show_auto_copy_badge_image() {
     ensure_window_and_post(WM_APP_SHOW_IMAGE);
 }
 
+/// Show a notification with just a title (no snippet/auto-copy text)
+pub fn show_notification(title: &str) {
+    *PENDING_CONTENT.lock().unwrap() = title.to_string();
+    ensure_window_and_post(WM_APP_SHOW_NOTIFICATION);
+}
+
 fn ensure_window_and_post(msg: u32) {
     unsafe {
         if std::ptr::addr_of!(BADGE_HWND).read().is_invalid() {
             warmup();
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // Wait longer for WebView to initialize
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
 
         let hwnd = std::ptr::addr_of!(BADGE_HWND).read().0;
@@ -276,16 +284,28 @@ fn get_badge_html() -> String {
             document.getElementById('title-text').innerText = title;
             document.getElementById('snippet').innerText = snippet;
             const b = document.getElementById('badge');
+            const check = document.querySelector('.check');
+            const snippetContainer = document.querySelector('.snippet-container');
+            
+            // Hide checkmark and snippet for notifications (empty snippet)
+            if (!snippet) {{
+                check.style.display = 'none';
+                snippetContainer.style.display = 'none';
+            }} else {{
+                check.style.display = 'flex';
+                snippetContainer.style.display = 'flex';
+            }}
             
             // Force reflow to restart animation
             b.classList.remove('visible');
             b.offsetHeight; // trigger reflow
             
-            // Re-trigger check animation
-            const check = document.querySelector('.check');
-            check.style.animation = 'none';
-            check.offsetHeight; /* trigger reflow */
-            check.style.animation = null; 
+            // Re-trigger check animation if visible
+            if (snippet) {{
+                check.style.animation = 'none';
+                check.offsetHeight; /* trigger reflow */
+                check.style.animation = null; 
+            }}
             
             b.classList.add('visible');
             
@@ -460,6 +480,49 @@ unsafe extern "system" fn badge_wnd_proc(
                         .replace('\'', "\\'");
 
                     let script = format!("window.show('{}', '{}');", safe_title, safe_snippet);
+                    let _ = webview.evaluate_script(&script);
+                }
+            });
+
+            LRESULT(0)
+        }
+        WM_APP_SHOW_NOTIFICATION => {
+            let app = APP.lock().unwrap();
+            let is_dark = match app.config.theme_mode {
+                crate::config::ThemeMode::Dark => true,
+                crate::config::ThemeMode::Light => false,
+                crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+            };
+            drop(app);
+
+            let title = PENDING_CONTENT.lock().unwrap().clone();
+
+            let screen_w = GetSystemMetrics(SM_CXSCREEN);
+            let screen_h = GetSystemMetrics(SM_CYSCREEN);
+            let x = (screen_w - BADGE_WIDTH) / 2;
+            let y = screen_h - BADGE_HEIGHT - 100;
+
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                x,
+                y,
+                BADGE_WIDTH,
+                BADGE_HEIGHT,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+
+            BADGE_WEBVIEW.with(|wv| {
+                if let Some(webview) = wv.borrow().as_ref() {
+                    let theme_script = format!("window.setTheme({});", is_dark);
+                    let _ = webview.evaluate_script(&theme_script);
+
+                    let safe_title = title
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\'', "\\'");
+
+                    let script = format!("window.show('{}', '');", safe_title);
                     let _ = webview.evaluate_script(&script);
                 }
             });

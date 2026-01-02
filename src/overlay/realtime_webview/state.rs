@@ -10,6 +10,8 @@ use std::sync::{atomic::AtomicBool, Arc, Mutex, Once};
 use windows::Win32::Foundation::*;
 pub const WM_CLOSE_TTS_MODAL: u32 = 0x0400 + 400; // WM_USER + 400
 pub const WM_UPDATE_TTS_SPEED: u32 = 0x0400 + 401; // WM_USER + 401
+pub const WM_APP_REALTIME_START: u32 = 0x0400 + 500; // WM_USER + 500
+pub const WM_APP_REALTIME_HIDE: u32 = 0x0400 + 501; // WM_USER + 501
 
 // Gap between realtime and translation overlays
 pub const GAP: i32 = 20;
@@ -60,6 +62,7 @@ lazy_static::lazy_static! {
 pub static mut REALTIME_HWND: HWND = HWND(std::ptr::null_mut());
 pub static mut TRANSLATION_HWND: HWND = HWND(std::ptr::null_mut());
 pub static mut IS_ACTIVE: bool = false;
+pub static mut IS_WARMED_UP: bool = false;
 
 pub static REGISTER_REALTIME_CLASS: Once = Once::new();
 pub static REGISTER_TRANSLATION_CLASS: Once = Once::new();

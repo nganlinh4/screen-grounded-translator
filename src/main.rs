@@ -296,6 +296,13 @@ fn main() -> eframe::Result<()> {
         // 6. Warmup PromptDJ (Chill Corner)
         wait_for_popup_close();
         overlay::prompt_dj::warmup();
+
+        // 7. Wait before realtime warmup to allow PromptDJ WebView to finish
+        std::thread::sleep(std::time::Duration::from_millis(2000));
+
+        // 8. Warmup Live Translate (Realtime Overlay)
+        wait_for_popup_close();
+        overlay::realtime_webview::warmup();
     });
 
     // 1. Load config early to get theme setting and language for tray i18n

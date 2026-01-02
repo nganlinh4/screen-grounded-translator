@@ -189,6 +189,7 @@ pub struct LocaleText {
     // --- AUTO COPY BADGE ---
     pub auto_copied_badge: &'static str,
     pub auto_copied_image_badge: &'static str,
+    pub live_translate_loading: &'static str,
     // --- DROP OVERLAY ---
     pub drop_overlay_text: &'static str,
     // --- REALTIME EGUI SPECIFIC ---
@@ -456,6 +457,7 @@ impl LocaleText {
                  // --- AUTO COPY BADGE VI ---
                  auto_copied_badge: "Đã tự động copy",
                  auto_copied_image_badge: "🖼️ Ảnh đã được sao chép",
+                 live_translate_loading: "⏳ Đang khởi động Live Translate...",
                  // --- DROP OVERLAY VI ---
                  drop_overlay_text: "Thả vào đây để xử lý",
                  // --- REALTIME EGUI SPECIFIC VI ---
@@ -717,6 +719,7 @@ impl LocaleText {
                  // --- AUTO COPY BADGE KO ---
                  auto_copied_badge: "자동으로 복사됨",
                  auto_copied_image_badge: "🖼️ 이미지가 복사됨",
+                 live_translate_loading: "⏳ 실시간 번역 로딩 중...",
                  // --- DROP OVERLAY KO ---
                  drop_overlay_text: "여기에 드롭하여 처리",
                  // --- REALTIME EGUI SPECIFIC KO ---
@@ -978,6 +981,7 @@ impl LocaleText {
                  // --- AUTO COPY BADGE EN ---
                  auto_copied_badge: "Auto-copied",
                  auto_copied_image_badge: "🖼️ Image copied",
+                 live_translate_loading: "⏳ Loading Live Translate...",
                  // --- DROP OVERLAY EN ---
                  drop_overlay_text: "Drop here to process",
                  // --- REALTIME EGUI SPECIFIC EN ---

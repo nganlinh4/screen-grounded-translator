@@ -257,12 +257,13 @@ pub fn create_realtime_webview(
                         // Sync to other webview
                         sync_visibility_to_webviews();
 
-                        // If both windows are now off, completely stop everything
+                        // If both windows are now off, hide and reset state (but keep windows alive)
                         if !MIC_VISIBLE.load(Ordering::SeqCst)
                             && !TRANS_VISIBLE.load(Ordering::SeqCst)
                         {
                             REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
-                            PostQuitMessage(0);
+                            crate::api::tts::TTS_MANAGER.stop();
+                            IS_ACTIVE = false;
                         } else if visible {
                             // Force update since we suppressed them while hidden
                             let _ = PostMessageW(
@@ -293,12 +294,13 @@ pub fn create_realtime_webview(
                         // Sync to other webview
                         sync_visibility_to_webviews();
 
-                        // If both windows are now off, completely stop everything
+                        // If both windows are now off, hide and reset state (but keep windows alive)
                         if !MIC_VISIBLE.load(Ordering::SeqCst)
                             && !TRANS_VISIBLE.load(Ordering::SeqCst)
                         {
                             REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
-                            PostQuitMessage(0);
+                            crate::api::tts::TTS_MANAGER.stop();
+                            IS_ACTIVE = false;
                         } else if visible {
                             // Force update since we suppressed them while hidden
                             let _ = PostMessageW(
@@ -391,7 +393,7 @@ pub fn destroy_realtime_webview(hwnd: HWND) {
 }
 
 /// Sync visibility toggle state to all webviews
-fn sync_visibility_to_webviews() {
+pub fn sync_visibility_to_webviews() {
     let mic_vis = MIC_VISIBLE.load(Ordering::SeqCst);
     let trans_vis = TRANS_VISIBLE.load(Ordering::SeqCst);
     let script = format!(
@@ -425,6 +427,18 @@ pub fn update_webview_text(hwnd: HWND, old_text: &str, new_text: &str) {
     REALTIME_WEBVIEWS.with(|wvs| {
         if let Some(webview) = wvs.borrow().get(&hwnd_key) {
             let _ = webview.evaluate_script(&script);
+        }
+    });
+}
+
+/// Clear/reset the WebView text to initial "Đang chờ nói..." state
+pub fn clear_webview_text(hwnd: HWND) {
+    let hwnd_key = hwnd.0 as isize;
+    let script = "if(window.clearText) window.clearText();";
+
+    REALTIME_WEBVIEWS.with(|wvs| {
+        if let Some(webview) = wvs.borrow().get(&hwnd_key) {
+            let _ = webview.evaluate_script(script);
         }
     });
 }

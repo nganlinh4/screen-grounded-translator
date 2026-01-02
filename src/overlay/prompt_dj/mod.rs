@@ -435,7 +435,10 @@ unsafe fn internal_create_pdj_loop() {
         }
     });
 
-    let webview = PDJ_WEB_CONTEXT.with(|ctx| {
+    // Brief delay to ensure window is fully initialized before creating WebView
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let webview_result = PDJ_WEB_CONTEXT.with(|ctx| {
         let mut ctx_ref = ctx.borrow_mut();
         let builder = WebViewBuilder::new_with_web_context(ctx_ref.as_mut().unwrap())
             .with_custom_protocol("promptdj".to_string(), move |_id, request| {
@@ -488,10 +491,19 @@ unsafe fn internal_create_pdj_loop() {
             })
             .with_url("promptdj://localhost/index.html");
 
-        builder
-            .build_as_child(&wrapper)
-            .expect("Failed to create PromptDJ WebView")
+        builder.build_as_child(&wrapper)
     });
+
+    let webview = match webview_result {
+        Ok(wv) => wv,
+        Err(e) => {
+            eprintln!("Failed to create PromptDJ WebView: {:?}", e);
+            // Clean up and exit gracefully
+            let _ = DestroyWindow(hwnd);
+            PDJ_HWND = SendHwnd::default();
+            return;
+        }
+    };
     let webview_arc = Arc::new(webview);
 
     // Initial Resize

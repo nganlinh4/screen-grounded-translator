@@ -1,4 +1,6 @@
-pub fn get(placeholder_text: &str) -> String { format!(r###"        function updateText(oldText, newText) {{
+pub fn get(placeholder_text: &str) -> String {
+    format!(
+        r###"        function updateText(oldText, newText) {{
             const hasContent = oldText || newText;
             
             if (isFirstText && hasContent) {{
@@ -263,4 +265,22 @@ pub fn get(placeholder_text: &str) -> String { format!(r###"        function upd
             }});
         }}
         
-        window.switchModel = switchModel;"###, placeholder_text=placeholder_text) }
+        window.switchModel = switchModel;
+        
+        // Clear text and reset to initial placeholder state
+        function clearText() {{
+            content.innerHTML = '<span class=\"placeholder\">{placeholder_text}</span>';
+            content.style.minHeight = '';
+            isFirstText = true;
+            minContentHeight = 0;
+            targetScrollTop = 0;
+            currentScrollTop = 0;
+            viewport.scrollTop = 0;
+            currentOldTextLength = 0;
+            previousNewText = '';
+        }}
+        
+        window.clearText = clearText;"###,
+        placeholder_text = placeholder_text
+    )
+}
