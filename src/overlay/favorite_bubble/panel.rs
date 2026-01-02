@@ -408,7 +408,12 @@ fn create_panel_webview(panel_hwnd: HWND) {
         };
         // Update static state to match initial generation
         LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
-        generate_panel_html(&app.config.presets, &app.config.ui_language, is_dark)
+        generate_panel_html(
+            &app.config.presets,
+            &app.config.ui_language,
+            is_dark,
+            app.config.favorites_keep_open,
+        )
     } else {
         String::new()
     };
@@ -471,6 +476,13 @@ fn create_panel_webview(panel_hwnd: HWND) {
                     // Keep Open mode: trigger preset without closing panel
                     if let Ok(idx) = body[13..].parse::<usize>() {
                         trigger_preset(idx);
+                    }
+                } else if body.starts_with("set_keep_open:") {
+                    if let Ok(val) = body[14..].parse::<u32>() {
+                        if let Ok(mut app) = APP.lock() {
+                            app.config.favorites_keep_open = val == 1;
+                            crate::config::save_config(&app.config);
+                        }
                     }
                 }
             })

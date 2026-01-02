@@ -1,10 +1,17 @@
 use crate::config::Preset;
 use crate::gui::settings_ui::get_localized_preset_name;
 
-pub fn generate_panel_html(presets: &[Preset], lang: &str, is_dark: bool) -> String {
+pub fn generate_panel_html(
+    presets: &[Preset],
+    lang: &str,
+    is_dark: bool,
+    keep_open: bool,
+) -> String {
     let css = generate_panel_css(is_dark);
     let favorites_html = get_favorite_presets_html(presets, lang, is_dark);
     let keep_open_label = crate::gui::locale::LocaleText::get(lang).favorites_keep_open;
+    let keep_open_js = if keep_open { "true" } else { "false" };
+    let keep_open_class = if keep_open { " active" } else { "" };
 
     format!(
         r#"<!DOCTYPE html>
@@ -18,8 +25,8 @@ pub fn generate_panel_html(presets: &[Preset], lang: &str, is_dark: bool) -> Str
 <body>
 <div class="container">
     <div class="keep-open-row visible" id="keepOpenRow">
-        <div class="toggle-switch" id="keepOpenToggle" onclick="toggleKeepOpen()"></div>
-        <span class="keep-open-label" id="keepOpenLabel">{keep_open_label}</span>
+        <div class="toggle-switch{keep_open_class}" id="keepOpenToggle" onclick="toggleKeepOpen()"></div>
+        <span class="keep-open-label{keep_open_class}" id="keepOpenLabel">{keep_open_label}</span>
     </div>
     <div class="list">{favorites}</div>
 </div>
@@ -44,7 +51,7 @@ function startDrag(e) {{
     if (e.button === 0) window.ipc.postMessage('drag');
 }}
 
-let keepOpen = false;
+let keepOpen = {keep_open_js};
 
 function toggleKeepOpen() {{
     keepOpen = !keepOpen;
@@ -52,6 +59,8 @@ function toggleKeepOpen() {{
     const label = document.getElementById('keepOpenLabel');
     toggle.classList.toggle('active', keepOpen);
     label.classList.toggle('active', keepOpen);
+    // Notify Rust to persist the new state
+    window.ipc.postMessage('set_keep_open:' + (keepOpen ? '1' : '0'));
 }}
 
 function trigger(idx) {{
@@ -159,7 +168,9 @@ window.setSide = (side) => {{
 </html>"#,
         css = css,
         favorites = favorites_html,
-        keep_open_label = keep_open_label
+        keep_open_label = keep_open_label,
+        keep_open_class = keep_open_class,
+        keep_open_js = keep_open_js
     )
 }
 

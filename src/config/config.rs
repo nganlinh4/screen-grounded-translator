@@ -215,6 +215,10 @@ pub struct Config {
     /// Bubble position (physical pixels)
     #[serde(default)]
     pub favorite_bubble_position: Option<(i32, i32)>,
+
+    /// Keep the favorites panel open after selecting a preset
+    #[serde(default)]
+    pub favorites_keep_open: bool,
 }
 
 // ============================================================================
@@ -273,6 +277,7 @@ impl Default for Config {
             // Favorite Bubble
             show_favorite_bubble: false,
             favorite_bubble_position: None,
+            favorites_keep_open: false,
         }
     }
 }
