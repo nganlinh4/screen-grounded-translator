@@ -392,12 +392,12 @@ export class PromptDjMidi extends LitElement {
       this.basePrompts.set(k, { ...p });
       this.baseOrder.push(k);
     }
-    // Start with defaults, BUT leave the last 3 (Custom) as empty slots
-    // There are 24 slots total. We want 21 active, 3 empty.
+    // Start with defaults, BUT leave the last 2 (Custom) as empty slots
+    // There are 24 slots total. We want 22 active, 2 empty.
     this.prompts = new Map();
     let count = 0;
     for (const [k, p] of this.basePrompts.entries()) {
-      if (count < 21) {
+      if (count < 22) {
         this.prompts.set(k, { ...p });
       }
       count++;
@@ -704,7 +704,9 @@ export class PromptDjMidi extends LitElement {
     const base = this.basePrompts.get(id);
     if (!base) return;
     const updated = new Map(this.prompts);
-    updated.set(id, { ...base });
+    // Always use placeholder text when adding (user deleted the original intentionally)
+    const text = this.trPlaceholder();
+    updated.set(id, { ...base, text });
     this.prompts = updated;
     const rem = new Set(this.removedSlots);
     rem.delete(id);
@@ -748,7 +750,7 @@ export class PromptDjMidi extends LitElement {
     const newPrompts = new Map<string, Prompt>();
     let count = 0;
     for (const [k, p] of this.basePrompts.entries()) {
-      if (count < 21) {
+      if (count < 22) {
         newPrompts.set(k, { ...p });
       }
       count++;

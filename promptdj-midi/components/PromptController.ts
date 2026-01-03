@@ -112,6 +112,7 @@ export class PromptController extends LitElement {
     /* Default = dark-friendly (white text with black glow) */
     #text-svg text {
       font-family: 'Google Sans Flex', 'Segoe UI', system-ui, sans-serif;
+      font-stretch: condensed;
       font-weight: 500;
       font-size: 2.3vmin;
       fill: #fff;
