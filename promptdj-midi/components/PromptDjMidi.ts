@@ -47,7 +47,7 @@ export class PromptDjMidi extends LitElement {
       position: relative;
     }
 
-    /* Grid wrapper includes left add column and the 4x4 grid */
+    /* Grid wrapper includes just the grid now */
     #gridWrap {
       display: flex;
       align-items: center;
@@ -56,12 +56,7 @@ export class PromptDjMidi extends LitElement {
       height: 80vmin;
     }
 
-    #addColumn {
-      display: grid;
-      grid-template-rows: repeat(4, 1fr);
-      gap: 2.5vmin;
-      height: 80vmin;
-    }
+    /* #addColumn removed */
 
     .add-slot {
       width: 17vmin;
@@ -84,10 +79,10 @@ export class PromptDjMidi extends LitElement {
     .add-slot:hover .add-icon { transform: scale(1.05); }
 
     #grid {
-      width: 80vmin;
+      width: 120vmin;
       height: 80vmin;
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(6, 1fr);
       gap: 2.5vmin;
     }
     .pc-wrap {
@@ -300,6 +295,47 @@ export class PromptDjMidi extends LitElement {
       opacity: 0.7;
       margin-top: 2px;
     }
+
+    .volume-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      margin-bottom: 4vmin;
+      box-sizing: border-box;
+      gap: 1vmin;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    #sideControls:hover .volume-container {
+      opacity: 1;
+    }
+    .volume-icon {
+      color: var(--md-on-surface);
+      font-size: 3vmin;
+    }
+    .volume-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      height: 0.6vmin;
+      border-radius: 1vmin;
+      /* Full opacity track to match buttons */
+      background: #ffffff;
+      outline: none;
+      cursor: pointer;
+    }
+    :host([data-theme="light"]) .volume-slider { background: #444444; }
+    .volume-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 2vmin;
+      height: 2vmin;
+      border-radius: 50%;
+      background: var(--md-primary, #ffffff);
+      cursor: pointer;
+      transition: transform 0.1s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .volume-slider::-webkit-slider-thumb:hover { transform: scale(1.2); }
   `;
 
   private prompts: Map<string, Prompt>;
@@ -338,6 +374,8 @@ export class PromptDjMidi extends LitElement {
   // Track which base grid slots are removed (to render add buttons in-grid)
   @state() private removedSlots: Set<string> = new Set();
 
+  @state() private volume: number = 1.0;
+
   @property({ type: Object })
   private filteredPrompts = new Set<string>();
 
@@ -349,38 +387,67 @@ export class PromptDjMidi extends LitElement {
     initialPrompts: Map<string, Prompt>,
   ) {
     super();
-    // Deep-copy base prompts so we can reset later
+    // Deep-copy base prompts
     this.basePrompts = new Map<string, Prompt>();
     for (const [k, p] of initialPrompts.entries()) {
       this.basePrompts.set(k, { ...p });
       this.baseOrder.push(k);
     }
-    this.prompts = new Map(this.basePrompts);
+    // Start with defaults, BUT leave the last 2 (Custom 1/2) as empty slots
+    // There are 24 slots total. We want 22 active, 2 empty.
+    this.prompts = new Map();
+    let count = 0;
+    for (const [k, p] of this.basePrompts.entries()) {
+      if (count < 22) {
+        this.prompts.set(k, { ...p });
+      }
+      count++;
+    }
     this.midiDispatcher = new MidiDispatcher();
 
-    // Load saved state if present
+    // Load saved state and MERGE it
     try {
       const raw = localStorage.getItem(this.STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         const savedPrompts: any[] = Array.isArray(parsed?.prompts) ? parsed.prompts : [];
-        const map = new Map<string, Prompt>();
+
         savedPrompts.forEach((p) => {
           if (p && typeof p.promptId === 'string') {
-            const base = this.basePrompts.get(p.promptId);
-            const color = p.color || base?.color || '#9900ff';
-            const cc = typeof p.cc === 'number' ? p.cc : (base?.cc ?? 0);
-            const text = typeof p.text === 'string' ? p.text : (base?.text ?? '');
-            const weight = typeof p.weight === 'number' ? p.weight : (base?.weight ?? 0);
-            map.set(p.promptId, { promptId: p.promptId, color, cc, text, weight });
+            // Only update if it corresponds to a valid base prompt or a known extra
+            // (For now, we trust the defaults structure more for the base grid)
+            if (this.prompts.has(p.promptId)) {
+              const existing = this.prompts.get(p.promptId)!;
+              // Restore USER state (text, weight, color) but keep structure valid
+              this.prompts.set(p.promptId, {
+                ...existing,
+                text: typeof p.text === 'string' ? p.text : existing.text,
+                weight: typeof p.weight === 'number' ? p.weight : existing.weight,
+                color: p.color || existing.color,
+                cc: typeof p.cc === 'number' ? p.cc : existing.cc
+              });
+            } else if (p.promptId.startsWith('extra-')) {
+              // Restore extra slots
+              this.prompts.set(p.promptId, {
+                promptId: p.promptId,
+                text: p.text || '',
+                weight: p.weight || 0,
+                cc: p.cc || 0,
+                color: p.color || '#ffffff'
+              });
+            }
           }
         });
-        if (map.size > 0) this.prompts = map;
+
         if (Array.isArray(parsed?.addSlotsActive) && parsed.addSlotsActive.length === 4) {
           this.addSlotsActive = parsed.addSlotsActive.map((b: any) => !!b);
         }
         const rs = parsed?.removedSlots;
-        if (Array.isArray(rs)) this.removedSlots = new Set<string>(rs.filter((x: any) => typeof x === 'string'));
+        if (Array.isArray(rs)) {
+          // Only respect removal of keys that actually exist in our base order
+          const validRemovals = rs.filter((x: any) => typeof x === 'string' && this.basePrompts.has(x));
+          this.removedSlots = new Set<string>(validRemovals);
+        }
       }
     } catch { }
   }
@@ -498,8 +565,8 @@ export class PromptDjMidi extends LitElement {
         const stop = p.weight / 2;
 
         // Base grid position
-        const gx = (i % 4) / 3;
-        const gy = Math.floor(i / 4) / 3;
+        const gx = (i % 6) / 5;
+        const gy = Math.floor(i / 6) / 3;
 
         // Gentle, eased drift per prompt scaled by driftStrength
         const phase = i * 1.37; // unique-ish per index
@@ -677,11 +744,21 @@ export class PromptDjMidi extends LitElement {
   }
 
   public resetAll() {
-    // Reset to original base prompts and deactivate extra slots and removed slots
-    this.prompts = new Map(this.basePrompts);
+    // Reset to original base prompts
+    // BUT maintain the "22 active, 2 empty" rule
+    const newPrompts = new Map<string, Prompt>();
+    let count = 0;
+    for (const [k, p] of this.basePrompts.entries()) {
+      if (count < 22) {
+        newPrompts.set(k, { ...p });
+      }
+      count++;
+    }
+    this.prompts = newPrompts;
     this.addSlotsActive = [false, false, false, false];
     this.removedSlots = new Set();
     this.requestUpdate();
+    this.saveState();
     this.dispatchEvent(new CustomEvent('prompts-changed', { detail: this.prompts }));
   }
 
@@ -726,6 +803,39 @@ export class PromptDjMidi extends LitElement {
 
   private toggleMidiPanel() {
     this.setShowMidi(!this.showMidi);
+  }
+
+  private handleVolumeChange(e: Event) {
+    const val = parseFloat((e.target as HTMLInputElement).value);
+    this.volume = val;
+
+    // 1. IPC to native
+    if ((window as any).ipc) {
+      (window as any).ipc.postMessage('set_volume:' + val);
+    }
+
+    // 2. Global variable for hooks
+    (window as any)._currentVolume = val;
+
+    // 3. Audio tags
+    document.querySelectorAll('audio, video').forEach((el) => {
+      (el as HTMLMediaElement).volume = val;
+    });
+
+    // 4. Captured AudioContext Gains (from mod.rs hook)
+    const gains = (window as any)._activeMasterGains;
+    if (Array.isArray(gains)) {
+      gains.forEach((g: any) => {
+        try {
+          if (g && g.gain) {
+            // smooth transition
+            g.gain.setTargetAtTime(val, g.context.currentTime, 0.1);
+          }
+        } catch {
+          if (g && g.gain) g.gain.value = val;
+        }
+      });
+    }
   }
 
 
@@ -801,17 +911,19 @@ export class PromptDjMidi extends LitElement {
       ${this.renderModal()}
       <div id="content">
         <div id="gridWrap">
-          <div id="addColumn">
-            ${[0, 1, 2, 3].map((idx) => this.addSlotsActive[idx]
-      ? this.renderPromptWithClear(`extra-${idx}`)
-      : html`<button class="add-slot" @click=${() => this.addExtraSlot(idx)} title="Add">
-                  <span class="material-symbols-rounded add-icon">add</span>
-                </button>`
-    )}
-          </div>
           <div id="grid">${this.renderPrompts()}</div>
         </div>
         <div id="sideControls">
+          <!-- Volume at the top -->
+          <div class="volume-container" title="Master Volume">
+            <span class="material-symbols-rounded volume-icon">
+              ${this.volume <= 0.001 ? 'volume_off' : this.volume < 0.5 ? 'volume_down' : 'volume_up'}
+            </span>
+            <input type="range" class="volume-slider" min="0" max="1" step="0.01"
+              .value=${this.volume.toString()}
+              @input=${this.handleVolumeChange}>
+          </div>
+
           <play-pause-morph
             ?playing=${playingProp}
             ?loading=${loadingProp}

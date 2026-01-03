@@ -398,8 +398,8 @@ unsafe fn internal_create_pdj_loop() {
         let _ = RegisterClassW(&wc);
     });
 
-    let width = 1200;
-    let height = 800;
+    let width = 1350;
+    let height = 775;
 
     let screen_w = GetSystemMetrics(SM_CXSCREEN);
     let screen_h = GetSystemMetrics(SM_CYSCREEN);
@@ -587,74 +587,7 @@ unsafe fn internal_create_pdj_loop() {
             }};
             header.appendChild(closeBtn);
 
-            // --- Volume Slider (UI & Logic) ---
-            
-            // UI Construction
-            const volContainer = document.createElement('div');
-            volContainer.id = 'dj-vol-container';
-            // Adjusted position: top 130px (Much higher)
-            volContainer.style.cssText = 'position: absolute; top: 130px; right: 50px; width: 180px; height: 40px; display: flex; align-items: center; justify-content: center; background: transparent; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 2000; padding: 0 16px; box-sizing: border-box;';
-            
-            const volIcon = document.createElement('div');
-            volIcon.className = 'material-symbols-rounded';
-            volIcon.innerText = 'volume_up';
-            volIcon.style.cssText = 'margin-right: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: var(--vol-icon); filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); user-select: none; transition: color 0.2s;';
-            volContainer.appendChild(volIcon);
-
-            const volInput = document.createElement('input');
-            volInput.type = 'range';
-            volInput.min = '0';
-            volInput.max = '1';
-            volInput.step = '0.01';
-            volInput.defaultValue = '1';
-            volInput.style.cssText = 'flex: 1; height: 4px; border-radius: 2px; -webkit-appearance: none; background: var(--vol-track, rgba(255,255,255,0.3)); outline: none; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.3);';
-            volContainer.appendChild(volInput);
-            
-            document.body.appendChild(volContainer);
-
-            // Styles
-            const volStyle = document.createElement('style');
-            volStyle.innerHTML = `
-                :root {{
-                    --vol-icon: rgba(255,255,255,0.9);
-                    --vol-track: rgba(255,255,255,0.3);
-                    --vol-thumb: #ffffff;
-                }}
-                [data-theme='light'] {{
-                    --vol-icon: rgba(0,0,0,0.7);
-                    --vol-track: rgba(0,0,0,0.2);
-                    --vol-thumb: #333333;
-                }}
-                #dj-vol-container input::-webkit-slider-thumb {{
-                    -webkit-appearance: none;
-                    width: 14px;
-                    height: 14px;
-                    border-radius: 50%;
-                    background: var(--vol-thumb);
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
-                    cursor: pointer;
-                    transition: transform 0.1s;
-                }}
-                #dj-vol-container input::-webkit-slider-thumb:hover {{
-                    transform: scale(1.3);
-                }}
-                .material-symbols-rounded {{
-                    font-family: 'Material Symbols Rounded';
-                    font-weight: normal;
-                    font-style: normal;
-                    font-size: 24px;
-                    display: inline-block;
-                    line-height: 1;
-                    text-transform: none;
-                    letter-spacing: normal;
-                    word-wrap: normal;
-                    white-space: nowrap;
-                    direction: ltr;
-                    -webkit-font-smoothing: antialiased;
-                    font-variation-settings: 'FILL' 1, 'wght' 400, 'grad' 0, 'opsz' 24;
-                }}
-            `;
-            document.head.appendChild(volStyle);
+            // --- Volume Slider Removed (moved to PromptDjMidi.ts) ---
 
             const updateTheme = (theme) => {{
                 if (theme === 'light') {{
@@ -669,58 +602,8 @@ unsafe fn internal_create_pdj_loop() {
                     updateTheme(e.data.theme);
                 }}
             }});
-
-            const updateVolume = (val) => {{
-                // Update State
-                window._currentVolume = val;
-
-                // Update Icon
-                if (typeof volIcon !== 'undefined' && volIcon) {{
-                    if (val <= 0.001) volIcon.innerText = 'volume_off';
-                    else if (val < 0.5) volIcon.innerText = 'volume_down';
-                    else volIcon.innerText = 'volume_up';
-                }}
-
-                // 1. App Process Volume (The Hammer)
-                if (window.ipc) window.ipc.postMessage('set_volume:' + val);
-
-                // 2. Audio Tags (Legacy)
-                document.querySelectorAll('audio, video').forEach(a => a.volume = val);
-                
-                // 3. Captured Gains (JS) - Visual/Internal backup
-                if (window._activeMasterGains) {{
-                    window._activeMasterGains.forEach(g => {{
-                        try {{
-                            g.gain.setTargetAtTime(val, g.context.currentTime, 0.1);
-                        }} catch (e) {{
-                            g.gain.value = val;
-                        }}
-                    }});
-                }}
-            }};
-
-            volInput.addEventListener('input', (e) => updateVolume(e.target.value));
-            volInput.addEventListener('mousedown', (e) => e.stopPropagation());
-
-            // Hover Logic
-            document.addEventListener('mousemove', (e) => {{
-                const w = window.innerWidth;
-                const h = window.innerHeight;
-                const isRight = e.clientX > w - 350;
-                // Move area higher too
-                const isMiddle = e.clientY > 100 && e.clientY < h - 200;
-                
-                const rect = volContainer.getBoundingClientRect();
-                const isOver = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-
-                if ((isRight && isMiddle) || isOver) {{
-                    volContainer.style.opacity = '1';
-                    volContainer.style.pointerEvents = 'auto';
-                }} else {{
-                    volContainer.style.opacity = '0';
-                    volContainer.style.pointerEvents = 'none';
-                }}
-            }});
+            
+            // Hover Logic (Removed Vol Container part)
 
             document.body.appendChild(header);
 
@@ -730,6 +613,7 @@ unsafe fn internal_create_pdj_loop() {
                 window.postMessage({{ type: 'pm-dj-set-font', font: 'google-sans-flex' }}, '*');
             }}, 250);
         }});
+
         "#,
         font_css, api_key, lang, theme_str
     );

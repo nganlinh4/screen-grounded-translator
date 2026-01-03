@@ -334,6 +334,14 @@ const DEFAULT_PROMPTS = [
   { color: '#d8ff3e', text: 'Neo Soul' },
   { color: '#5200ff', text: 'Trip Hop' },
   { color: '#d9b2ff', text: 'Thrash' },
+  { color: '#FF0099', text: 'Vinahouse' },
+  { color: '#FFA500', text: 'Bolero (Nhạc Vàng)' },
+  { color: '#00CED1', text: 'Cải Lương' },
+  { color: '#FF0000', text: 'Nhạc Đỏ' },
+  { color: '#D2691E', text: 'Ca Trù' },
+  { color: '#FF1493', text: 'Kpop' },
+  { color: '#cccccc', text: '' },
+  { color: '#cccccc', text: '' },
 ];
 
 main();
