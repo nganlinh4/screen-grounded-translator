@@ -35,6 +35,7 @@ pub enum Icon {
     Moon,            // New: Moon icon for dark mode
     Device,          // New: Monitor/Device icon for system theme
     DragHandle,      // New: Drag handle for reordering
+    History,         // New: History icon (clock)
 }
 
 /// Main entry point: Draw a clickable icon button (default size 24.0)
@@ -915,6 +916,18 @@ fn paint_internal(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: 
                     painter.circle_filled(egui::pos2(cx, cy), r, color);
                 }
             }
+        }
+
+        Icon::History => {
+            // Clock icon
+            let r = 7.0 * scale;
+            painter.circle_stroke(center, r, stroke);
+
+            // Hands
+            // Hour hand at 3 o'clock
+            painter.line_segment([center, center + egui::vec2(4.0 * scale, 0.0)], stroke);
+            // Minute hand at 12 o'clock
+            painter.line_segment([center, center + egui::vec2(0.0, -5.0 * scale)], stroke);
         }
     }
 }

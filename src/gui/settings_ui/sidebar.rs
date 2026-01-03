@@ -256,24 +256,14 @@ pub fn render_sidebar(
         }
 
         // History Button
-        let history_bg = if is_dark {
-            egui::Color32::from_rgb(40, 90, 90)
-        } else {
-            egui::Color32::from_rgb(100, 180, 180)
-        };
-        if ui
-            .add(
-                egui::Button::new(
-                    egui::RichText::new(format!("📜 {}", text.history_btn))
-                        .color(egui::Color32::WHITE),
-                )
-                .fill(history_bg)
-                .corner_radius(8.0),
-            )
-            .clicked()
-        {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        draw_icon_static(ui, Icon::History, None);
+        let is_history = matches!(current_view_mode, ViewMode::History);
+        if ui.selectable_label(is_history, text.history_btn).clicked() {
             should_set_history = true;
         }
+
+        ui.spacing_mut().item_spacing.x = 8.0; // Restore spacing for next items
 
         ui.add_space(8.0);
 
