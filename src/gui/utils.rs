@@ -1,4 +1,6 @@
 use eframe::egui;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::process::Command;
 use windows::core::w;
 use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, RECT, WPARAM};
@@ -203,29 +205,37 @@ pub fn set_admin_startup(enable: bool) -> bool {
             return false;
         }
 
-        let output = Command::new("schtasks")
-            .args(&[
-                "/create",
-                "/tn",
-                TASK_NAME,
-                "/tr",
-                &format!("\"{}\"", exe_str),
-                "/sc",
-                "onlogon",
-                "/rl",
-                "highest",
-                "/f",
-            ])
-            .output();
+        let mut cmd = Command::new("schtasks");
+        cmd.args(&[
+            "/create",
+            "/tn",
+            TASK_NAME,
+            "/tr",
+            &format!("\"{}\"", exe_str),
+            "/sc",
+            "onlogon",
+            "/rl",
+            "highest",
+            "/f",
+        ]);
+        // CREATE_NO_WINDOW = 0x08000000 - prevents console window flash
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
+
+        let output = cmd.output();
 
         match output {
             Ok(o) => o.status.success(),
             Err(_) => false,
         }
     } else {
-        let output = Command::new("schtasks")
-            .args(&["/delete", "/tn", TASK_NAME, "/f"])
-            .output();
+        let mut cmd = Command::new("schtasks");
+        cmd.args(&["/delete", "/tn", TASK_NAME, "/f"]);
+        // CREATE_NO_WINDOW = 0x08000000 - prevents console window flash
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
+
+        let output = cmd.output();
 
         match output {
             Ok(o) => o.status.success(),
@@ -235,9 +245,13 @@ pub fn set_admin_startup(enable: bool) -> bool {
 }
 
 pub fn is_admin_startup_enabled() -> bool {
-    let output = Command::new("schtasks")
-        .args(&["/query", "/tn", TASK_NAME])
-        .output();
+    let mut cmd = Command::new("schtasks");
+    cmd.args(&["/query", "/tn", TASK_NAME]);
+    // CREATE_NO_WINDOW = 0x08000000 - prevents console window flash
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+
+    let output = cmd.output();
 
     match output {
         Ok(o) => o.status.success(),

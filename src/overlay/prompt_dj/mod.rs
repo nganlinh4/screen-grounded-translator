@@ -54,9 +54,17 @@ fn update_child_pids() {
     let current_pid = unsafe { GetCurrentProcessId() };
 
     // Use wmic to get all processes (PID, PPID) - fast and standard
-    let output = std::process::Command::new("wmic")
-        .args(&["process", "get", "ProcessId,ParentProcessId", "/format:csv"])
-        .output();
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+
+    let mut cmd = std::process::Command::new("wmic");
+    cmd.args(&["process", "get", "ProcessId,ParentProcessId", "/format:csv"]);
+
+    // CREATE_NO_WINDOW = 0x08000000 - prevents console window flash
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+
+    let output = cmd.output();
 
     if let Ok(o) = output {
         if let Ok(s) = String::from_utf8(o.stdout) {
