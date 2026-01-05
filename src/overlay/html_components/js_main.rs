@@ -345,6 +345,41 @@ pub fn get(font_size: u32) -> String {
             }});
         }}
         
+        // Update settings from native side (used when overlay is shown with saved config)
+        window.updateSettings = function(settings) {{
+            // Update audio source toggle
+            if (settings.audioSource && micBtn && deviceBtn) {{
+                if (settings.audioSource === 'device') {{
+                    micBtn.classList.remove('active');
+                    deviceBtn.classList.add('active');
+                }} else {{
+                    micBtn.classList.add('active');
+                    deviceBtn.classList.remove('active');
+                }}
+            }}
+            
+            // Update language select
+            if (settings.targetLanguage && langSelect) {{
+                langSelect.value = settings.targetLanguage;
+            }}
+            
+            // Update translation model
+            if (settings.translationModel && modelIcons.length) {{
+                modelIcons.forEach(icon => {{
+                    const val = icon.getAttribute('data-value');
+                    icon.classList.toggle('active', val === settings.translationModel);
+                }});
+            }}
+            
+            // Update font size
+            if (settings.fontSize && settings.fontSize !== currentFontSize) {{
+                currentFontSize = settings.fontSize;
+                content.style.fontSize = currentFontSize + 'px';
+                minContentHeight = 0;
+                content.style.minHeight = '';
+            }}
+        }};
+        
         // Handle resize to keep text at bottom
         let lastWidth = viewport.clientWidth;
         const resizeObserver = new ResizeObserver(entries => {{

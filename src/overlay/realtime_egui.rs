@@ -98,7 +98,7 @@ pub fn show_realtime_egui_overlay(preset_idx: usize) {
         // Don't lazy load apps here to avoid blocking
     }
     
-    let effective_source = if config_audio_source.is_empty() { "mic".to_string() } else { config_audio_source };
+    let effective_source = if config_audio_source.is_empty() { "device".to_string() } else { config_audio_source };
     
     if let Ok(mut new_source) = NEW_AUDIO_SOURCE.lock() {
         *new_source = effective_source.clone();

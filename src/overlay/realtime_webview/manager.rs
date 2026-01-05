@@ -156,8 +156,8 @@ unsafe fn internal_create_realtime_loop() {
     TRANSLATION_HWND = trans_hwnd;
 
     // Create WebViews
-    create_realtime_webview(main_hwnd, false, "mic", "English", "google-gtx", 16);
-    create_realtime_webview(trans_hwnd, true, "mic", "English", "google-gtx", 16);
+    create_realtime_webview(main_hwnd, false, "device", "English", "google-gtx", 16);
+    create_realtime_webview(trans_hwnd, true, "device", "English", "google-gtx", 16);
 
     // Mark as warmed up and ready
     IS_WARMED_UP = true;
@@ -250,11 +250,16 @@ unsafe fn handle_start_overlay(preset_idx: usize) {
         )
     };
 
-    if !config_audio_source.is_empty() {
-        preset.audio_source = config_audio_source.clone();
-        if let Ok(mut new_source) = NEW_AUDIO_SOURCE.lock() {
-            *new_source = config_audio_source.clone();
-        }
+    // Default to "device" if no audio source is saved
+    let effective_audio_source = if config_audio_source.is_empty() {
+        "device".to_string()
+    } else {
+        config_audio_source.clone()
+    };
+
+    preset.audio_source = effective_audio_source.clone();
+    if let Ok(mut new_source) = NEW_AUDIO_SOURCE.lock() {
+        *new_source = effective_audio_source.clone();
     }
 
     let target_language = if !config_language.is_empty() {
@@ -326,7 +331,7 @@ unsafe fn handle_start_overlay(preset_idx: usize) {
     // Notify WebViews of new settings
     notify_webview_settings(
         REALTIME_HWND,
-        &config_audio_source,
+        &effective_audio_source,
         &target_language,
         &config_translation_model,
         font_size,
