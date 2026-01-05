@@ -79,7 +79,7 @@ pub fn get_realtime_html(
             </div>
             <div class="btn-group">
                 <span class="material-symbols-rounded trans-model-icon {gemini_active}" data-value="gemini" title="Gemini Live (Cloud)">{auto_awesome_svg}</span>
-                <span class="material-symbols-rounded trans-model-icon {parakeet_active}" data-value="parakeet" title="Parakeet (Local)">{speed_svg}</span>
+                <span class="material-symbols-rounded trans-model-icon {parakeet_active}" data-value="parakeet" title="Parakeet (Local)">{bolt_en_svg}</span>
             </div>
         "#,
             mic_active = if !is_device { "active" } else { "" },
@@ -89,7 +89,7 @@ pub fn get_realtime_html(
             mic_svg = crate::overlay::html_components::icons::get_icon_svg("mic"),
             device_svg = crate::overlay::html_components::icons::get_icon_svg("speaker_group"),
             auto_awesome_svg = crate::overlay::html_components::icons::get_icon_svg("auto_awesome"),
-            speed_svg = crate::overlay::html_components::icons::get_icon_svg("speed")
+            bolt_en_svg = crate::overlay::html_components::icons::get_icon_svg("bolt_en")
         )
     } else {
         // Language selector and model toggle for translation window
@@ -200,6 +200,7 @@ pub fn get_realtime_html(
         <div class="download-progress-bar">
             <div class="download-progress-fill" id="download-fill" style="width: 0%;"></div>
         </div>
+        <div class="download-modal-footnote">{supports_english}</div>
     </div>
     <!-- TTS Settings Modal -->
     <div id="tts-modal-overlay"></div>
@@ -257,6 +258,7 @@ pub fn get_realtime_html(
         pip_svg = crate::overlay::html_components::icons::get_icon_svg("picture_in_picture_small"),
         volume_up_svg = crate::overlay::html_components::icons::get_icon_svg("volume_up"),
         apps_svg = crate::overlay::html_components::icons::get_icon_svg("apps"),
-        download_svg = crate::overlay::html_components::icons::get_icon_svg("download")
+        download_svg = crate::overlay::html_components::icons::get_icon_svg("download"),
+        supports_english = text.parakeet_supports_english_only
     )
 }

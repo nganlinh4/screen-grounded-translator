@@ -61,7 +61,7 @@ fn transcription_thread_entry(
         AUDIO_SOURCE_CHANGE, NEW_AUDIO_SOURCE, NEW_TRANSCRIPTION_MODEL, TRANSCRIPTION_MODEL_CHANGE,
     };
 
-    let mut current_preset = preset;
+    let current_preset = preset;
 
     loop {
         AUDIO_SOURCE_CHANGE.store(false, Ordering::SeqCst);

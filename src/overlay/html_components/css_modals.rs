@@ -266,9 +266,9 @@ pub fn get() -> String {
             background: rgba(30, 30, 30, 0.98);
             border: 1px solid #00c8ff80;
             border-radius: 12px;
-            padding: 16px 20px;
+            padding: 12px 16px;
             z-index: 2147483647 !important;
-            min-width: 380px;
+            min-width: 320px;
             max-width: 90vw;
             box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px #00c8ff30;
             text-align: center;
@@ -291,26 +291,26 @@ pub fn get() -> String {
             display: block !important;
         }
         .download-modal-title {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: bold;
             color: #00c8ff;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
+            gap: 6px;
             line-height: 1.2;
         }
         .download-modal-title .material-symbols-rounded {
-            font-size: 20px;
-            width: 20px;
-            height: 20px;
+            font-size: 18px;
+            width: 18px;
+            height: 18px;
             flex-shrink: 0;
         }
         .download-modal-msg {
-            font-size: 13px;
-            color: #ddd;
-            margin-bottom: 20px;
+            font-size: 11px;
+            color: #ccc;
+            margin-bottom: 12px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -318,16 +318,22 @@ pub fn get() -> String {
         }
         .download-progress-bar {
             width: 100%;
-            height: 8px;
+            height: 6px;
             background: #444;
-            border-radius: 4px;
+            border-radius: 3px;
             overflow: hidden;
+            margin-bottom: 8px;
         }
         .download-progress-fill {
             height: 100%;
             background: linear-gradient(90deg, #00c8ff, #0080ff);
             width: 0%;
             transition: width 0.2s;
+        }
+        .download-modal-footnote {
+            font-size: 10px;
+            color: #888;
+            font-style: italic;
         }
 "###
     .to_string()

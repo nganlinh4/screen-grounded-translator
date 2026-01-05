@@ -230,6 +230,7 @@ pub struct LocaleText {
     pub parakeet_downloading_title: &'static str,
     pub parakeet_downloading_message: &'static str,
     pub parakeet_downloading_file: &'static str, // "Downloading {}..."
+    pub parakeet_supports_english_only: &'static str,
 }
 
 impl LocaleText {
@@ -510,6 +511,7 @@ impl LocaleText {
                   parakeet_downloading_title: "Đang tải mô hình Parakeet (0.6 GB)",
                   parakeet_downloading_message: "Vui lòng đợi...",
                   parakeet_downloading_file: "Đang tải {}...",
+                  parakeet_supports_english_only: "(Chỉ hỗ trợ tiếng Anh)",
                  },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -786,6 +788,7 @@ impl LocaleText {
                   parakeet_downloading_title: "Parakeet 모델 다운로드 중 (0.6 GB)",
                   parakeet_downloading_message: "잠시만 기다려주세요...",
                   parakeet_downloading_file: "{} 다운로드 중...",
+                  parakeet_supports_english_only: "(영어만 지원됨)",
                  },
                 _ => Self {
                  history_btn: "History",
@@ -1061,6 +1064,7 @@ impl LocaleText {
                   parakeet_downloading_title: "Downloading Parakeet (0.6 GB)",
                   parakeet_downloading_message: "Please wait...",
                   parakeet_downloading_file: "Downloading {}...",
+                  parakeet_supports_english_only: "(Only supports English)",
                  },
                 }
     }

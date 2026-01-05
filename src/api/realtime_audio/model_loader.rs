@@ -84,10 +84,11 @@ pub fn download_file(
 }
 
 pub fn get_parakeet_model_dir() -> PathBuf {
-    let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push(".gemini");
-    path.push("parakeet-model");
-    path
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("screen-goated-toolbox")
+        .join("models")
+        .join("parakeet")
 }
 
 pub fn is_model_downloaded() -> bool {

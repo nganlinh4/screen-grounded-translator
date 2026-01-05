@@ -1,7 +1,7 @@
 //! WebView creation and IPC handling for realtime overlay
 
 use super::state::*;
-use crate::api::realtime_audio::{WM_COPY_TEXT, WM_START_DRAG, WM_TOGGLE_MIC, WM_TOGGLE_TRANS};
+use crate::api::realtime_audio::WM_COPY_TEXT;
 use crate::api::realtime_audio::{WM_REALTIME_UPDATE, WM_TRANSLATION_UPDATE};
 use crate::config::get_all_languages;
 use crate::gui::locale::LocaleText;
@@ -81,25 +81,81 @@ pub fn create_realtime_webview(
             .with_ipc_handler(move |msg: wry::http::Request<String>| {
                 let body = msg.body();
                 if body == "startDrag" {
+                    // Initiate window drag directly
                     unsafe {
-                        let _ =
-                            PostMessageW(Some(hwnd_for_ipc), WM_START_DRAG, WPARAM(0), LPARAM(0));
+                        let _ = windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
+                        SendMessageW(
+                            hwnd_for_ipc,
+                            WM_NCLBUTTONDOWN,
+                            Some(WPARAM(HTCAPTION as usize)),
+                            Some(LPARAM(0)),
+                        );
                     }
                 } else if body.starts_with("toggleMic:") {
-                    let val = if &body[10..] == "1" { 1 } else { 0 };
+                    // Toggle transcription window visibility directly
+                    let visible = &body[10..] == "1";
+                    MIC_VISIBLE.store(visible, Ordering::SeqCst);
                     unsafe {
-                        let _ =
-                            PostMessageW(Some(hwnd_for_ipc), WM_TOGGLE_MIC, WPARAM(val), LPARAM(0));
+                        if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
+                            let _ =
+                                ShowWindow(REALTIME_HWND, if visible { SW_SHOW } else { SW_HIDE });
+                        }
+                        // Sync to other webview
+                        sync_visibility_to_webviews();
+
+                        // If both windows are now off, hide and reset state (but keep windows alive)
+                        if !MIC_VISIBLE.load(Ordering::SeqCst)
+                            && !TRANS_VISIBLE.load(Ordering::SeqCst)
+                        {
+                            REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                            crate::api::tts::TTS_MANAGER.stop();
+                            IS_ACTIVE = false;
+                        } else if visible {
+                            // Force update since we suppressed them while hidden
+                            let _ = PostMessageW(
+                                Some(REALTIME_HWND),
+                                WM_REALTIME_UPDATE,
+                                WPARAM(0),
+                                LPARAM(0),
+                            );
+                        }
                     }
                 } else if body.starts_with("toggleTrans:") {
-                    let val = if &body[12..] == "1" { 1 } else { 0 };
+                    // Toggle translation window visibility directly
+                    let visible = &body[12..] == "1";
+                    TRANS_VISIBLE.store(visible, Ordering::SeqCst);
+
+                    // Stop TTS when translation window is hidden
+                    if !visible {
+                        crate::api::tts::TTS_MANAGER.stop();
+                    }
+
                     unsafe {
-                        let _ = PostMessageW(
-                            Some(hwnd_for_ipc),
-                            WM_TOGGLE_TRANS,
-                            WPARAM(val),
-                            LPARAM(0),
-                        );
+                        if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
+                            let _ = ShowWindow(
+                                TRANSLATION_HWND,
+                                if visible { SW_SHOW } else { SW_HIDE },
+                            );
+                        }
+                        // Sync to other webview
+                        sync_visibility_to_webviews();
+
+                        // If both windows are now off, hide and reset state (but keep windows alive)
+                        if !MIC_VISIBLE.load(Ordering::SeqCst)
+                            && !TRANS_VISIBLE.load(Ordering::SeqCst)
+                        {
+                            REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                            crate::api::tts::TTS_MANAGER.stop();
+                            IS_ACTIVE = false;
+                        } else if visible {
+                            // Force update since we suppressed them while hidden
+                            let _ = PostMessageW(
+                                Some(TRANSLATION_HWND),
+                                WM_TRANSLATION_UPDATE,
+                                WPARAM(0),
+                                LPARAM(0),
+                            );
+                        }
                     }
                 } else if body == "startGroupDrag" {
                     // Start group drag - nothing special needed, just mark drag started
