@@ -32,7 +32,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                         .language("English")
                         .show_overlay(false)
                         .build(),
-                    BlockBuilder::text("text_accurate_kimi")
+                    BlockBuilder::text("cerebras_qwen3")
                         .prompt("Translate to {language1}. Output ONLY the translation.")
                         .language("Vietnamese")
                         .streaming(false)
@@ -66,7 +66,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .language("Korean")
                     .auto_copy()
                     .build(),
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .build(),
@@ -82,12 +82,12 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .language("English")
                     .show_overlay(false)
                     .build(),
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Korean")
                     .auto_copy()
                     .build(),
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .build(),
@@ -158,7 +158,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .auto_copy()
                     .build(),
                 // Node 1: Format the QR content nicely
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Format this QR code content for display. Rules:\n\
                         - If URL: Make it a clickable markdown link [URL](URL) and describe what this link points to\n\
                         - If vCard/contact: Format as a readable contact card with name, phone, email, address\n\
@@ -247,7 +247,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .markdown()
                     .build(),
                 // Node 1: Make a learning HTML (from 0)
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Create a standalone INTERACTIVE HTML learning card/game for the following text. Use internal CSS for a beautiful, modern, colored design, game-like and comprehensive interface. Only OUTPUT the raw HTML code, DO NOT include HTML file indicator (```html) or triple backticks.")
                     .language("Vietnamese")
                     .markdown()
@@ -259,13 +259,13 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .markdown()
                     .build(),
                 // Node 3: Translate (from 0)
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate the following text to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .markdown()
                     .build(),
                 // Node 4: Summarize keywords (from 3)
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Summarize the essence of this text into 3-5 keywords or a short phrase in {language1}.")
                     .language("Vietnamese")
                     .build(),

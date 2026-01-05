@@ -13,6 +13,7 @@ pub fn render_usage_modal(
     use_gemini: bool,
     use_openrouter: bool,
     use_ollama: bool,
+    use_cerebras: bool,
 ) {
     if !*show_modal {
         return;
@@ -143,6 +144,31 @@ pub fn render_usage_modal(
                             
                             ui.label(&model.full_name);
                         }
+                    });
+                }
+
+                if use_cerebras {
+                    egui::CollapsingHeader::new(egui::RichText::new("🧠 Cerebras").strong().size(13.0))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                        egui::Grid::new("cerebras_grid").striped(true).show(ui, |ui| {
+                            ui.label(egui::RichText::new(text.usage_model_column).strong().size(11.0));
+                            ui.label(egui::RichText::new(text.usage_remaining_column).strong().size(11.0));
+                            ui.end_row();
+                            
+                            for model in &all_models {
+                                if !model.enabled || model.provider != "cerebras" { continue; }
+                                if shown_models.contains(&model.full_name) { continue; }
+                                shown_models.insert(model.full_name.clone());
+                                
+                                ui.label(&model.full_name);
+                                let status = usage_stats.get(&model.full_name).cloned().unwrap_or_else(|| "??? / ?".to_string());
+                                ui.label(status);
+                                ui.end_row();
+                            }
+                        });
+                        ui.add_space(4.0);
+                        ui.hyperlink_to(text.usage_check_link, "https://cloud.cerebras.ai/");
                     });
                 }
             });

@@ -239,6 +239,7 @@ impl SettingsApp {
             show_api_key: false,
             show_gemini_api_key: false,
             show_openrouter_api_key: false,
+            show_cerebras_api_key: false,
             view_mode,
             recording_hotkey_for_preset: None,
             hotkey_conflict_msg: None,

@@ -187,19 +187,6 @@ lazy_static::lazy_static! {
             "Unlimited"
         ),
         ModelConfig::new(
-            "fast_text",
-            "groq",
-            "Cực nhanh",
-            "초고속",
-            "Super Fast",
-            "openai/gpt-oss-20b",
-            ModelType::Text,
-            true,
-            "1000 lượt/ngày",
-            "1000 요청/일",
-            "1000 requests/day"
-        ),
-        ModelConfig::new(
             "text_fast_120b",
             "groq",
             "Nhanh",
@@ -394,6 +381,58 @@ lazy_static::lazy_static! {
             "50 lượt chung/ngày",
             "50 공유 요청/일",
             "50 shared requests/day"
+        ),
+        ModelConfig::new(
+            "cerebras_gpt_oss",
+            "cerebras",
+            "C-Chính xác",
+            "C-정확함",
+            "C-Accurate",
+            "gpt-oss-120b",
+            ModelType::Text,
+            true,
+            "14400 lượt/ngày",
+            "14400 요청/일",
+            "14400 requests/day"
+        ),
+        ModelConfig::new(
+            "cerebras_qwen3",
+            "cerebras",
+            "C-Rất chính xác",
+            "C-매우 정확함",
+            "C-Very Accurate",
+            "qwen-3-235b-a22b-instruct-2507",
+            ModelType::Text,
+            true,
+            "14400 lượt/ngày",
+            "14400 요청/일",
+            "14400 requests/day"
+        ),
+        ModelConfig::new(
+            "cerebras_zai_glm",
+            "cerebras",
+            "C-Siêu chính xác",
+            "C-초정밀",
+            "C-Super Accurate",
+            "zai-glm-4.6",
+            ModelType::Text,
+            true,
+            "100 lượt/ngày",
+            "100 요청/일",
+            "100 requests/day"
+        ),
+        ModelConfig::new(
+            "cerebras_llama33_70b",
+            "cerebras",
+            "C-Nhanh",
+            "C-빠름",
+            "C-Fast",
+            "llama-3.3-70b",
+            ModelType::Text,
+            true,
+            "14400 lượt/ngày",
+            "14400 요청/일",
+            "14400 requests/day"
         ),
         ModelConfig::new(
             "whisper-fast",

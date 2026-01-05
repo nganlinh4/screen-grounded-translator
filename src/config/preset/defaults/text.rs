@@ -24,7 +24,7 @@ pub fn create_text_presets() -> Vec<Preset> {
         PresetBuilder::new("preset_translate_select", "Trans (Select text)")
             .text_select()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate the following text to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .auto_copy()
@@ -46,7 +46,7 @@ pub fn create_text_presets() -> Vec<Preset> {
                     .streaming(false)
                     .build(),
                 // Node 2: Groq Kimi - accurate LLM
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate the following text to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .auto_copy()
@@ -66,12 +66,12 @@ pub fn create_text_presets() -> Vec<Preset> {
         PresetBuilder::new("preset_trans_retrans_select", "Trans+Retrans (Select)")
             .text_select()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate the following text to {language1}. Output ONLY the translation.")
                     .language("Korean")
                     .auto_copy()
                     .build(),
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .build(),
@@ -83,7 +83,7 @@ pub fn create_text_presets() -> Vec<Preset> {
             .text_select()
             .auto_paste()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate the following text to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .streaming(false)
@@ -98,7 +98,7 @@ pub fn create_text_presets() -> Vec<Preset> {
             .text_select()
             .auto_paste()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Correct grammar, spelling, and punctuation errors in the following text. Do not change the meaning or tone. Output ONLY the corrected text.")
                     .language("Vietnamese")
                     .streaming(false)
@@ -113,7 +113,7 @@ pub fn create_text_presets() -> Vec<Preset> {
             .text_select()
             .auto_paste()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Paraphrase the following text using varied vocabulary while maintaining the exact original meaning and language. Output ONLY the paraphrased text.")
                     .language("Vietnamese")
                     .streaming(false)
@@ -128,7 +128,7 @@ pub fn create_text_presets() -> Vec<Preset> {
             .text_select()
             .auto_paste()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Rewrite the following text to be professional and formal, suitable for business communication. CRITICAL: Your output MUST be in the EXACT SAME LANGUAGE as the input text (if input is Korean, output Korean; if Vietnamese, output Vietnamese; if Japanese, output Japanese, etc.). Do NOT translate to English. Maintain the original meaning. Output ONLY the rewritten text.")
                     .language("Vietnamese")
                     .streaming(false)
@@ -142,7 +142,7 @@ pub fn create_text_presets() -> Vec<Preset> {
         PresetBuilder::new("preset_explain", "Explain")
             .text_select()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Explain what this is in {language1}. Be concise but thorough. Mention the purpose, key logic, and any important patterns or techniques used. Format the output as a markdown. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) triple backticks.")
                     .language("Vietnamese")
                     .markdown()
@@ -197,12 +197,12 @@ pub fn create_text_presets() -> Vec<Preset> {
             .text_type()
             .continuous()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate the following text to {language1}. Output ONLY the translation. Text to translate:")
                     .language("Korean")
                     .auto_copy()
                     .build(),
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .build(),
@@ -213,7 +213,7 @@ pub fn create_text_presets() -> Vec<Preset> {
         PresetBuilder::new("preset_ask_ai", "Ask AI")
             .text_type()
             .blocks(vec![
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Answer the following question or request helpfully and comprehensively. Format the output as markdown creatively. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) or triple backticks. QUESTION/REQUEST:")
                     .markdown()
                     .build(),

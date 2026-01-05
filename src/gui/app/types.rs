@@ -45,6 +45,7 @@ pub struct SettingsApp {
     pub(crate) show_api_key: bool,
     pub(crate) show_gemini_api_key: bool,
     pub(crate) show_openrouter_api_key: bool,
+    pub(crate) show_cerebras_api_key: bool,
 
     pub(crate) view_mode: ViewMode,
     pub(crate) recording_hotkey_for_preset: Option<usize>,

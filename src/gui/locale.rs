@@ -20,6 +20,9 @@ pub struct LocaleText {
     pub use_groq_checkbox: &'static str,
     pub use_gemini_checkbox: &'static str,
     pub use_openrouter_checkbox: &'static str,
+    pub cerebras_api_key_label: &'static str,
+    pub cerebras_get_key_link: &'static str,
+    pub use_cerebras_checkbox: &'static str,
 
     pub global_settings: &'static str,
     pub preset_name_label: &'static str,
@@ -249,6 +252,9 @@ impl LocaleText {
                  use_groq_checkbox: "Groq",
                  use_gemini_checkbox: "Gemini",
                  use_openrouter_checkbox: "OpenRouter",
+                 cerebras_api_key_label: "Mã API Cerebras:",
+                 cerebras_get_key_link: "Lấy mã tại cloud.cerebras.ai",
+                 use_cerebras_checkbox: "Cerebras",
 
                 global_settings: "Cài Đặt Chung",
                 preset_name_label: "Tên Cấu Hình:",
@@ -518,6 +524,9 @@ impl LocaleText {
                 use_groq_checkbox: "Groq",
                 use_gemini_checkbox: "Gemini",
                 use_openrouter_checkbox: "OpenRouter",
+                cerebras_api_key_label: "Cerebras API 키:",
+                cerebras_get_key_link: "cloud.cerebras.ai에서 API 키 받기",
+                use_cerebras_checkbox: "Cerebras",
 
                 global_settings: "전역 설정",
                 preset_name_label: "프리셋 이름:",
@@ -787,9 +796,11 @@ impl LocaleText {
                 use_groq_checkbox: "Groq",
                 use_gemini_checkbox: "Gemini",
                 use_openrouter_checkbox: "OpenRouter",
-
+                cerebras_api_key_label: "Cerebras API Key:",
+                cerebras_get_key_link: "Get API Key at cloud.cerebras.ai",
+                 use_cerebras_checkbox: "Cerebras",
                 global_settings: "Global Settings",
-                preset_name_label: "Preset Name:",
+                 preset_name_label: "Preset Name:",
 
 
 

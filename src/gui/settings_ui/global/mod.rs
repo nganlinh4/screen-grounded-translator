@@ -23,6 +23,7 @@ pub fn render_global_settings(
     show_api_key: &mut bool,
     show_gemini_api_key: &mut bool,
     show_openrouter_api_key: &mut bool,
+    show_cerebras_api_key: &mut bool,
     usage_stats: &HashMap<String, String>,
     updater: &Option<Updater>,
     update_status: &UpdateStatus,
@@ -85,6 +86,12 @@ pub fn render_global_settings(
                     changed = true;
                 }
                 if ui.checkbox(&mut config.use_ollama, "Ollama").changed() {
+                    changed = true;
+                }
+                if ui
+                    .checkbox(&mut config.use_cerebras, text.use_cerebras_checkbox)
+                    .changed()
+                {
                     changed = true;
                 }
             });
@@ -209,6 +216,38 @@ pub fn render_global_settings(
                         ui.label(egui::RichText::new(&status).size(11.0));
                     }
                 });
+                ui.add_space(8.0);
+            }
+
+            // Cerebras API Key (only show if enabled)
+            if config.use_cerebras {
+                ui.horizontal(|ui| {
+                    ui.label(text.cerebras_api_key_label);
+                    if ui.link(text.cerebras_get_key_link).clicked() {
+                        let _ = open::that("https://cloud.cerebras.ai/");
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut config.cerebras_api_key)
+                                .password(!*show_cerebras_api_key)
+                                .desired_width(API_KEY_FIELD_WIDTH),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    let eye_icon = if *show_cerebras_api_key {
+                        Icon::EyeOpen
+                    } else {
+                        Icon::EyeClosed
+                    };
+                    if icon_button(ui, eye_icon).clicked() {
+                        *show_cerebras_api_key = !*show_cerebras_api_key;
+                    }
+                });
+                ui.add_space(8.0);
             }
         });
 
@@ -275,6 +314,7 @@ pub fn render_global_settings(
         config.use_gemini,
         config.use_openrouter,
         config.use_ollama,
+        config.use_cerebras,
     );
 
     // === TTS SETTINGS MODAL ===
@@ -487,11 +527,13 @@ pub fn render_global_settings(
                     let saved_groq_key = config.api_key.clone();
                     let saved_gemini_key = config.gemini_api_key.clone();
                     let saved_openrouter_key = config.openrouter_api_key.clone();
+                    let saved_cerebras_key = config.cerebras_api_key.clone();
                     let saved_language = config.ui_language.clone();
                     let saved_use_groq = config.use_groq;
                     let saved_use_gemini = config.use_gemini;
                     let saved_use_openrouter = config.use_openrouter;
                     let saved_use_ollama = config.use_ollama;
+                    let saved_use_cerebras = config.use_cerebras;
                     let saved_ollama_base_url = config.ollama_base_url.clone();
                     // Realtime model reset to default (google-gemma)
 
@@ -500,11 +542,13 @@ pub fn render_global_settings(
                     config.api_key = saved_groq_key;
                     config.gemini_api_key = saved_gemini_key;
                     config.openrouter_api_key = saved_openrouter_key;
+                    config.cerebras_api_key = saved_cerebras_key;
                     config.ui_language = saved_language;
                     config.use_groq = saved_use_groq;
                     config.use_gemini = saved_use_gemini;
                     config.use_openrouter = saved_use_openrouter;
                     config.use_ollama = saved_use_ollama;
+                    config.use_cerebras = saved_use_cerebras;
                     config.ollama_base_url = saved_ollama_base_url;
                     // config.realtime_translation_model = saved_realtime_model;
                     request_node_graph_view_reset(ui.ctx());

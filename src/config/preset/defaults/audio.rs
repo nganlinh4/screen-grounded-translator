@@ -46,7 +46,7 @@ pub fn create_audio_presets() -> Vec<Preset> {
                     .language("Korean")
                     .show_overlay(false)
                     .build(),
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Korean")
                     .show_overlay(false)
@@ -78,7 +78,7 @@ pub fn create_audio_presets() -> Vec<Preset> {
                     .language("Vietnamese")
                     .show_overlay(false)
                     .build(),
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Answer the following question concisely and helpfully. Format as markdown. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) or triple backticks.")
                     .markdown()
                     .build(),
@@ -124,7 +124,7 @@ pub fn create_audio_presets() -> Vec<Preset> {
                 BlockBuilder::audio("whisper-accurate")
                     .language("Vietnamese")
                     .build(),
-                BlockBuilder::text("text_accurate_kimi")
+                BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
                     .build(),

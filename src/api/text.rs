@@ -37,6 +37,19 @@ where
         })
         .unwrap_or_default();
 
+    let cerebras_api_key = crate::APP
+        .lock()
+        .ok()
+        .and_then(|app| {
+            let config = app.config.clone();
+            if config.cerebras_api_key.is_empty() {
+                None
+            } else {
+                Some(config.cerebras_api_key.clone())
+            }
+        })
+        .unwrap_or_default();
+
     let mut full_content = String::new();
     let prompt = format!("{}\n\n{}", instruction, text);
 
@@ -234,7 +247,8 @@ where
             }
         } else {
             let chat_resp: serde_json::Value = resp
-                .into_body().read_json()
+                .into_body()
+                .read_json()
                 .map_err(|e| anyhow::anyhow!("Failed to parse non-streaming response: {}", e))?;
 
             if let Some(candidates) = chat_resp.get("candidates").and_then(|c| c.as_array()) {
@@ -255,6 +269,129 @@ where
                         on_chunk(&full_content);
                     }
                 }
+            }
+        }
+    } else if provider == "cerebras" {
+        // --- CEREBRAS API ---
+        if cerebras_api_key.trim().is_empty() {
+            return Err(anyhow::anyhow!("NO_API_KEY:cerebras"));
+        }
+
+        let payload = serde_json::json!({
+            "model": model,
+            "messages": [
+                { "role": "user", "content": prompt }
+            ],
+            "stream": streaming_enabled
+        });
+
+        let resp = UREQ_AGENT
+            .post("https://api.cerebras.ai/v1/chat/completions")
+            .header("Authorization", &format!("Bearer {}", cerebras_api_key))
+            .header("Content-Type", "application/json")
+            .send_json(payload)
+            .map_err(|e| {
+                let err_str = e.to_string();
+                if err_str.contains("401") || err_str.contains("403") {
+                    anyhow::anyhow!("INVALID_API_KEY")
+                } else {
+                    anyhow::anyhow!("Cerebras API Error: {}", err_str)
+                }
+            })?;
+
+        // Extract rate limit info
+        if let Some(remaining) = resp
+            .headers()
+            .get("x-ratelimit-remaining-requests-day")
+            .or_else(|| resp.headers().get("x-ratelimit-remaining-requests"))
+            .and_then(|v| v.to_str().ok())
+        {
+            let limit = resp
+                .headers()
+                .get("x-ratelimit-limit-requests-day")
+                .or_else(|| resp.headers().get("x-ratelimit-limit-requests"))
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("?");
+            let usage_str = format!("{} / {}", remaining, limit);
+
+            if let Ok(mut app) = APP.lock() {
+                app.model_usage_stats.insert(model.clone(), usage_str);
+            }
+        }
+
+        if streaming_enabled {
+            let reader = BufReader::new(resp.into_body().into_reader());
+            let mut thinking_shown = false;
+            let mut content_started = false;
+            let locale = LocaleText::get(ui_language);
+
+            // Cerebras reasoning models handle thinking phase
+            let is_reasoning_model = model.contains("gpt-oss") || model.contains("zai-glm");
+
+            for line in reader.lines() {
+                let line = line?;
+                if line.starts_with("data: ") {
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        break;
+                    }
+
+                    match serde_json::from_str::<StreamChunk>(data) {
+                        Ok(chunk) => {
+                            // Check for reasoning tokens (thinking phase)
+                            if let Some(reasoning) = chunk
+                                .choices
+                                .get(0)
+                                .and_then(|c| c.delta.reasoning.as_ref())
+                                .filter(|s| !s.is_empty())
+                            {
+                                // Model is thinking - show thinking indicator (only once)
+                                if !thinking_shown && !content_started {
+                                    on_chunk(locale.model_thinking);
+                                    thinking_shown = true;
+                                }
+                                let _ = reasoning; // Just consume reasoning, don't display
+                            } else if is_reasoning_model && !content_started && !thinking_shown {
+                                // Fallback thinking indicator for reasoning models if no reasoning field is present yet
+                                on_chunk(locale.model_thinking);
+                                thinking_shown = true;
+                            }
+
+                            // Check for content tokens (final result)
+                            if let Some(content) = chunk
+                                .choices
+                                .get(0)
+                                .and_then(|c| c.delta.content.as_ref())
+                                .filter(|s| !s.is_empty())
+                            {
+                                // Content started - wipe thinking message on first content chunk
+                                if !content_started && thinking_shown {
+                                    content_started = true;
+                                    // Use WIPE_SIGNAL to tell callback to clear accumulator
+                                    full_content.push_str(content);
+                                    let wipe_content =
+                                        format!("{}{}", crate::api::WIPE_SIGNAL, full_content);
+                                    on_chunk(&wipe_content);
+                                } else {
+                                    content_started = true;
+                                    full_content.push_str(content);
+                                    on_chunk(content);
+                                }
+                            }
+                        }
+                        Err(_) => continue,
+                    }
+                }
+            }
+        } else {
+            let chat_resp: ChatCompletionResponse = resp
+                .into_body()
+                .read_json()
+                .map_err(|e| anyhow::anyhow!("Failed to parse non-streaming response: {}", e))?;
+
+            if let Some(choice) = chat_resp.choices.first() {
+                full_content = choice.message.content.clone();
+                on_chunk(&full_content);
             }
         }
     } else if provider == "openrouter" {
@@ -344,7 +481,8 @@ where
             }
         } else {
             let chat_resp: ChatCompletionResponse = resp
-                .into_body().read_json()
+                .into_body()
+                .read_json()
                 .map_err(|e| anyhow::anyhow!("Failed to parse non-streaming response: {}", e))?;
 
             if let Some(choice) = chat_resp.choices.first() {
@@ -398,7 +536,6 @@ where
             let resp = UREQ_AGENT
                 .post("https://api.groq.com/openai/v1/chat/completions")
                 .header("Authorization", &format!("Bearer {}", groq_api_key))
-                
                 .send_json(payload)
                 .map_err(|e| {
                     let err_str = e.to_string();
@@ -409,8 +546,16 @@ where
                     }
                 })?;
 
-            if let Some(remaining) = resp.headers().get("x-ratelimit-remaining-requests").and_then(|v| v.to_str().ok()) {
-                let limit = resp.headers().get("x-ratelimit-limit-requests").and_then(|v| v.to_str().ok()).unwrap_or("?");
+            if let Some(remaining) = resp
+                .headers()
+                .get("x-ratelimit-remaining-requests")
+                .and_then(|v| v.to_str().ok())
+            {
+                let limit = resp
+                    .headers()
+                    .get("x-ratelimit-limit-requests")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("?");
                 let usage_str = format!("{} / {}", remaining, limit);
 
                 if let Ok(mut app) = APP.lock() {
@@ -419,7 +564,8 @@ where
             }
 
             let json: serde_json::Value = resp
-                .into_body().read_json()
+                .into_body()
+                .read_json()
                 .map_err(|e| anyhow::anyhow!("Failed to parse compound response: {}", e))?;
 
             if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
@@ -626,8 +772,16 @@ where
                     }
                 })?;
 
-            if let Some(remaining) = resp.headers().get("x-ratelimit-remaining-requests").and_then(|v| v.to_str().ok()) {
-                let limit = resp.headers().get("x-ratelimit-limit-requests").and_then(|v| v.to_str().ok()).unwrap_or("?");
+            if let Some(remaining) = resp
+                .headers()
+                .get("x-ratelimit-remaining-requests")
+                .and_then(|v| v.to_str().ok())
+            {
+                let limit = resp
+                    .headers()
+                    .get("x-ratelimit-limit-requests")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("?");
                 let usage_str = format!("{} / {}", remaining, limit);
 
                 if let Ok(mut app) = APP.lock() {
@@ -660,9 +814,10 @@ where
                     }
                 }
             } else {
-                let chat_resp: ChatCompletionResponse = resp.into_body().read_json().map_err(|e| {
-                    anyhow::anyhow!("Failed to parse non-streaming response: {}", e)
-                })?;
+                let chat_resp: ChatCompletionResponse =
+                    resp.into_body().read_json().map_err(|e| {
+                        anyhow::anyhow!("Failed to parse non-streaming response: {}", e)
+                    })?;
 
                 if let Some(choice) = chat_resp.choices.first() {
                     let content_str = &choice.message.content;
@@ -721,6 +876,19 @@ where
         })
         .unwrap_or_default();
 
+    let cerebras_api_key = crate::APP
+        .lock()
+        .ok()
+        .and_then(|app| {
+            let config = app.config.clone();
+            if config.cerebras_api_key.is_empty() {
+                None
+            } else {
+                Some(config.cerebras_api_key.clone())
+            }
+        })
+        .unwrap_or_default();
+
     let final_prompt = format!(
         "Content:\n{}\n\nInstruction:\n{}\n\nOutput ONLY the result.",
         previous_text, user_prompt
@@ -734,6 +902,11 @@ where
             } else {
                 if !gemini_api_key.trim().is_empty() {
                     ("gemini-flash-lite".to_string(), "google".to_string())
+                } else if !cerebras_api_key.trim().is_empty() {
+                    (
+                        "qwen-3-235b-a22b-instruct-2507".to_string(),
+                        "cerebras".to_string(),
+                    )
                 } else if !groq_api_key.trim().is_empty() {
                     ("text_accurate_kimi".to_string(), "groq".to_string())
                 } else {
@@ -887,6 +1060,113 @@ where
                     }
                 }
             }
+        } else if p_provider == "cerebras" {
+            if cerebras_api_key.trim().is_empty() {
+                return Err(anyhow::anyhow!("NO_API_KEY:cerebras"));
+            }
+
+            let payload = serde_json::json!({
+                "model": p_model,
+                "messages": [
+                    { "role": "user", "content": final_prompt }
+                ],
+                "stream": streaming_enabled
+            });
+
+            let resp = UREQ_AGENT
+                .post("https://api.cerebras.ai/v1/chat/completions")
+                .header("Authorization", &format!("Bearer {}", cerebras_api_key))
+                .header("Content-Type", "application/json")
+                .send_json(payload)
+                .map_err(|e| anyhow::anyhow!("Cerebras Refine Error: {}", e))?;
+
+            // Extract rate limit info
+            if let Some(remaining) = resp
+                .headers()
+                .get("x-ratelimit-remaining-requests-day")
+                .or_else(|| resp.headers().get("x-ratelimit-remaining-requests"))
+                .and_then(|v| v.to_str().ok())
+            {
+                let limit = resp
+                    .headers()
+                    .get("x-ratelimit-limit-requests-day")
+                    .or_else(|| resp.headers().get("x-ratelimit-limit-requests"))
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("?");
+                let usage_str = format!("{} / {}", remaining, limit);
+
+                if let Ok(mut app) = APP.lock() {
+                    app.model_usage_stats.insert(p_model.clone(), usage_str);
+                }
+            }
+
+            if streaming_enabled {
+                let reader = BufReader::new(resp.into_body().into_reader());
+                let mut thinking_shown = false;
+                let mut content_started = false;
+                let locale = LocaleText::get(ui_language);
+
+                let is_reasoning_model = p_model.contains("gpt-oss") || p_model.contains("zai-glm");
+
+                for line in reader.lines() {
+                    let line = line?;
+                    if line.starts_with("data: ") {
+                        let data = &line[6..];
+                        if data == "[DONE]" {
+                            break;
+                        }
+
+                        match serde_json::from_str::<StreamChunk>(data) {
+                            Ok(chunk) => {
+                                // Check for reasoning tokens (thinking phase)
+                                if let Some(reasoning) = chunk
+                                    .choices
+                                    .get(0)
+                                    .and_then(|c| c.delta.reasoning.as_ref())
+                                    .filter(|s| !s.is_empty())
+                                {
+                                    if !thinking_shown && !content_started {
+                                        on_chunk(locale.model_thinking);
+                                        thinking_shown = true;
+                                    }
+                                    let _ = reasoning;
+                                } else if is_reasoning_model && !content_started && !thinking_shown
+                                {
+                                    on_chunk(locale.model_thinking);
+                                    thinking_shown = true;
+                                }
+
+                                // Check for content tokens (final result)
+                                if let Some(content) = chunk
+                                    .choices
+                                    .get(0)
+                                    .and_then(|c| c.delta.content.as_ref())
+                                    .filter(|s| !s.is_empty())
+                                {
+                                    if !content_started && thinking_shown {
+                                        content_started = true;
+                                        full_content.push_str(content);
+                                        let wipe_content =
+                                            format!("{}{}", crate::api::WIPE_SIGNAL, full_content);
+                                        on_chunk(&wipe_content);
+                                    } else {
+                                        content_started = true;
+                                        full_content.push_str(content);
+                                        on_chunk(content);
+                                    }
+                                }
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                }
+            } else {
+                let json: ChatCompletionResponse = resp.into_body().read_json()?;
+                if let Some(choice) = json.choices.first() {
+                    full_content = choice.message.content.clone();
+                    on_chunk(&full_content);
+                }
+            }
         } else if p_provider == "openrouter" {
             if openrouter_api_key.trim().is_empty() {
                 return Err(anyhow::anyhow!("NO_API_KEY:openrouter"));
@@ -1005,12 +1285,19 @@ where
                 let resp = UREQ_AGENT
                     .post("https://api.groq.com/openai/v1/chat/completions")
                     .header("Authorization", &format!("Bearer {}", groq_api_key))
-                    
-                .send_json(payload)
+                    .send_json(payload)
                     .map_err(|e| anyhow::anyhow!("Groq Compound Refine Error: {}", e))?;
 
-                if let Some(remaining) = resp.headers().get("x-ratelimit-remaining-requests").and_then(|v| v.to_str().ok()) {
-                    let limit = resp.headers().get("x-ratelimit-limit-requests").and_then(|v| v.to_str().ok()).unwrap_or("?");
+                if let Some(remaining) = resp
+                    .headers()
+                    .get("x-ratelimit-remaining-requests")
+                    .and_then(|v| v.to_str().ok())
+                {
+                    let limit = resp
+                        .headers()
+                        .get("x-ratelimit-limit-requests")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("?");
                     let usage_str = format!("{} / {}", remaining, limit);
                     if let Ok(mut app) = APP.lock() {
                         app.model_usage_stats.insert(p_model.clone(), usage_str);
@@ -1145,8 +1432,16 @@ where
                     .send_json(payload)
                     .map_err(|e| anyhow::anyhow!("Groq Refine Error: {}", e))?;
 
-                if let Some(remaining) = resp.headers().get("x-ratelimit-remaining-requests").and_then(|v| v.to_str().ok()) {
-                    let limit = resp.headers().get("x-ratelimit-limit-requests").and_then(|v| v.to_str().ok()).unwrap_or("?");
+                if let Some(remaining) = resp
+                    .headers()
+                    .get("x-ratelimit-remaining-requests")
+                    .and_then(|v| v.to_str().ok())
+                {
+                    let limit = resp
+                        .headers()
+                        .get("x-ratelimit-limit-requests")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("?");
                     let usage_str = format!("{} / {}", remaining, limit);
                     if let Ok(mut app) = APP.lock() {
                         app.model_usage_stats.insert(p_model.clone(), usage_str);

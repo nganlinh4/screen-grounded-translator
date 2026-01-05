@@ -79,6 +79,10 @@ pub struct Config {
     #[serde(default)]
     pub openrouter_api_key: String,
 
+    /// Cerebras AI API key
+    #[serde(default)]
+    pub cerebras_api_key: String,
+
     // -------------------------------------------------------------------------
     // Presets
     // -------------------------------------------------------------------------
@@ -131,6 +135,10 @@ pub struct Config {
     /// Enable OpenRouter models
     #[serde(default)]
     pub use_openrouter: bool,
+
+    /// Enable Cerebras AI models
+    #[serde(default)]
+    pub use_cerebras: bool,
 
     /// Enable local Ollama models
     #[serde(default)]
@@ -239,6 +247,7 @@ impl Default for Config {
             api_key: String::new(),
             gemini_api_key: String::new(),
             openrouter_api_key: String::new(),
+            cerebras_api_key: String::new(),
 
             // Presets - use the centralized ordered list
             presets: get_default_presets(),
@@ -258,6 +267,7 @@ impl Default for Config {
             use_groq: true,
             use_gemini: true,
             use_openrouter: false,
+            use_cerebras: false,
             use_ollama: false,
 
             // Ollama
