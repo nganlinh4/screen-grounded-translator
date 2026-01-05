@@ -326,7 +326,7 @@ pub fn get(font_size: u32) -> String {
             }});
         }}
 
-        // Model Toggle Switch Logic - query all model icons directly
+        // Model Toggle Switch Logic - for translation
         const modelIcons = document.querySelectorAll('.model-icon');
         if (modelIcons.length) {{
             modelIcons.forEach(icon => {{
@@ -344,6 +344,49 @@ pub fn get(font_size: u32) -> String {
                 }});
             }});
         }}
+        
+        // Transcription Model Logic
+        const transModelIcons = document.querySelectorAll('.trans-model-icon');
+        if (transModelIcons.length) {{
+            transModelIcons.forEach(icon => {{
+                icon.addEventListener('click', (e) => {{
+                    e.stopPropagation();
+                    e.preventDefault();
+                    
+                    transModelIcons.forEach(i => i.classList.remove('active'));
+                    icon.classList.add('active');
+                    
+                    const val = icon.getAttribute('data-value');
+                    window.ipc.postMessage('transcriptionModel:' + val);
+                }});
+            }});
+        }}
+
+        // Download Modal Functions
+        window.showDownloadModal = function(title, msg, progress) {{
+            const modal = document.getElementById('download-modal');
+            const overlay = document.getElementById('download-modal-overlay');
+            const titleEl = document.getElementById('download-title');
+            const msgEl = document.getElementById('download-msg');
+            const fillEl = document.getElementById('download-fill');
+            
+            if (modal && overlay) {{
+                modal.classList.add('show');
+                overlay.classList.add('show');
+                if (titleEl) titleEl.textContent = title;
+                if (msgEl) msgEl.textContent = msg;
+                if (fillEl) fillEl.style.width = progress + '%';
+            }}
+        }};
+        
+        window.hideDownloadModal = function() {{
+            const modal = document.getElementById('download-modal');
+            const overlay = document.getElementById('download-modal-overlay');
+            if (modal && overlay) {{
+                modal.classList.remove('show');
+                overlay.classList.remove('show');
+            }}
+        }};
         
         // Update settings from native side (used when overlay is shown with saved config)
         window.updateSettings = function(settings) {{
@@ -368,6 +411,14 @@ pub fn get(font_size: u32) -> String {
                 modelIcons.forEach(icon => {{
                     const val = icon.getAttribute('data-value');
                     icon.classList.toggle('active', val === settings.translationModel);
+                }});
+            }}
+            
+            // Update transcription model
+            if (settings.transcriptionModel && transModelIcons && transModelIcons.length) {{
+                transModelIcons.forEach(icon => {{
+                    const val = icon.getAttribute('data-value');
+                    icon.classList.toggle('active', val === settings.transcriptionModel);
                 }});
             }}
             

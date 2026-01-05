@@ -1,4 +1,5 @@
-pub fn get() -> String { r###"
+pub fn get() -> String {
+    r###"
         /* TTS Settings Modal */
         #tts-modal {
             display: none;
@@ -255,4 +256,67 @@ pub fn get() -> String { r###"
             overflow: hidden;
             text-overflow: ellipsis;
         }
-"###.to_string() }
+        /* Download Modal */
+        #download-modal {
+            display: none;
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            background: rgba(30, 30, 30, 0.98);
+            border: 1px solid #00c8ff80;
+            border-radius: 12px;
+            padding: 20px 24px;
+            z-index: 2147483647 !important;
+            min-width: 250px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px #00c8ff30;
+            text-align: center;
+        }
+        #download-modal.show {
+            display: block !important;
+            animation: modal-appear 0.2s ease-out;
+        }
+        #download-modal-overlay {
+            display: none;
+            position: fixed !important;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2147483646 !important;
+        }
+        #download-modal-overlay.show {
+            display: block !important;
+        }
+        .download-modal-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #00c8ff;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .download-modal-msg {
+            font-size: 12px;
+            color: #ccc;
+            margin-bottom: 16px;
+        }
+        .download-progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #444;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .download-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00c8ff, #0080ff);
+            width: 0%;
+            transition: width 0.2s;
+        }
+"###
+    .to_string()
+}

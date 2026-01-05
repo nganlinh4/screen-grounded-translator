@@ -445,6 +445,26 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             color: #ff9633 !important;
             background: rgba(255,150,51,0.3) !important;
         }}
+        
+        /* Transcription Model Icons */
+        .trans-model-icon {{
+            font-size: 22px;
+            padding: 0;
+            cursor: pointer;
+            color: #555;
+            transition: all 0.2s;
+            background: transparent;
+            border: none;
+        }}
+        .trans-model-icon:hover {{
+            color: #aaa;
+        }}
+        .trans-model-icon.active[data-value="gemini"] {{
+            color: #00c8ff;
+        }}
+        .trans-model-icon.active[data-value="parakeet"] {{
+            color: #ff9633;
+        }}
 
         /* Waveform animation for listening state */
         .wave-line {{

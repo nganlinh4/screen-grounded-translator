@@ -57,20 +57,37 @@ fn transcription_thread_entry(
     let hwnd_overlay = overlay_send.0;
     let hwnd_translation = translation_send.map(|h| h.0);
 
-    use crate::overlay::realtime_webview::{AUDIO_SOURCE_CHANGE, NEW_AUDIO_SOURCE};
+    use crate::overlay::realtime_webview::{
+        AUDIO_SOURCE_CHANGE, NEW_AUDIO_SOURCE, NEW_TRANSCRIPTION_MODEL, TRANSCRIPTION_MODEL_CHANGE,
+    };
 
     let mut current_preset = preset;
 
     loop {
         AUDIO_SOURCE_CHANGE.store(false, Ordering::SeqCst);
+        TRANSCRIPTION_MODEL_CHANGE.store(false, Ordering::SeqCst);
 
-        let result = run_realtime_transcription(
-            current_preset.clone(),
-            stop_signal.clone(),
-            hwnd_overlay,
-            hwnd_translation,
-            state.clone(),
-        );
+        let trans_model = {
+            let app = APP.lock().unwrap();
+            app.config.realtime_transcription_model.clone()
+        };
+
+        let result = if trans_model == "parakeet" {
+            super::parakeet::run_parakeet_transcription(
+                current_preset.clone(),
+                stop_signal.clone(),
+                hwnd_overlay,
+                state.clone(),
+            )
+        } else {
+            run_realtime_transcription(
+                current_preset.clone(),
+                stop_signal.clone(),
+                hwnd_overlay,
+                hwnd_translation,
+                state.clone(),
+            )
+        };
 
         if let Err(e) = result {
             if !AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
@@ -95,18 +112,40 @@ fn transcription_thread_entry(
             }
         }
 
-        if AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
+        let restart_source = AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst);
+        let restart_model = TRANSCRIPTION_MODEL_CHANGE.load(Ordering::SeqCst);
+
+        if restart_source {
             if let Ok(new_source) = NEW_AUDIO_SOURCE.lock() {
                 if !new_source.is_empty() {
-                    current_preset.audio_source = new_source.clone();
-                    stop_signal.store(true, Ordering::SeqCst);
-                    std::thread::sleep(Duration::from_millis(200));
-                    stop_signal.store(false, Ordering::SeqCst);
-                    continue;
+                    println!("Changing audio source to: {}", new_source);
+                    let mut app = APP.lock().unwrap();
+                    app.config.realtime_audio_source = new_source.clone();
+                    // Save config? Optional, but UI should sync.
                 }
             }
         }
-        break;
+
+        if restart_model {
+            if let Ok(new_model) = NEW_TRANSCRIPTION_MODEL.lock() {
+                if !new_model.is_empty() {
+                    println!("Changing transcription model to: {}", new_model);
+                    let mut app = APP.lock().unwrap();
+                    app.config.realtime_transcription_model = new_model.clone();
+                }
+            }
+        }
+
+        if !restart_source && !restart_model && stop_signal.load(Ordering::Relaxed) {
+            break;
+        }
+        // If a restart is triggered (source or model changed), the loop continues.
+        // Otherwise, if stop_signal is set, we break.
+        // If neither, we also break, meaning the transcription loop only runs once
+        // unless a restart is explicitly requested.
+        if !restart_source && !restart_model {
+            break;
+        }
     }
 }
 

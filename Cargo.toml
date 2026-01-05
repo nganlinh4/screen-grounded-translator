@@ -56,6 +56,9 @@ pulldown-cmark = "0.13"
 wry = "0.53.5"
 raw-window-handle = "0.6"
 windows-core = "0.62"
+parakeet-rs = "0.2.7"
+ort = { version = "2.0.0-rc.10", features = ["directml"] }
+ringbuf = "0.4.8"
 
 [dependencies.windows]
 version = "0.62"

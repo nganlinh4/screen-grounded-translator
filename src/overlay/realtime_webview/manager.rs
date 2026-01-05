@@ -156,8 +156,24 @@ unsafe fn internal_create_realtime_loop() {
     TRANSLATION_HWND = trans_hwnd;
 
     // Create WebViews
-    create_realtime_webview(main_hwnd, false, "device", "English", "google-gtx", 16);
-    create_realtime_webview(trans_hwnd, true, "device", "English", "google-gtx", 16);
+    create_realtime_webview(
+        main_hwnd,
+        false,
+        "device",
+        "English",
+        "google-gtx",
+        "gemini",
+        16,
+    );
+    create_realtime_webview(
+        trans_hwnd,
+        true,
+        "device",
+        "English",
+        "google-gtx",
+        "gemini",
+        16,
+    );
 
     // Mark as warmed up and ready
     IS_WARMED_UP = true;
@@ -236,6 +252,7 @@ unsafe fn handle_start_overlay(preset_idx: usize) {
         config_audio_source,
         config_language,
         config_translation_model,
+        config_transcription_model,
         trans_size,
         transcription_size,
     ) = {
@@ -245,6 +262,7 @@ unsafe fn handle_start_overlay(preset_idx: usize) {
             app.config.realtime_audio_source.clone(),
             app.config.realtime_target_language.clone(),
             app.config.realtime_translation_model.clone(),
+            app.config.realtime_transcription_model.clone(),
             app.config.realtime_translation_size,
             app.config.realtime_transcription_size,
         )
@@ -334,6 +352,7 @@ unsafe fn handle_start_overlay(preset_idx: usize) {
         &effective_audio_source,
         &target_language,
         &config_translation_model,
+        &config_transcription_model,
         font_size,
     );
 
@@ -349,6 +368,7 @@ unsafe fn handle_start_overlay(preset_idx: usize) {
             "mic",
             &target_language,
             &config_translation_model,
+            &config_transcription_model,
             font_size,
         );
         resize_webview(TRANSLATION_HWND, trans_w, trans_h);
@@ -373,11 +393,18 @@ unsafe fn handle_start_overlay(preset_idx: usize) {
     );
 }
 
-fn notify_webview_settings(hwnd: HWND, source: &str, lang: &str, model: &str, font_size: u32) {
+fn notify_webview_settings(
+    hwnd: HWND,
+    source: &str,
+    lang: &str,
+    model: &str,
+    trans_model: &str,
+    font_size: u32,
+) {
     let hwnd_key = hwnd.0 as isize;
     let script = format!(
-        "if(window.updateSettings) window.updateSettings({{ audioSource: '{}', targetLanguage: '{}', translationModel: '{}', fontSize: {} }});",
-        source, lang, model, font_size
+        "if(window.updateSettings) window.updateSettings({{ audioSource: '{}', targetLanguage: '{}', translationModel: '{}', transcriptionModel: '{}', fontSize: {} }});",
+        source, lang, model, trans_model, font_size
     );
     REALTIME_WEBVIEWS.with(|wvs| {
         if let Some(webview) = wvs.borrow().get(&hwnd_key) {

@@ -31,6 +31,10 @@ lazy_static::lazy_static! {
     pub static ref TRANSLATION_MODEL_CHANGE: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     /// The new translation model to use ("google-gemma" or "groq-llama")
     pub static ref NEW_TRANSLATION_MODEL: Mutex<String> = Mutex::new(String::new());
+    /// Signal to change transcription model
+    pub static ref TRANSCRIPTION_MODEL_CHANGE: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    /// The new transcription model to use ("gemini" or "parakeet")
+    pub static ref NEW_TRANSCRIPTION_MODEL: Mutex<String> = Mutex::new(String::new());
     /// Visibility state for windows
     pub static ref MIC_VISIBLE: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     pub static ref TRANS_VISIBLE: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));

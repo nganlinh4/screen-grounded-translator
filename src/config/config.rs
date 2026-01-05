@@ -52,6 +52,10 @@ fn default_realtime_window_size() -> (i32, i32) {
     (500, 180)
 }
 
+fn default_realtime_transcription_model() -> String {
+    "gemini".to_string()
+}
+
 fn default_realtime_target_language() -> String {
     "Vietnamese".to_string()
 }
@@ -166,6 +170,10 @@ pub struct Config {
     #[serde(default = "default_realtime_translation_model")]
     pub realtime_translation_model: String,
 
+    /// Model for realtime transcription: "gemini" or "parakeet"
+    #[serde(default = "default_realtime_transcription_model")]
+    pub realtime_transcription_model: String,
+
     /// Font size for realtime overlay
     #[serde(default = "default_realtime_font_size")]
     pub realtime_font_size: u32,
@@ -277,6 +285,7 @@ impl Default for Config {
 
             // Realtime Audio
             realtime_translation_model: "cerebras-oss".to_string(),
+            realtime_transcription_model: "gemini".to_string(),
             realtime_font_size: 16,
             realtime_transcription_size: (500, 180),
             realtime_translation_size: (500, 180),

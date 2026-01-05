@@ -3,10 +3,13 @@
 use super::state::*;
 use super::webview::update_webview_text;
 use crate::api::realtime_audio::{
-    REALTIME_RMS, WM_MODEL_SWITCH, WM_REALTIME_UPDATE, WM_TRANSLATION_UPDATE, WM_VOLUME_UPDATE,
+    REALTIME_RMS, WM_CLOSE_TTS_MODAL, WM_COPY_TEXT, WM_DOWNLOAD_PROGRESS, WM_EXEC_SCRIPT,
+    WM_MODEL_SWITCH, WM_REALTIME_UPDATE, WM_START_DRAG, WM_TOGGLE_MIC, WM_TOGGLE_TRANS,
+    WM_TRANSLATION_UPDATE, WM_UPDATE_TTS_SPEED, WM_VOLUME_UPDATE,
 };
 use std::sync::atomic::Ordering;
 use windows::Win32::Foundation::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use wry::Rect;
 pub unsafe extern "system" fn realtime_wnd_proc(
@@ -16,6 +19,48 @@ pub unsafe extern "system" fn realtime_wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        WM_START_DRAG => {
+            let _ = ReleaseCapture();
+            let _ = SendMessageW(
+                hwnd,
+                WM_NCLBUTTONDOWN,
+                Some(WPARAM(HTCAPTION as usize)),
+                Some(LPARAM(0)),
+            );
+            LRESULT(0)
+        }
+        WM_TOGGLE_MIC => {
+            let val = wparam.0 != 0;
+            MIC_VISIBLE.store(val, Ordering::SeqCst);
+            LRESULT(0)
+        }
+        WM_TOGGLE_TRANS => {
+            let val = wparam.0 != 0;
+            TRANS_VISIBLE.store(val, Ordering::SeqCst);
+            LRESULT(0)
+        }
+        WM_COPY_TEXT => {
+            let ptr = lparam.0 as *mut String;
+            if !ptr.is_null() {
+                let text = Box::from_raw(ptr);
+                crate::overlay::utils::copy_to_clipboard(&text, hwnd);
+            }
+            LRESULT(0)
+        }
+        WM_EXEC_SCRIPT => {
+            let ptr = lparam.0 as *mut String;
+            if !ptr.is_null() {
+                let script_box = Box::from_raw(ptr);
+                let script = *script_box;
+                let hwnd_key = hwnd.0 as isize;
+                REALTIME_WEBVIEWS.with(|wvs| {
+                    if let Some(webview) = wvs.borrow().get(&hwnd_key) {
+                        let _ = webview.evaluate_script(&script);
+                    }
+                });
+            }
+            LRESULT(0)
+        }
         WM_REALTIME_UPDATE => {
             // Get old (committed) and new (current sentence) text from state
             let (old_text, new_text) = {
@@ -39,6 +84,45 @@ pub unsafe extern "system" fn realtime_wnd_proc(
                 }
             };
             update_webview_text(hwnd, &old_text, &new_text);
+            LRESULT(0)
+        }
+        WM_DOWNLOAD_PROGRESS => {
+            let (is_downloading, title, message, progress) = {
+                if let Ok(state) = REALTIME_STATE.lock() {
+                    (
+                        state.is_downloading,
+                        state.download_title.clone(),
+                        state.download_message.clone(),
+                        state.download_progress,
+                    )
+                } else {
+                    (false, String::new(), String::new(), 0.0)
+                }
+            };
+
+            if is_downloading {
+                let script = format!(
+                    "if(window.showDownloadModal) window.showDownloadModal('{}', '{}', {});",
+                    title.replace("'", "\\'"),
+                    message.replace("'", "\\'"),
+                    progress
+                );
+                let hwnd_key = hwnd.0 as isize;
+                REALTIME_WEBVIEWS.with(|wvs| {
+                    if let Some(webview) = wvs.borrow().get(&hwnd_key) {
+                        let _ = webview.evaluate_script(&script);
+                    }
+                });
+            } else {
+                let script = "if(window.hideDownloadModal) window.hideDownloadModal();";
+                let hwnd_key = hwnd.0 as isize;
+                REALTIME_WEBVIEWS.with(|wvs| {
+                    if let Some(webview) = wvs.borrow().get(&hwnd_key) {
+                        let _ = webview.evaluate_script(&script);
+                    }
+                });
+            }
+
             LRESULT(0)
         }
         WM_VOLUME_UPDATE => {

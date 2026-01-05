@@ -7,6 +7,8 @@
 //! every 2 seconds for new sentence chunks.
 
 mod capture;
+pub mod model_loader;
+pub mod parakeet;
 mod state;
 mod transcription;
 mod translation;
@@ -31,6 +33,14 @@ pub const WM_REALTIME_UPDATE: u32 = WM_APP + 200;
 pub const WM_TRANSLATION_UPDATE: u32 = WM_APP + 201;
 pub const WM_VOLUME_UPDATE: u32 = WM_APP + 202;
 pub const WM_MODEL_SWITCH: u32 = WM_APP + 203;
+pub const WM_DOWNLOAD_PROGRESS: u32 = WM_APP + 204;
+pub const WM_START_DRAG: u32 = WM_APP + 205;
+pub const WM_TOGGLE_MIC: u32 = WM_APP + 206;
+pub const WM_TOGGLE_TRANS: u32 = WM_APP + 207;
+pub const WM_COPY_TEXT: u32 = WM_APP + 208;
+pub const WM_EXEC_SCRIPT: u32 = WM_APP + 209;
+pub const WM_UPDATE_TTS_SPEED: u32 = WM_APP + 210;
+pub const WM_CLOSE_TTS_MODAL: u32 = WM_APP + 211;
 
 // Shared RMS value for volume visualization
 pub static REALTIME_RMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

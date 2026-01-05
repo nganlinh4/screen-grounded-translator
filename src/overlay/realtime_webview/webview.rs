@@ -1,6 +1,7 @@
 //! WebView creation and IPC handling for realtime overlay
 
 use super::state::*;
+use crate::api::realtime_audio::{WM_COPY_TEXT, WM_START_DRAG, WM_TOGGLE_MIC, WM_TOGGLE_TRANS};
 use crate::api::realtime_audio::{WM_REALTIME_UPDATE, WM_TRANSLATION_UPDATE};
 use crate::config::get_all_languages;
 use crate::gui::locale::LocaleText;
@@ -8,7 +9,6 @@ use crate::overlay::realtime_html::get_realtime_html;
 use crate::APP;
 use std::sync::atomic::Ordering;
 use windows::Win32::Foundation::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use wry::{Rect, WebViewBuilder};
 pub fn create_realtime_webview(
@@ -17,6 +17,7 @@ pub fn create_realtime_webview(
     audio_source: &str,
     current_language: &str,
     translation_model: &str,
+    transcription_model: &str,
     font_size: u32,
 ) {
     let hwnd_key = hwnd.0 as isize;
@@ -42,6 +43,7 @@ pub fn create_realtime_webview(
         &languages,
         current_language,
         translation_model,
+        transcription_model,
         font_size,
         &locale_text,
     );
@@ -79,14 +81,24 @@ pub fn create_realtime_webview(
             .with_ipc_handler(move |msg: wry::http::Request<String>| {
                 let body = msg.body();
                 if body == "startDrag" {
-                    // Initiate window drag
                     unsafe {
-                        let _ = ReleaseCapture();
-                        SendMessageW(
-                            hwnd_for_ipc,
-                            WM_NCLBUTTONDOWN,
-                            Some(WPARAM(HTCAPTION as usize)),
-                            Some(LPARAM(0)),
+                        let _ =
+                            PostMessageW(Some(hwnd_for_ipc), WM_START_DRAG, WPARAM(0), LPARAM(0));
+                    }
+                } else if body.starts_with("toggleMic:") {
+                    let val = if &body[10..] == "1" { 1 } else { 0 };
+                    unsafe {
+                        let _ =
+                            PostMessageW(Some(hwnd_for_ipc), WM_TOGGLE_MIC, WPARAM(val), LPARAM(0));
+                    }
+                } else if body.starts_with("toggleTrans:") {
+                    let val = if &body[12..] == "1" { 1 } else { 0 };
+                    unsafe {
+                        let _ = PostMessageW(
+                            Some(hwnd_for_ipc),
+                            WM_TOGGLE_TRANS,
+                            WPARAM(val),
+                            LPARAM(0),
                         );
                     }
                 } else if body == "startGroupDrag" {
@@ -131,9 +143,18 @@ pub fn create_realtime_webview(
                         }
                     }
                 } else if body.starts_with("copyText:") {
-                    // Copy text to clipboard
-                    let text = &body[9..];
-                    crate::overlay::utils::copy_to_clipboard(text, hwnd_for_ipc);
+                    // Copy text to clipboard via UI thread
+                    let text = body[9..].to_string();
+                    let boxed = Box::new(text);
+                    let ptr = Box::into_raw(boxed);
+                    unsafe {
+                        let _ = PostMessageW(
+                            Some(hwnd_for_ipc),
+                            WM_COPY_TEXT,
+                            WPARAM(0),
+                            LPARAM(ptr as isize),
+                        );
+                    }
                 } else if body == "close" {
                     unsafe {
                         let _ = PostMessageW(Some(hwnd_for_ipc), WM_CLOSE, WPARAM(0), LPARAM(0));
@@ -223,6 +244,18 @@ pub fn create_realtime_webview(
                         crate::config::save_config(&app.config);
                     }
                     TRANSLATION_MODEL_CHANGE.store(true, Ordering::SeqCst);
+                } else if body.starts_with("transcriptionModel:") {
+                    // Transcription model change
+                    let model = body[19..].to_string();
+                    if let Ok(mut new_model) = NEW_TRANSCRIPTION_MODEL.lock() {
+                        *new_model = model.clone();
+                    }
+                    {
+                        let mut app = APP.lock().unwrap();
+                        app.config.realtime_transcription_model = model;
+                        crate::config::save_config(&app.config);
+                    }
+                    TRANSCRIPTION_MODEL_CHANGE.store(true, Ordering::SeqCst);
                 } else if body.starts_with("resize:") {
                     // Resize window by delta
                     let coords = &body[7..];

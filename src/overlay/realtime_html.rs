@@ -6,6 +6,7 @@ pub fn get_realtime_html(
     languages: &[String],
     current_language: &str,
     translation_model: &str,
+    transcription_model: &str,
     font_size: u32,
     text: &LocaleText,
 ) -> String {
@@ -59,17 +60,36 @@ pub fn get_realtime_html(
     // Audio source selector (only for transcription window) - simple mic/device toggle
     let audio_selector = if !is_translation {
         let is_device = audio_source == "device";
+        let gemini_active = if transcription_model == "gemini" {
+            "active"
+        } else {
+            ""
+        };
+        let parakeet_active = if transcription_model == "parakeet" {
+            "active"
+        } else {
+            ""
+        };
+
         format!(
             r#"
             <div class="btn-group">
                 <span class="material-symbols-rounded audio-icon {mic_active}" id="mic-btn" data-value="mic" title="Microphone Input">{mic_svg}</span>
                 <span class="material-symbols-rounded audio-icon {device_active}" id="device-btn" data-value="device" title="Device Audio">{device_svg}</span>
             </div>
+            <div class="btn-group">
+                <span class="material-symbols-rounded trans-model-icon {gemini_active}" data-value="gemini" title="Gemini 2.0 (Cloud)">{auto_awesome_svg}</span>
+                <span class="material-symbols-rounded trans-model-icon {parakeet_active}" data-value="parakeet" title="Parakeet (Local)">{speed_svg}</span>
+            </div>
         "#,
             mic_active = if !is_device { "active" } else { "" },
             device_active = if is_device { "active" } else { "" },
+            gemini_active = gemini_active,
+            parakeet_active = parakeet_active,
             mic_svg = crate::overlay::html_components::icons::get_icon_svg("mic"),
-            device_svg = crate::overlay::html_components::icons::get_icon_svg("speaker_group")
+            device_svg = crate::overlay::html_components::icons::get_icon_svg("speaker_group"),
+            auto_awesome_svg = crate::overlay::html_components::icons::get_icon_svg("auto_awesome"),
+            speed_svg = crate::overlay::html_components::icons::get_icon_svg("speed")
         )
     } else {
         // Language selector and model toggle for translation window
@@ -169,6 +189,18 @@ pub fn get_realtime_html(
         </div>
         <div id="resize-hint"><span class="material-symbols-rounded" style="font-size: 20px;">{pip_svg}</span></div>
     </div>
+    <!-- Download Modal -->
+    <div id="download-modal-overlay"></div>
+    <div id="download-modal">
+        <div class="download-modal-title">
+            <span class="material-symbols-rounded">{download_svg}</span>
+            <span id="download-title">Downloading Model</span>
+        </div>
+        <div class="download-modal-msg" id="download-msg">Please wait...</div>
+        <div class="download-progress-bar">
+            <div class="download-progress-fill" id="download-fill" style="width: 0%;"></div>
+        </div>
+    </div>
     <!-- TTS Settings Modal -->
     <div id="tts-modal-overlay"></div>
     <div id="tts-modal">
@@ -184,6 +216,9 @@ pub fn get_realtime_html(
                 <span class="speed-value" id="speed-value">1.0x</span>
                 <button class="auto-toggle on" id="auto-speed-toggle" title="Auto-adjust speed to catch up">{tts_auto}</button>
             </div>
+    </div>
+            </div>
+        </div>
     </div>
     <!-- App Selection Modal -->
     <div id="app-modal-overlay"></div>
@@ -222,5 +257,6 @@ pub fn get_realtime_html(
         pip_svg = crate::overlay::html_components::icons::get_icon_svg("picture_in_picture_small"),
         volume_up_svg = crate::overlay::html_components::icons::get_icon_svg("volume_up"),
         apps_svg = crate::overlay::html_components::icons::get_icon_svg("apps"),
+        download_svg = crate::overlay::html_components::icons::get_icon_svg("download")
     )
 }

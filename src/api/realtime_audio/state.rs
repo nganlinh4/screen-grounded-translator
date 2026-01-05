@@ -35,6 +35,12 @@ pub struct RealtimeState {
     pub last_transcript_append_time: Instant,
     /// When the AI last sent a translation chunk
     pub last_translation_update_time: Instant,
+
+    /// Download status for models
+    pub is_downloading: bool,
+    pub download_title: String,
+    pub download_message: String,
+    pub download_progress: f32,
 }
 
 impl RealtimeState {
@@ -50,6 +56,10 @@ impl RealtimeState {
             translation_history: Vec::new(),
             last_transcript_append_time: Instant::now(),
             last_translation_update_time: Instant::now(),
+            is_downloading: false,
+            download_title: String::new(),
+            download_message: String::new(),
+            download_progress: 0.0,
         }
     }
 
