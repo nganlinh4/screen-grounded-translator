@@ -1081,18 +1081,18 @@ pub fn has_markdown_webview(parent_hwnd: HWND) -> bool {
     states.get(&hwnd_key).copied().unwrap_or(false)
 }
 
-/// Generate a filename using Groq's llama-3.1-8b-instant model
+/// Generate a filename using Cerebras' gpt-oss-120b model
 fn generate_filename(content: &str) -> String {
     let default_name = "game.html".to_string();
 
     // Get API Key
-    let groq_key = if let Ok(app) = crate::APP.lock() {
-        app.config.api_key.clone()
+    let cerebras_key = if let Ok(app) = crate::APP.lock() {
+        app.config.cerebras_api_key.clone()
     } else {
         return default_name;
     };
 
-    if groq_key.is_empty() {
+    if cerebras_key.is_empty() {
         return default_name;
     }
 
@@ -1112,7 +1112,7 @@ fn generate_filename(content: &str) -> String {
     );
 
     let payload = serde_json::json!({
-        "model": "llama-3.1-8b-instant",
+        "model": "gpt-oss-120b",
         "messages": [
             { "role": "user", "content": prompt }
         ],
@@ -1121,8 +1121,8 @@ fn generate_filename(content: &str) -> String {
     });
 
     match crate::api::client::UREQ_AGENT
-        .post("https://api.groq.com/openai/v1/chat/completions")
-        .header("Authorization", &format!("Bearer {}", groq_key))
+        .post("https://api.cerebras.ai/v1/chat/completions")
+        .header("Authorization", &format!("Bearer {}", cerebras_key))
         .send_json(payload)
     {
         Ok(resp) => {

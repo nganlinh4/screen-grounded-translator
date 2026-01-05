@@ -278,16 +278,27 @@ pub fn show_body(
                                             "ko" => &m.quota_limit_ko,
                                             _ => &m.quota_limit_en,
                                         };
-                                        let search_icon = if model_supports_search(&m.id) {
-                                            "🔍 "
+                                        let provider_icon = match m.provider.as_str() {
+                                            "google" => "💠 ",
+                                            "google-gtx" => "🌍 ",
+                                            "groq" => "⚡ ",
+                                            "cerebras" => "🔥 ",
+                                            "openrouter" => "🌐 ",
+                                            "ollama" => "🏠 ",
+                                            "qrserver" => "🔳 ",
+                                            _ => "⚙️ ",
+                                        };
+                                        let search_suffix = if model_supports_search(&m.id) {
+                                            " 🔍"
                                         } else {
                                             ""
                                         };
                                         let label = format!(
-                                            "{}{} - {} - {}",
-                                            search_icon, name, m.full_name, quota
+                                            "{}{} - {} - {}{}",
+                                            provider_icon, name, m.full_name, quota, search_suffix
                                         );
                                         let is_selected = *model == m.id;
+
                                         if ui.selectable_label(is_selected, label).clicked() {
                                             *model = m.id.clone();
                                             viewer.changed = true;
@@ -565,16 +576,27 @@ pub fn show_body(
                                             "ko" => &m.quota_limit_ko,
                                             _ => &m.quota_limit_en,
                                         };
-                                        let search_icon = if model_supports_search(&m.id) {
-                                            "🔍 "
+                                        let provider_icon = match m.provider.as_str() {
+                                            "google" => "💠 ",
+                                            "google-gtx" => "🌍 ",
+                                            "groq" => "⚡ ",
+                                            "cerebras" => "🔥 ",
+                                            "openrouter" => "🌐 ",
+                                            "ollama" => "🏠 ",
+                                            "qrserver" => "🔳 ",
+                                            _ => "⚙️ ",
+                                        };
+                                        let search_suffix = if model_supports_search(&m.id) {
+                                            " 🔍"
                                         } else {
                                             ""
                                         };
                                         let label = format!(
-                                            "{}{} - {} - {}",
-                                            search_icon, name, m.full_name, quota
+                                            "{}{} - {} - {}{}",
+                                            provider_icon, name, m.full_name, quota, search_suffix
                                         );
                                         let is_selected = *model == m.id;
+
                                         if ui.selectable_label(is_selected, label).clicked() {
                                             *model = m.id.clone();
                                             viewer.changed = true;

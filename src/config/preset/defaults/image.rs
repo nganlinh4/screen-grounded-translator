@@ -102,7 +102,7 @@ pub fn create_image_presets() -> Vec<Preset> {
         PresetBuilder::new("preset_ocr", "Extract text")
             .image()
             .blocks(vec![
-                BlockBuilder::image("scout")
+                BlockBuilder::image("maverick")
                     .prompt("Extract all text from this image exactly as it appears. Output ONLY the text.")
                     .language("English")
                     .show_overlay(false)

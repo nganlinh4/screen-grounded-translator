@@ -238,14 +238,14 @@ fn render_main_ui(ui: &mut egui::Ui, state: &mut RealtimeUiState) {
                 let model_label = match current_model.as_str() {
                     "google-gemma" => "✨",
                     "google-gtx" => "🌍",
-                    _ => "⚡"
+                    _ => "🔥"
                 };
                 
                 ui.menu_button(model_label, |ui| {
-                    if ui.selectable_label(current_model == "groq-llama", "⚡ Groq").clicked() {
-                        if let Ok(mut m) = NEW_TRANSLATION_MODEL.lock() { *m = "groq-llama".to_string(); }
+                    if ui.selectable_label(current_model == "cerebras-oss", "🔥 Cerebras").clicked() {
+                        if let Ok(mut m) = NEW_TRANSLATION_MODEL.lock() { *m = "cerebras-oss".to_string(); }
                         TRANSLATION_MODEL_CHANGE.store(true, Ordering::SeqCst);
-                        if let Ok(mut app) = APP.lock() { app.config.realtime_translation_model = "groq-llama".to_string(); }
+                        if let Ok(mut app) = APP.lock() { app.config.realtime_translation_model = "cerebras-oss".to_string(); }
                         ui.close();
                     }
                     if ui.selectable_label(current_model == "google-gemma", "✨ Gemma").clicked() {

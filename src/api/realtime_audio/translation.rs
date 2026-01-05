@@ -19,7 +19,7 @@ use super::state::SharedRealtimeState;
 use super::utils::{refresh_transcription_window, update_translation_text};
 use super::{TRANSLATION_INTERVAL_MS, WM_MODEL_SWITCH};
 
-/// Translation loop using Groq's llama-3.1-8b-instant model
+/// Translation loop using Cerebras' gpt-oss-120b model
 pub fn run_translation_loop(
     preset: Preset,
     stop_signal: Arc<AtomicBool>,
@@ -129,10 +129,11 @@ pub fn run_translation_loop(
                     s.start_new_translation();
                 }
 
-                let (groq_key, gemini_key, translation_model, history_messages) = {
+                let (groq_key, gemini_key, cerebras_key, translation_model, history_messages) = {
                     let app = APP.lock().unwrap();
                     let groq = app.config.api_key.clone();
                     let gemini = app.config.gemini_api_key.clone();
+                    let cerebras = app.config.cerebras_api_key.clone();
                     let model = app.config.realtime_translation_model.clone();
                     drop(app);
                     let history = if let Ok(s) = state.lock() {
@@ -140,7 +141,7 @@ pub fn run_translation_loop(
                     } else {
                         Vec::new()
                     };
-                    (groq, gemini, model, history)
+                    (groq, gemini, cerebras, model, history)
                 };
 
                 let current_model = translation_model.as_str();
@@ -165,9 +166,9 @@ pub fn run_translation_loop(
                         ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(), "gemma-3-27b-it".to_string(), gemini_key.clone())
                     } else {
                         (
-                            "https://api.groq.com/openai/v1/chat/completions".to_string(),
-                            "llama-3.1-8b-instant".to_string(),
-                            groq_key.clone(),
+                            "https://api.cerebras.ai/v1/chat/completions".to_string(),
+                            "gpt-oss-120b".to_string(),
+                            cerebras_key.clone(),
                         )
                     };
 
@@ -195,21 +196,26 @@ pub fn run_translation_loop(
                         {
                             Ok(resp) => {
                                 if !is_google {
-                                    if let Some(remaining) =
-                                        resp.headers().get("x-ratelimit-remaining-requests").and_then(|v| v.to_str().ok())
+                                    if let Some(remaining) = resp
+                                        .headers()
+                                        .get("x-ratelimit-remaining-requests-tokens")
+                                        .and_then(|v| v.to_str().ok())
                                     {
                                         let limit = resp
-                                            .headers().get("x-ratelimit-limit-requests").and_then(|v| v.to_str().ok())
+                                            .headers()
+                                            .get("x-ratelimit-limit-tokens")
+                                            .and_then(|v| v.to_str().ok())
                                             .unwrap_or("?");
                                         if let Ok(mut app) = APP.lock() {
                                             app.model_usage_stats.insert(
-                                                "llama-3.1-8b-instant".to_string(),
+                                                "gpt-oss-120b".to_string(),
                                                 format!("{} / {}", remaining, limit),
                                             );
                                         }
                                     }
                                 }
-                                let reader = std::io::BufReader::new(resp.into_body().into_reader());
+                                let reader =
+                                    std::io::BufReader::new(resp.into_body().into_reader());
                                 let mut full_translation = String::new();
                                 for line in reader.lines().flatten() {
                                     if stop_signal.load(Ordering::Relaxed) {
@@ -268,6 +274,7 @@ pub fn run_translation_loop(
                         current_model,
                         &groq_key,
                         &gemini_key,
+                        &cerebras_key,
                         &history_messages,
                         has_finished,
                         translation_hwnd,
@@ -286,20 +293,21 @@ fn handle_fallback_translation(
     chunk: &str,
     target_language: &str,
     current_model: &str,
-    groq_key: &str,
+    _groq_key: &str,
     gemini_key: &str,
+    cerebras_key: &str,
     history_messages: &[serde_json::Value],
     has_finished: bool,
     translation_hwnd: HWND,
     state: &SharedRealtimeState,
     stop_signal: &Arc<AtomicBool>,
 ) {
-    let alt_model = if current_model == "groq-llama" {
+    let alt_model = if current_model == "cerebras-oss" {
         "google-gtx"
     } else if current_model == "google-gtx" {
-        "groq-llama"
+        "cerebras-oss"
     } else {
-        let pool = ["groq-llama", "google-gtx"];
+        let pool = ["cerebras-oss", "google-gtx"];
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -348,9 +356,9 @@ fn handle_fallback_translation(
             )
         } else {
             (
-                "https://api.groq.com/openai/v1/chat/completions".to_string(),
-                "llama-3.1-8b-instant".to_string(),
-                groq_key.to_string(),
+                "https://api.cerebras.ai/v1/chat/completions".to_string(),
+                "gpt-oss-120b".to_string(),
+                cerebras_key.to_string(),
             )
         };
 
@@ -373,11 +381,19 @@ fn handle_fallback_translation(
                 .send_json(payload)
             {
                 if !alt_is_google {
-                    if let Some(remaining) = resp.headers().get("x-ratelimit-remaining-requests").and_then(|v| v.to_str().ok()) {
-                        let limit = resp.headers().get("x-ratelimit-limit-requests").and_then(|v| v.to_str().ok()).unwrap_or("?");
+                    if let Some(remaining) = resp
+                        .headers()
+                        .get("x-ratelimit-remaining-requests-tokens")
+                        .and_then(|v| v.to_str().ok())
+                    {
+                        let limit = resp
+                            .headers()
+                            .get("x-ratelimit-limit-tokens")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("?");
                         if let Ok(mut app) = APP.lock() {
                             app.model_usage_stats.insert(
-                                "llama-3.1-8b-instant".to_string(),
+                                "gpt-oss-120b".to_string(),
                                 format!("{} / {}", remaining, limit),
                             );
                         }
@@ -441,8 +457,7 @@ pub fn translate_with_google_gtx(text: &str, target_lang: &str) -> Option<String
     match UREQ_AGENT
         .get(&url)
         .header("User-Agent", "Mozilla/5.0")
-        
-                .call()
+        .call()
     {
         Ok(resp) => {
             if let Ok(json) = resp.into_body().read_json::<serde_json::Value>() {

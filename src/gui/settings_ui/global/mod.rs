@@ -74,6 +74,12 @@ pub fn render_global_settings(
                     changed = true;
                 }
                 if ui
+                    .checkbox(&mut config.use_cerebras, text.use_cerebras_checkbox)
+                    .changed()
+                {
+                    changed = true;
+                }
+                if ui
                     .checkbox(&mut config.use_gemini, text.use_gemini_checkbox)
                     .changed()
                 {
@@ -86,12 +92,6 @@ pub fn render_global_settings(
                     changed = true;
                 }
                 if ui.checkbox(&mut config.use_ollama, "Ollama").changed() {
-                    changed = true;
-                }
-                if ui
-                    .checkbox(&mut config.use_cerebras, text.use_cerebras_checkbox)
-                    .changed()
-                {
                     changed = true;
                 }
             });
@@ -123,6 +123,37 @@ pub fn render_global_settings(
                     };
                     if icon_button(ui, eye_icon).clicked() {
                         *show_api_key = !*show_api_key;
+                    }
+                });
+                ui.add_space(8.0);
+            }
+
+            // Cerebras API Key (only show if enabled)
+            if config.use_cerebras {
+                ui.horizontal(|ui| {
+                    ui.label(text.cerebras_api_key_label);
+                    if ui.link(text.cerebras_get_key_link).clicked() {
+                        let _ = open::that("https://cloud.cerebras.ai/");
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut config.cerebras_api_key)
+                                .password(!*show_cerebras_api_key)
+                                .desired_width(API_KEY_FIELD_WIDTH),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    let eye_icon = if *show_cerebras_api_key {
+                        Icon::EyeOpen
+                    } else {
+                        Icon::EyeClosed
+                    };
+                    if icon_button(ui, eye_icon).clicked() {
+                        *show_cerebras_api_key = !*show_cerebras_api_key;
                     }
                 });
                 ui.add_space(8.0);
@@ -214,37 +245,6 @@ pub fn render_global_settings(
                         .memory(|mem| mem.data.get_temp::<String>(egui::Id::new("ollama_status")))
                     {
                         ui.label(egui::RichText::new(&status).size(11.0));
-                    }
-                });
-                ui.add_space(8.0);
-            }
-
-            // Cerebras API Key (only show if enabled)
-            if config.use_cerebras {
-                ui.horizontal(|ui| {
-                    ui.label(text.cerebras_api_key_label);
-                    if ui.link(text.cerebras_get_key_link).clicked() {
-                        let _ = open::that("https://cloud.cerebras.ai/");
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::TextEdit::singleline(&mut config.cerebras_api_key)
-                                .password(!*show_cerebras_api_key)
-                                .desired_width(API_KEY_FIELD_WIDTH),
-                        )
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                    let eye_icon = if *show_cerebras_api_key {
-                        Icon::EyeOpen
-                    } else {
-                        Icon::EyeClosed
-                    };
-                    if icon_button(ui, eye_icon).clicked() {
-                        *show_cerebras_api_key = !*show_cerebras_api_key;
                     }
                 });
                 ui.add_space(8.0);

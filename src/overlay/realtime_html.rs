@@ -78,7 +78,7 @@ pub fn get_realtime_html(
         } else {
             ""
         };
-        let groq_active = if translation_model == "groq-llama" {
+        let cerebras_active = if translation_model == "cerebras-oss" {
             "active"
         } else {
             ""
@@ -94,7 +94,7 @@ pub fn get_realtime_html(
             <span class="ctrl-btn speak-btn" id="speak-btn" title="Text-to-Speech Settings"><span class="material-symbols-rounded">{volume_up_svg}</span></span>
             <div class="btn-group">
                 <span class="material-symbols-rounded model-icon {gemma_active}" data-value="google-gemma" title="AI Translation (Gemma)">{auto_awesome_svg}</span>
-                <span class="material-symbols-rounded model-icon {groq_active}" data-value="groq-llama" title="Fast Translation (Groq)">{speed_svg}</span>
+                <span class="material-symbols-rounded model-icon {cerebras_active}" data-value="cerebras-oss" title="Instant AI (Cerebras)">{speed_svg}</span>
                 <span class="material-symbols-rounded model-icon {gtx_active}" data-value="google-gtx" title="Unlimited Translation (Google)">{language_svg}</span>
             </div>
             <select id="language-select" title="Target Language">
@@ -103,7 +103,7 @@ pub fn get_realtime_html(
         "#,
             lang_options = lang_options,
             gemma_active = gemma_active,
-            groq_active = groq_active,
+            cerebras_active = cerebras_active,
             gtx_active = gtx_active,
             volume_up_svg = crate::overlay::html_components::icons::get_icon_svg("volume_up"),
             auto_awesome_svg = crate::overlay::html_components::icons::get_icon_svg("auto_awesome"),

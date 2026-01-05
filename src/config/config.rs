@@ -41,7 +41,7 @@ fn default_edge_tts_settings() -> EdgeTtsSettings {
 }
 
 fn default_realtime_translation_model() -> String {
-    "groq-llama".to_string()
+    "cerebras-oss".to_string()
 }
 
 fn default_realtime_font_size() -> u32 {
@@ -137,7 +137,7 @@ pub struct Config {
     pub use_openrouter: bool,
 
     /// Enable Cerebras AI models
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub use_cerebras: bool,
 
     /// Enable local Ollama models
@@ -162,7 +162,7 @@ pub struct Config {
     // -------------------------------------------------------------------------
     // Realtime Audio Settings
     // -------------------------------------------------------------------------
-    /// Model for realtime translation: "groq-llama" or "google-gemma"
+    /// Model for realtime translation: "cerebras-oss" or "google-gemma"
     #[serde(default = "default_realtime_translation_model")]
     pub realtime_translation_model: String,
 
@@ -267,7 +267,7 @@ impl Default for Config {
             use_groq: true,
             use_gemini: true,
             use_openrouter: false,
-            use_cerebras: false,
+            use_cerebras: true,
             use_ollama: false,
 
             // Ollama
@@ -276,7 +276,7 @@ impl Default for Config {
             ollama_text_model: String::new(),
 
             // Realtime Audio
-            realtime_translation_model: "groq-llama".to_string(),
+            realtime_translation_model: "cerebras-oss".to_string(),
             realtime_font_size: 16,
             realtime_transcription_size: (500, 180),
             realtime_translation_size: (500, 180),

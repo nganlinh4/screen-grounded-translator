@@ -72,14 +72,6 @@ pub fn render_usage_modal(
                                 ui.end_row();
                             }
                             
-                            // Add llama-3.1-8b-instant (realtime translation model)
-                            if !shown_models.contains("llama-3.1-8b-instant") {
-                                shown_models.insert("llama-3.1-8b-instant".to_string());
-                                ui.label("llama-3.1-8b-instant");
-                                let status = usage_stats.get("llama-3.1-8b-instant").cloned().unwrap_or_else(|| "??? / ?".to_string());
-                                ui.label(status);
-                                ui.end_row();
-                            }
                         });
                     });
                 }
@@ -163,6 +155,15 @@ pub fn render_usage_modal(
                                 
                                 ui.label(&model.full_name);
                                 let status = usage_stats.get(&model.full_name).cloned().unwrap_or_else(|| "??? / ?".to_string());
+                                ui.label(status);
+                                ui.end_row();
+                            }
+
+                            // Add gpt-oss-120b (realtime translation model)
+                            if !shown_models.contains("gpt-oss-120b") {
+                                shown_models.insert("gpt-oss-120b".to_string());
+                                ui.label("gpt-oss-120b");
+                                let status = usage_stats.get("gpt-oss-120b").cloned().unwrap_or_else(|| "??? / ?".to_string());
                                 ui.label(status);
                                 ui.end_row();
                             }

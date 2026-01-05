@@ -69,12 +69,51 @@ pub fn model_is_non_llm(model_id: &str) -> bool {
 lazy_static::lazy_static! {
     static ref ALL_MODELS: Vec<ModelConfig> = vec![
         ModelConfig::new(
+            "google-gtx",
+            "google-gtx",
+            "Google Dịch",
+            "Google 번역",
+            "Google Translate",
+            "translate.googleapis.com/gtx",
+            ModelType::Text,
+            true,
+            "Không giới hạn",
+            "무제한",
+            "Unlimited"
+        ),
+        ModelConfig::new(
+            "qr-scanner",
+            "qrserver",
+            "Quét mã QR",
+            "QR 스캔",
+            "QR Scanner",
+            "api.qrserver.com/read-qr-code",
+            ModelType::Vision,
+            true,
+            "Không giới hạn",
+            "무제한",
+            "Unlimited"
+        ),
+        ModelConfig::new(
             "scout",
             "groq",
             "Nhanh",
             "빠름",
             "Fast",
             "meta-llama/llama-4-scout-17b-16e-instruct",
+            ModelType::Vision,
+            true,
+            "1000 lượt/ngày",
+            "1000 요청/일",
+            "1000 requests/day"
+        ),
+        ModelConfig::new(
+            "maverick",
+            "groq",
+            "Chính xác",
+            "정확함",
+            "Accurate",
+            "meta-llama/llama-4-maverick-17b-128e-instruct",
             ModelType::Vision,
             true,
             "1000 lượt/ngày",
@@ -93,19 +132,6 @@ lazy_static::lazy_static! {
             "14400 lượt/ngày",
             "14400 요청/일",
             "14400 requests/day"
-        ),
-        ModelConfig::new(
-            "maverick",
-            "groq",
-            "Chính xác",
-            "정확함",
-            "Accurate",
-            "meta-llama/llama-4-maverick-17b-128e-instruct",
-            ModelType::Vision,
-            true,
-            "1000 lượt/ngày",
-            "1000 요청/일",
-            "1000 requests/day"
         ),
         ModelConfig::new(
             "gemini-flash-lite",
@@ -172,20 +198,6 @@ lazy_static::lazy_static! {
             "50 공유 요청/일",
             "50 shared requests/day"
         ),
-        // Non-LLM QR Code Scanner (like Whisper for Audio)
-        ModelConfig::new(
-            "qr-scanner",
-            "qrserver",
-            "Quét mã QR",
-            "QR 스캔",
-            "QR Scanner",
-            "api.qrserver.com/read-qr-code",
-            ModelType::Vision,
-            true,
-            "Không giới hạn",
-            "무제한",
-            "Unlimited"
-        ),
         ModelConfig::new(
             "text_fast_120b",
             "groq",
@@ -198,19 +210,6 @@ lazy_static::lazy_static! {
             "1000 lượt/ngày",
             "1000 요청/일",
             "1000 requests/day"
-        ),
-        ModelConfig::new(
-            "gemma-3-27b",
-            "google",
-            "Cân bằng, chậm",
-            "균형잡힌, 느림",
-            "Balanced, Slow",
-            "gemma-3-27b-it",
-            ModelType::Text,
-            true,
-            "14400 lượt/ngày",
-            "14400 요청/일",
-            "14400 requests/day"
         ),
         ModelConfig::new(
             "text_accurate_kimi",
@@ -250,6 +249,19 @@ lazy_static::lazy_static! {
             "250 lượt/ngày",
             "250 요청/일",
             "250 requests/day"
+        ),
+        ModelConfig::new(
+            "gemma-3-27b",
+            "google",
+            "Cân bằng, chậm",
+            "균형잡힌, 느림",
+            "Balanced, Slow",
+            "gemma-3-27b-it",
+            ModelType::Text,
+            true,
+            "14400 lượt/ngày",
+            "14400 요청/일",
+            "14400 requests/day"
         ),
         ModelConfig::new(
             "text_gemini_flash_lite",
@@ -302,20 +314,6 @@ lazy_static::lazy_static! {
             "20 lượt/ngày",
             "20 요청/일",
             "20 requests/day"
-        ),
-        // Non-LLM translation model (like Whisper for Audio)
-        ModelConfig::new(
-            "google-gtx",
-            "google-gtx",
-            "Google Dịch",
-            "Google 번역",
-            "Google Translate",
-            "translate.googleapis.com/gtx",
-            ModelType::Text,
-            true,
-            "Không giới hạn",
-            "무제한",
-            "Unlimited"
         ),
         ModelConfig::new(
             "or-nemotron-text",
@@ -383,6 +381,19 @@ lazy_static::lazy_static! {
             "50 shared requests/day"
         ),
         ModelConfig::new(
+            "cerebras_llama33_70b",
+            "cerebras",
+            "C-Nhanh",
+            "C-빠름",
+            "C-Fast",
+            "llama-3.3-70b",
+            ModelType::Text,
+            true,
+            "14400 lượt/ngày",
+            "14400 요청/일",
+            "14400 requests/day"
+        ),
+        ModelConfig::new(
             "cerebras_gpt_oss",
             "cerebras",
             "C-Chính xác",
@@ -420,19 +431,6 @@ lazy_static::lazy_static! {
             "100 lượt/ngày",
             "100 요청/일",
             "100 requests/day"
-        ),
-        ModelConfig::new(
-            "cerebras_llama33_70b",
-            "cerebras",
-            "C-Nhanh",
-            "C-빠름",
-            "C-Fast",
-            "llama-3.3-70b",
-            ModelType::Text,
-            true,
-            "14400 lượt/ngày",
-            "14400 요청/일",
-            "14400 requests/day"
         ),
         ModelConfig::new(
             "whisper-fast",
