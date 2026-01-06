@@ -66,15 +66,42 @@ pub fn run_parakeet_transcription(
         app.config.realtime_audio_source.clone()
     };
 
+    use crate::overlay::realtime_webview::{REALTIME_TTS_ENABLED, SELECTED_APP_PID};
+    let tts_enabled = REALTIME_TTS_ENABLED.load(Ordering::SeqCst);
+    let selected_pid = SELECTED_APP_PID.load(Ordering::SeqCst);
+
+    let using_per_app_capture = audio_source == "device" && tts_enabled && selected_pid > 0;
+
     println!(
-        "Parakeet: Setting up audio capture (source: {})...",
-        audio_source
+        "Parakeet: Setting up audio capture (source: {}, per-app: {})...",
+        audio_source, using_per_app_capture
     );
-    let _stream = if audio_source == "mic" {
+
+    let _stream = if using_per_app_capture {
+        #[cfg(target_os = "windows")]
+        {
+            // Per-app capture spawns its own thread and doesn't return a stream
+            super::capture::start_per_app_capture(
+                selected_pid,
+                audio_buffer.clone(),
+                stop_signal.clone(),
+            )?;
+            None
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
+    } else if audio_source == "mic" {
         Some(super::capture::start_mic_capture(
             audio_buffer.clone(),
             stop_signal.clone(),
         )?)
+    } else if audio_source == "device" && tts_enabled && selected_pid == 0 {
+        // Edge case: TTS enabled (Isolation mode) but no app selected yet.
+        // We MUST NOT fall back to full loopback because that would record the TTS and echo.
+        println!("Parakeet: TTS enabled but no app selected - pausing capture to avoid echo.");
+        None
     } else {
         Some(super::capture::start_device_loopback_capture(
             audio_buffer.clone(),
