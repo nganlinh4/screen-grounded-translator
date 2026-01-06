@@ -408,9 +408,9 @@ pub fn paint_window(hwnd: HWND) {
                     b
                 };
 
-                let h_padding = if is_refining { 20 } else { 6 };
+                let h_padding = if is_refining { 20 } else { 2 };
                 let available_w = (width - (h_padding * 2)).max(1);
-                let v_safety_margin = 4;
+                let v_safety_margin = 0;
                 let available_h = (height - v_safety_margin).max(1);
 
                 let mut low = if is_refining { 8 } else { 8 };
