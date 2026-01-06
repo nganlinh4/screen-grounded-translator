@@ -115,6 +115,8 @@ pub struct WindowState {
 
     // Streaming state - true when actively receiving chunks (buttons hidden during streaming)
     pub is_streaming_active: bool,
+    // Tracks previous streaming state to detect when streaming ends (for flush logic)
+    pub was_streaming_active: bool,
 
     // Metadata for Refinement/Processing
     pub model_id: String,

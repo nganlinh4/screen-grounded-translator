@@ -105,13 +105,41 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
                 need_repaint = true;
             }
 
-            // Throttle
+            // Detect streaming end transition to force flush remaining text
+            // When streaming was active but is now inactive, we must render any leftover text
+            let streaming_just_ended = state.was_streaming_active && !state.is_streaming_active;
+            if streaming_just_ended {
+                state.was_streaming_active = false;
+            }
+
+            // Safety: If streaming is NOT active, always process pending text immediately
+            // This ensures any leftover text is rendered even if streaming_just_ended was missed
+            let not_streaming = !state.is_streaming_active;
+
+            // Track if we need to force font cache dirty (bypass 200ms throttle)
+            // This is critical for rendering the final text after streaming ends
+            let mut force_font_dirty = false;
+
+            // Throttle - but bypass if:
+            // 1. streaming_just_ended (transition detection)
+            // 2. not_streaming (any pending text after streaming should render immediately)
+            // 3. first update (last_text_update_time == 0)
+            // 4. throttle expired (>16ms since last update)
             if state.pending_text.is_some()
-                && (state.last_text_update_time == 0
+                && (streaming_just_ended
+                    || not_streaming
+                    || state.last_text_update_time == 0
                     || now.wrapping_sub(state.last_text_update_time) > 16)
             {
                 pending_update = state.pending_text.take();
                 state.last_text_update_time = now;
+
+                // CRITICAL: When streaming ends, force font recalculation
+                // to ensure the final text is properly rendered (bypass 200ms throttle)
+                if not_streaming {
+                    force_font_dirty = true;
+                    state.font_cache_dirty = true;
+                }
             }
 
             // Note: Native EDIT control handling removed - both plain text and markdown modes
@@ -140,6 +168,7 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
                         state.is_editing = false;
                         state.is_refining = true;
                         state.is_streaming_active = true; // Hide buttons during refinement
+                        state.was_streaming_active = true; // Track for end-of-stream flush
                         state.full_text = String::new();
                         state.pending_text = Some(String::new());
                     }

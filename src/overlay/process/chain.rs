@@ -767,6 +767,7 @@ progressBar.onclick = (e) => {{
                     st.input_text = input_text.clone();
                     st.is_refining = true;
                     st.is_streaming_active = true; // Hide buttons during streaming
+                    st.was_streaming_active = true; // Track for end-of-stream flush
                     st.font_cache_dirty = true;
                 }
             } else {
@@ -774,6 +775,7 @@ progressBar.onclick = (e) => {{
                 let mut s = WINDOW_STATES.lock().unwrap();
                 if let Some(st) = s.get_mut(&(my_hwnd.unwrap().0 as isize)) {
                     st.is_streaming_active = true; // Hide buttons during streaming
+                    st.was_streaming_active = true; // Track for end-of-stream flush
                 }
             }
         }
@@ -1045,19 +1047,21 @@ progressBar.onclick = (e) => {{
             }
         };
 
-        if let Some(h) = my_hwnd {
-            let mut s = WINDOW_STATES.lock().unwrap();
-            if let Some(st) = s.get_mut(&(h.0 as isize)) {
-                st.is_refining = false;
-                st.is_streaming_active = false; // Streaming complete, show buttons
-                st.font_cache_dirty = true;
-            }
-        }
-
+        // CRITICAL: Set is_streaming_active = false AND pending_text atomically in the same lock
+        // to prevent race condition where the timer detects streaming_just_ended but pending_text
+        // hasn't been set yet (causing the final text to be throttled and not rendered)
         match res {
             Ok(txt) => {
                 if let Some(h) = my_hwnd {
-                    update_window_text(h, &txt);
+                    let mut s = WINDOW_STATES.lock().unwrap();
+                    if let Some(st) = s.get_mut(&(h.0 as isize)) {
+                        st.is_refining = false;
+                        st.is_streaming_active = false; // Streaming complete, show buttons
+                        st.font_cache_dirty = true;
+                        // Set pending_text in same lock to avoid race condition
+                        st.pending_text = Some(txt.clone());
+                        st.full_text = txt.clone();
+                    }
                 }
                 txt
             }
@@ -1088,7 +1092,15 @@ progressBar.onclick = (e) => {{
                             }
                         }
                     }
-                    update_window_text(h, &err);
+                    // Set is_streaming_active = false AND pending_text atomically
+                    let mut s = WINDOW_STATES.lock().unwrap();
+                    if let Some(st) = s.get_mut(&(h.0 as isize)) {
+                        st.is_refining = false;
+                        st.is_streaming_active = false;
+                        st.font_cache_dirty = true;
+                        st.pending_text = Some(err.clone());
+                        st.full_text = err.clone();
+                    }
                 }
                 String::new()
             }
