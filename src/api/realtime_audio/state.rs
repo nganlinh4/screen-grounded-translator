@@ -4,9 +4,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Timeout for User Silence (Wait for user to finish thought)
-pub const USER_SILENCE_TIMEOUT_MS: u64 = 2000;
+/// Reduced from 2000ms to 800ms for snappier response with Parakeet
+pub const USER_SILENCE_TIMEOUT_MS: u64 = 800;
 /// Timeout for AI Silence (Wait if AI stops generating)
-pub const AI_SILENCE_TIMEOUT_MS: u64 = 2000;
+/// Reduced from 2000ms to 1000ms
+pub const AI_SILENCE_TIMEOUT_MS: u64 = 1000;
+
+/// Minimum characters required to trigger a force-commit on silence
+/// Prevents committing short noise artifacts (like "Ah", "Umm")
+const MIN_FORCE_COMMIT_CHARS: usize = 10;
 
 /// Shared state for realtime transcription
 pub struct RealtimeState {
@@ -112,6 +118,15 @@ impl RealtimeState {
     pub fn should_force_commit_on_timeout(&self) -> bool {
         if self.uncommitted_translation.is_empty() {
             return false;
+        }
+
+        // Check if we have enough content to warrant a commit
+        // This prevents committing short noise bursts like "Ah"
+        if self.last_committed_pos < self.full_transcript.len() {
+            let pending_len = self.full_transcript.len() - self.last_committed_pos;
+            if pending_len < MIN_FORCE_COMMIT_CHARS {
+                return false;
+            }
         }
 
         let now = Instant::now();
@@ -220,6 +235,9 @@ impl RealtimeState {
         const LONG_SENTENCE_THRESHOLD: usize = 30; // Start looking for commas if buffer > 60 chars
         const MIN_CLAUSE_LENGTH: usize = 20; // Don't commit tiny fragments like "Oh,"
 
+        // Safety valve for run-on sentences (common with Parakeet/raw streams)
+        const SAFETY_VALVE_THRESHOLD: usize = 150;
+
         let uncommitted_len = self.uncommitted_translation.len();
 
         // 1. Identify which delimiters we accept right now
@@ -232,77 +250,96 @@ impl RealtimeState {
         let mut temp_src_pos = self.last_committed_pos;
         let mut temp_trans_pos = 0;
 
+        // Safety Valve Check: If buffer is huge and no delimiters found yet,
+        // force a commit at the last whitespace to prevent memory growth/lag.
+        if self.full_transcript.len() - self.last_committed_pos > SAFETY_VALVE_THRESHOLD
+            && uncommitted_len > SAFETY_VALVE_THRESHOLD
+        {
+            // Find last space in both source and translation
+            let src_segment = &self.full_transcript[self.last_committed_pos..];
+            let trans_segment = &self.uncommitted_translation;
+
+            if let (Some(s_space), Some(t_space)) =
+                (src_segment.rfind(' '), trans_segment.rfind(' '))
+            {
+                // Synthetic match at last space
+                matches.push((self.last_committed_pos + s_space + 1, t_space + 1, true));
+            }
+        }
+
         // 2. "Zipper" Scan: Try to match delimiters in order
         // We loop to find ALL available commits (e.g. if we received 2 full sentences at once)
-        loop {
-            if temp_src_pos >= self.full_transcript.len() {
-                break;
-            }
-            if temp_trans_pos >= self.uncommitted_translation.len() {
-                break;
-            }
-
-            let source_text = &self.full_transcript[temp_src_pos..];
-            let trans_text = &self.uncommitted_translation[temp_trans_pos..];
-
-            // Find next Sentence Delimiter in Source
-            let src_sentence_end = source_text
-                .char_indices()
-                .find(|(_, c)| sentence_delimiters.contains(c))
-                .map(|(i, c)| i + c.len_utf8());
-
-            // Find next Clause Delimiter in Source (only if enabled)
-            let src_clause_end = if enable_clause_commit {
-                source_text
-                    .char_indices()
-                    .find(|(i, c)| *i >= MIN_CLAUSE_LENGTH && clause_delimiters.contains(c))
-                    .map(|(i, c)| i + c.len_utf8())
-            } else {
-                None
-            };
-
-            // Pick the earliest one
-            let (src_rel_end, is_clause) = match (src_sentence_end, src_clause_end) {
-                (Some(s), Some(c)) => {
-                    if s < c {
-                        (s, false)
-                    } else {
-                        (c, true)
-                    }
+        if matches.is_empty() {
+            loop {
+                if temp_src_pos >= self.full_transcript.len() {
+                    break;
                 }
-                (Some(s), None) => (s, false),
-                (None, Some(c)) => (c, true),
-                (None, None) => break, // No more delimiters in source
-            };
+                if temp_trans_pos >= self.uncommitted_translation.len() {
+                    break;
+                }
 
-            // Now try to find a corresponding delimiter in Translation
-            // We search roughly in the same ratio, but simply finding the *next* matching type is usually robust enough for streaming
-            let trans_rel_end = if is_clause {
-                trans_text
-                    .char_indices()
-                    .find(|(i, c)| *i >= MIN_CLAUSE_LENGTH && clause_delimiters.contains(c))
-                    .map(|(i, c)| i + c.len_utf8())
-            } else {
-                trans_text
+                let source_text = &self.full_transcript[temp_src_pos..];
+                let trans_text = &self.uncommitted_translation[temp_trans_pos..];
+
+                // Find next Sentence Delimiter in Source
+                let src_sentence_end = source_text
                     .char_indices()
                     .find(|(_, c)| sentence_delimiters.contains(c))
-                    .map(|(i, c)| i + c.len_utf8())
-            };
+                    .map(|(i, c)| i + c.len_utf8());
 
-            if let Some(t_end) = trans_rel_end {
-                // Found a match! Record absolute positions
-                let s_abs = temp_src_pos + src_rel_end;
-                let t_abs = temp_trans_pos + t_end;
+                // Find next Clause Delimiter in Source (only if enabled)
+                let src_clause_end = if enable_clause_commit {
+                    source_text
+                        .char_indices()
+                        .find(|(i, c)| *i >= MIN_CLAUSE_LENGTH && clause_delimiters.contains(c))
+                        .map(|(i, c)| i + c.len_utf8())
+                } else {
+                    None
+                };
 
-                matches.push((s_abs, t_abs, is_clause));
+                // Pick the earliest one
+                let (src_rel_end, is_clause) = match (src_sentence_end, src_clause_end) {
+                    (Some(s), Some(c)) => {
+                        if s < c {
+                            (s, false)
+                        } else {
+                            (c, true)
+                        }
+                    }
+                    (Some(s), None) => (s, false),
+                    (None, Some(c)) => (c, true),
+                    (None, None) => break, // No more delimiters in source
+                };
 
-                // Advance temp pointers to look for more
-                temp_src_pos = s_abs;
-                temp_trans_pos = t_abs;
-            } else {
-                // Found delimiter in Source but NOT in Translation yet.
-                // Stop matching, we need to wait for AI to generate more.
-                break;
+                // Now try to find a corresponding delimiter in Translation
+                // We search roughly in the same ratio, but simply finding the *next* matching type is usually robust enough for streaming
+                let trans_rel_end = if is_clause {
+                    trans_text
+                        .char_indices()
+                        .find(|(i, c)| *i >= MIN_CLAUSE_LENGTH && clause_delimiters.contains(c))
+                        .map(|(i, c)| i + c.len_utf8())
+                } else {
+                    trans_text
+                        .char_indices()
+                        .find(|(_, c)| sentence_delimiters.contains(c))
+                        .map(|(i, c)| i + c.len_utf8())
+                };
+
+                if let Some(t_end) = trans_rel_end {
+                    // Found a match! Record absolute positions
+                    let s_abs = temp_src_pos + src_rel_end;
+                    let t_abs = temp_trans_pos + t_end;
+
+                    matches.push((s_abs, t_abs, is_clause));
+
+                    // Advance temp pointers to look for more
+                    temp_src_pos = s_abs;
+                    temp_trans_pos = t_abs;
+                } else {
+                    // Found delimiter in Source but NOT in Translation yet.
+                    // Stop matching, we need to wait for AI to generate more.
+                    break;
+                }
             }
         }
 
