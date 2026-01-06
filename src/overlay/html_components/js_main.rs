@@ -388,6 +388,16 @@ pub fn get(font_size: u32) -> String {
             }}
         }};
         
+        // Cancel download button handler
+        const downloadCancelBtn = document.getElementById('download-cancel-btn');
+        if (downloadCancelBtn) {{
+            downloadCancelBtn.addEventListener('click', function(e) {{
+                e.stopPropagation();
+                // Send cancel message to native side
+                window.ipc.postMessage('cancelDownload');
+            }});
+        }}
+        
         // Update settings from native side (used when overlay is shown with saved config)
         window.updateSettings = function(settings) {{
             // Update audio source toggle

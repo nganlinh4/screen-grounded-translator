@@ -462,6 +462,9 @@ pub fn create_realtime_webview(
                     // TTS auto-speed toggle
                     let enabled = &body[13..] == "1";
                     REALTIME_TTS_AUTO_SPEED.store(enabled, Ordering::SeqCst);
+                } else if body == "cancelDownload" {
+                    // Cancel Parakeet download and revert to Gemini
+                    crate::api::realtime_audio::cancel_download_and_revert_to_gemini();
                 }
             })
             .build_as_child(&wrapper)

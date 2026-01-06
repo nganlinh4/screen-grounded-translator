@@ -25,7 +25,20 @@ pub fn run_parakeet_transcription(
 ) -> Result<()> {
     // 1. Check/Download Model
     if !super::model_loader::is_model_downloaded() {
-        super::model_loader::download_parakeet_model(stop_signal.clone())?;
+        match super::model_loader::download_parakeet_model(stop_signal.clone()) {
+            Ok(_) => {}
+            Err(e) => {
+                // Check if this was a user-initiated cancellation (not an actual error)
+                let err_msg = e.to_string();
+                if err_msg.contains("cancelled") || stop_signal.load(Ordering::Relaxed) {
+                    // Download was cancelled by user - this is not an error, just exit gracefully
+                    println!("Parakeet download was cancelled by user");
+                    return Ok(());
+                }
+                // Real error - propagate it
+                return Err(e);
+            }
+        }
         if stop_signal.load(Ordering::Relaxed) {
             return Ok(());
         }

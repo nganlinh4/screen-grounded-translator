@@ -177,6 +177,20 @@ pub unsafe extern "system" fn realtime_wnd_proc(
             LRESULT(0)
         }
         WM_APP_REALTIME_HIDE => {
+            // Check if download modal is active - if so, user wants to cancel and revert to Gemini
+            let is_downloading = {
+                if let Ok(state) = REALTIME_STATE.lock() {
+                    state.is_downloading
+                } else {
+                    false
+                }
+            };
+
+            if is_downloading {
+                // Cancel download and revert to Gemini
+                crate::api::realtime_audio::cancel_download_and_revert_to_gemini();
+            }
+
             // Stop transcription and TTS
             REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
             crate::api::tts::TTS_MANAGER.stop();

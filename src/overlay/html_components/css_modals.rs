@@ -335,6 +335,31 @@ pub fn get() -> String {
             color: #888;
             font-style: italic;
         }
+        .download-cancel-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            margin-top: 12px;
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid #ff4444;
+            border-radius: 6px;
+            color: #ff6666;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+        }
+        .download-cancel-btn:hover {
+            background: rgba(255, 68, 68, 0.15);
+            border-color: #ff6666;
+            color: #ff8888;
+        }
+        .download-cancel-btn .material-symbols-rounded {
+            font-size: 14px;
+        }
 "###
     .to_string()
 }

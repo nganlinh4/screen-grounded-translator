@@ -98,7 +98,12 @@ fn transcription_thread_entry(
         };
 
         if let Err(e) = result {
-            if !AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst) {
+            // Only show error if it's not a user-initiated action (model/source change, stop signal)
+            let is_user_initiated = AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst)
+                || TRANSCRIPTION_MODEL_CHANGE.load(Ordering::SeqCst)
+                || stop_signal.load(Ordering::Relaxed);
+
+            if !is_user_initiated {
                 let err_msg = format!(" [Error: {}]", e);
                 eprintln!("Realtime transcription error: {}", e);
 
@@ -142,6 +147,11 @@ fn transcription_thread_entry(
                     app.config.realtime_transcription_model = new_model.clone();
                 }
             }
+        }
+
+        // If a restart is triggered, reset stop signal to allow the new transcription to run
+        if restart_source || restart_model {
+            stop_signal.store(false, Ordering::SeqCst);
         }
 
         if !restart_source && !restart_model && stop_signal.load(Ordering::Relaxed) {

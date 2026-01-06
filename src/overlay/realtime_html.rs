@@ -201,6 +201,10 @@ pub fn get_realtime_html(
             <div class="download-progress-fill" id="download-fill" style="width: 0%;"></div>
         </div>
         <div class="download-modal-footnote">{supports_english}</div>
+        <button class="download-cancel-btn" id="download-cancel-btn" title="Cancel download and return to Gemini Live">
+            <span class="material-symbols-rounded">{close_svg}</span>
+            {cancel_text}
+        </button>
     </div>
     <!-- TTS Settings Modal -->
     <div id="tts-modal-overlay"></div>
@@ -259,6 +263,8 @@ pub fn get_realtime_html(
         volume_up_svg = crate::overlay::html_components::icons::get_icon_svg("volume_up"),
         apps_svg = crate::overlay::html_components::icons::get_icon_svg("apps"),
         download_svg = crate::overlay::html_components::icons::get_icon_svg("download"),
+        close_svg = crate::overlay::html_components::icons::get_icon_svg("close"),
+        cancel_text = text.cancel_label,
         supports_english = text.parakeet_supports_english_only
     )
 }
