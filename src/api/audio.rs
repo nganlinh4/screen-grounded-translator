@@ -863,18 +863,15 @@ pub fn record_and_stream_gemini_live(
         }
 
         if last_send.elapsed() >= send_interval {
-            let chunk: Vec<i16> = {
+            let all_samples: Vec<i16> = {
                 let mut buf = audio_buffer.lock().unwrap();
-                if buf.len() >= chunk_size {
-                    buf.drain(..chunk_size).collect()
-                } else if !buf.is_empty() {
-                    std::mem::take(&mut *buf)
-                } else {
-                    Vec::new()
-                }
+                std::mem::take(&mut *buf)
             };
-            if !chunk.is_empty() && !pause_signal.load(Ordering::Relaxed) {
-                let _ = send_audio_chunk(&mut socket, &chunk);
+
+            if !all_samples.is_empty() && !pause_signal.load(Ordering::Relaxed) {
+                for chunk in all_samples.chunks(chunk_size) {
+                    let _ = send_audio_chunk(&mut socket, chunk);
+                }
             }
             last_send = Instant::now();
         }
