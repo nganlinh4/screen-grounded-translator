@@ -21,6 +21,7 @@ const CHUNK_SIZE: usize = 2560;
 pub fn run_parakeet_transcription(
     _preset: Preset,
     stop_signal: Arc<AtomicBool>,
+    pause_signal: Arc<AtomicBool>,
     overlay_hwnd: HWND,
     state: SharedRealtimeState,
 ) -> Result<()> {
@@ -31,6 +32,7 @@ pub fn run_parakeet_transcription(
 
     run_parakeet_session(
         stop_signal,
+        pause_signal,
         Some(overlay_hwnd), // Send volume updates to overlay
         false,              // Don't show download badge (webview handles its own modal)
         None,               // Use global config
@@ -54,6 +56,7 @@ pub fn run_parakeet_transcription(
 /// Generic Parakeet session that can be used by both Realtime Overlay and Prompt DJ
 pub fn run_parakeet_session<F>(
     stop_signal: Arc<AtomicBool>,
+    pause_signal: Arc<AtomicBool>,
     overlay_hwnd_opt: Option<HWND>,
     use_badge: bool,
     audio_source_override: Option<String>,
@@ -113,6 +116,7 @@ where
                 selected_pid,
                 audio_buffer.clone(),
                 stop_signal.clone(),
+                pause_signal.clone(),
             )?;
             None
         }
@@ -124,6 +128,7 @@ where
         Some(super::capture::start_mic_capture(
             audio_buffer.clone(),
             stop_signal.clone(),
+            pause_signal.clone(),
         )?)
     } else if audio_source == "device" && tts_enabled && selected_pid == 0 {
         None
@@ -131,6 +136,7 @@ where
         Some(super::capture::start_device_loopback_capture(
             audio_buffer.clone(),
             stop_signal.clone(),
+            pause_signal.clone(),
         )?)
     };
 
@@ -142,6 +148,10 @@ where
 
     // 4. Processing Loop
     while !stop_signal.load(Ordering::Relaxed) {
+        if pause_signal.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            continue;
+        }
         if AUDIO_SOURCE_CHANGE.load(Ordering::SeqCst)
             || crate::overlay::realtime_webview::TRANSCRIPTION_MODEL_CHANGE.load(Ordering::SeqCst)
         {

@@ -96,9 +96,11 @@ fn transcription_thread_entry(
 
         let result = if trans_model == "parakeet" {
             // println!(">>> Starting Parakeet transcription");
+            let dummy_pause = Arc::new(AtomicBool::new(false));
             super::parakeet::run_parakeet_transcription(
                 current_preset.clone(),
                 stop_signal.clone(),
+                dummy_pause,
                 hwnd_overlay,
                 state.clone(),
             )
@@ -285,16 +287,24 @@ fn run_realtime_transcription(
 
     let _stream: Option<cpal::Stream>;
 
+    let dummy_pause = Arc::new(AtomicBool::new(false));
+
     if using_per_app_capture {
         #[cfg(target_os = "windows")]
         {
-            start_per_app_capture(selected_pid, audio_buffer.clone(), stop_signal.clone())?;
+            start_per_app_capture(
+                selected_pid,
+                audio_buffer.clone(),
+                stop_signal.clone(),
+                dummy_pause.clone(),
+            )?;
         }
         _stream = None;
     } else if using_device_loopback {
         _stream = Some(start_device_loopback_capture(
             audio_buffer.clone(),
             stop_signal.clone(),
+            dummy_pause.clone(),
         )?);
     } else if preset.audio_source == "device" && tts_enabled && selected_pid == 0 {
         _stream = None;
@@ -302,6 +312,7 @@ fn run_realtime_transcription(
         _stream = Some(start_mic_capture(
             audio_buffer.clone(),
             stop_signal.clone(),
+            dummy_pause.clone(),
         )?);
     }
 

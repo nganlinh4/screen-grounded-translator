@@ -19,6 +19,7 @@ pub fn start_per_app_capture(
     process_id: u32,
     audio_buffer: Arc<Mutex<Vec<i16>>>,
     stop_signal: Arc<AtomicBool>,
+    pause_signal: Arc<AtomicBool>,
 ) -> Result<()> {
     use std::collections::VecDeque;
     use wasapi::{AudioClient, Direction, SampleType, StreamMode, WaveFormat};
@@ -105,6 +106,10 @@ pub fn start_per_app_capture(
 
         // Capture loop
         while !stop_signal.load(Ordering::Relaxed) {
+            if pause_signal.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
             // Wait for buffer to be ready (up to 100ms timeout)
             if event_handle.wait_for_event(100).is_err() {
                 continue; // Timeout, check stop signal and try again
@@ -170,6 +175,7 @@ pub fn start_per_app_capture(
 pub fn start_device_loopback_capture(
     audio_buffer: Arc<Mutex<Vec<i16>>>,
     stop_signal: Arc<AtomicBool>,
+    pause_signal: Arc<AtomicBool>,
 ) -> Result<cpal::Stream> {
     #[cfg(target_os = "windows")]
     let host = cpal::host_from_id(cpal::HostId::Wasapi).unwrap_or(cpal::default_host());
@@ -192,13 +198,16 @@ pub fn start_device_loopback_capture(
     let resample_ratio = target_rate as f64 / sample_rate as f64;
 
     let stop_signal_audio = stop_signal.clone();
+    let pause_signal_audio = pause_signal.clone();
     let err_fn = |err| eprintln!("Audio stream error: {}", err);
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config.into(),
             move |data: &[f32], _: &_| {
-                if stop_signal_audio.load(Ordering::Relaxed) {
+                if stop_signal_audio.load(Ordering::Relaxed)
+                    || pause_signal_audio.load(Ordering::Relaxed)
+                {
                     return;
                 }
 
@@ -250,7 +259,9 @@ pub fn start_device_loopback_capture(
         cpal::SampleFormat::I16 => device.build_input_stream(
             &config.into(),
             move |data: &[i16], _: &_| {
-                if stop_signal_audio.load(Ordering::Relaxed) {
+                if stop_signal_audio.load(Ordering::Relaxed)
+                    || pause_signal_audio.load(Ordering::Relaxed)
+                {
                     return;
                 }
 
@@ -310,6 +321,7 @@ pub fn start_device_loopback_capture(
 pub fn start_mic_capture(
     audio_buffer: Arc<Mutex<Vec<i16>>>,
     stop_signal: Arc<AtomicBool>,
+    pause_signal: Arc<AtomicBool>,
 ) -> Result<cpal::Stream> {
     let host = cpal::default_host();
     let device = host
@@ -323,13 +335,16 @@ pub fn start_mic_capture(
     let target_rate = 16000u32;
     let resample_ratio = target_rate as f64 / sample_rate as f64;
     let stop_signal_audio = stop_signal.clone();
+    let pause_signal_audio = pause_signal.clone();
     let err_fn = |err| eprintln!("Audio stream error: {}", err);
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config.into(),
             move |data: &[f32], _: &_| {
-                if stop_signal_audio.load(Ordering::Relaxed) {
+                if stop_signal_audio.load(Ordering::Relaxed)
+                    || pause_signal_audio.load(Ordering::Relaxed)
+                {
                     return;
                 }
 

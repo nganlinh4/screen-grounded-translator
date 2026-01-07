@@ -844,7 +844,7 @@ pub fn record_and_stream_gemini_live(
                     Vec::new()
                 }
             };
-            if !chunk.is_empty() {
+            if !chunk.is_empty() && !pause_signal.load(Ordering::Relaxed) {
                 let _ = send_audio_chunk(&mut socket, &chunk);
             }
             last_send = Instant::now();
@@ -896,8 +896,8 @@ pub fn record_and_stream_gemini_live(
             }
         }
 
-        // Auto-stop
-        if auto_stop {
+        // Auto-stop: only active if not paused
+        if auto_stop && !pause_signal.load(Ordering::Relaxed) {
             let rms =
                 f32::from_bits(crate::overlay::recording::CURRENT_RMS.load(Ordering::Relaxed));
             if rms > 0.015 {
@@ -1051,7 +1051,7 @@ pub fn record_and_stream_gemini_live(
 pub fn record_and_stream_parakeet(
     preset: Preset,
     stop_signal: Arc<AtomicBool>,
-    _pause_signal: Arc<AtomicBool>,
+    pause_signal: Arc<AtomicBool>,
     abort_signal: Arc<AtomicBool>,
     overlay_hwnd: HWND,
     target_window: Option<HWND>,
@@ -1197,6 +1197,7 @@ pub fn record_and_stream_parakeet(
     // Run Parakeet session (blocks until stopped)
     let res = crate::api::realtime_audio::parakeet::run_parakeet_session(
         stop_signal.clone(),
+        pause_signal.clone(),
         Some(overlay_hwnd), // Send volume updates to overlay
         true,               // Enable download badge
         Some(preset_clone.audio_source.clone()),
@@ -1480,6 +1481,7 @@ pub fn record_audio_and_transcribe(
     abort_signal: Arc<AtomicBool>,
     overlay_hwnd: HWND,
 ) {
+    let pause_signal_audio = pause_signal.clone();
     #[cfg(target_os = "windows")]
     let host = if preset.audio_source == "device" {
         cpal::host_from_id(cpal::HostId::Wasapi).unwrap_or(cpal::default_host())
@@ -1569,11 +1571,12 @@ pub fn record_audio_and_transcribe(
     // Threshold for "meaningful audio" - above this RMS means mic is truly receiving sound
     const WARMUP_RMS_THRESHOLD: f32 = 0.001;
 
+    let pause_signal_builder = pause_signal_audio.clone();
     let stream_res = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config.into(),
             move |data: &[f32], _: &_| {
-                if !pause_signal.load(Ordering::Relaxed) {
+                if !pause_signal_builder.load(Ordering::Relaxed) {
                     let _ = tx.send(data.to_vec());
                     let mut rms = 0.0;
                     for &x in data {
@@ -1595,7 +1598,7 @@ pub fn record_audio_and_transcribe(
         cpal::SampleFormat::I16 => device.build_input_stream(
             &config.into(),
             move |data: &[i16], _: &_| {
-                if !pause_signal.load(Ordering::Relaxed) {
+                if !pause_signal_builder.load(Ordering::Relaxed) {
                     let f32_data: Vec<f32> =
                         data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
                     let _ = tx.send(f32_data);
@@ -1663,7 +1666,10 @@ pub fn record_audio_and_transcribe(
         }
 
         // --- AUTO-STOP: Check volume and silence duration ---
-        if auto_stop_enabled && !stop_signal.load(Ordering::Relaxed) {
+        if auto_stop_enabled
+            && !stop_signal.load(Ordering::Relaxed)
+            && !pause_signal_audio.load(Ordering::Relaxed)
+        {
             // Get current RMS from the shared atomic
             let rms_bits = crate::overlay::recording::CURRENT_RMS.load(Ordering::Relaxed);
             let current_rms = f32::from_bits(rms_bits);
