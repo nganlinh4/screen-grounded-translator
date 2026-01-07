@@ -8,6 +8,7 @@ pub fn download_file(
     url: &str,
     path: &Path,
     stop_signal: &std::sync::atomic::AtomicBool,
+    use_badge: bool,
 ) -> Result<()> {
     if path.exists() {
         return Ok(());
@@ -56,6 +57,12 @@ pub fn download_file(
 
         if total_size > 0 && last_update.elapsed() >= update_interval {
             let progress = (downloaded as f32 / total_size as f32) * 100.0;
+
+            if use_badge {
+                let msg = format!("Downloading... {:.0}%", progress);
+                crate::overlay::auto_copy_badge::show_notification(&msg);
+            }
+
             use crate::overlay::realtime_webview::state::REALTIME_STATE;
             if let Ok(mut state) = REALTIME_STATE.lock() {
                 state.download_progress = progress;
@@ -100,6 +107,7 @@ pub fn is_model_downloaded() -> bool {
 
 pub fn download_parakeet_model(
     stop_signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    use_badge: bool,
 ) -> Result<()> {
     let dir = get_parakeet_model_dir();
 
@@ -163,7 +171,7 @@ pub fn download_parakeet_model(
                 }
             }
 
-            download_file(url, &dir.join(filename), &stop_signal)?;
+            download_file(url, &dir.join(filename), &stop_signal, use_badge)?;
         }
 
         Ok(())

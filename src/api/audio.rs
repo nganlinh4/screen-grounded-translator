@@ -910,6 +910,128 @@ pub fn record_and_stream_gemini_live(
     );
 }
 
+pub fn record_and_stream_parakeet(
+    preset: Preset,
+    stop_signal: Arc<AtomicBool>,
+    _pause_signal: Arc<AtomicBool>,
+    abort_signal: Arc<AtomicBool>,
+    overlay_hwnd: HWND,
+    target_window: Option<HWND>,
+) {
+    use std::sync::Mutex;
+    let accumulated_text = Arc::new(Mutex::new(String::new()));
+    let acc_clone = accumulated_text.clone();
+    let preset_clone = preset.clone();
+    let target_window_clone = target_window;
+
+    let callback = move |text: String| {
+        if !text.is_empty() {
+            if let Ok(mut txt) = acc_clone.lock() {
+                txt.push_str(&text);
+            }
+            // Real-time typing
+            if preset_clone.auto_paste {
+                if let Some(target) = target_window_clone {
+                    crate::overlay::utils::type_text_to_window(target, &text);
+                }
+            }
+        }
+    };
+
+    println!("[ParakeetStream] Starting Parakeet session...");
+
+    // Run Parakeet session (blocks until stopped)
+    let res = crate::api::realtime_audio::parakeet::run_parakeet_session(
+        stop_signal.clone(),
+        Some(overlay_hwnd), // Send volume updates to overlay
+        true,               // Enable download badge
+        Some(preset_clone.audio_source.clone()),
+        preset_clone.auto_stop_recording,
+        callback,
+    );
+
+    if let Err(e) = res {
+        eprintln!("[ParakeetStream] Error: {:?}", e);
+    }
+
+    // Check for abort
+    if abort_signal.load(Ordering::SeqCst) {
+        unsafe {
+            if IsWindow(Some(overlay_hwnd)).as_bool() {
+                let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+        }
+        return;
+    }
+
+    let final_text = accumulated_text.lock().unwrap().clone();
+    println!("[ParakeetStream] Final Result: '{}'", final_text);
+
+    if final_text.is_empty() {
+        unsafe {
+            if IsWindow(Some(overlay_hwnd)).as_bool() {
+                let _ = PostMessageW(Some(overlay_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+        }
+        return;
+    }
+
+    // Save history
+    {
+        let app = crate::APP.lock().unwrap();
+        app.history.save_audio(Vec::new(), final_text.clone());
+    }
+
+    let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    let (rect, retrans) = if preset.blocks.len() > 1 {
+        let w = 600;
+        let h = 300;
+        let gap = 20;
+        let total = w * 2 + gap;
+        let x = (screen_w - total) / 2;
+        let y = (screen_h - h) / 2;
+        (
+            RECT {
+                left: x,
+                top: y,
+                right: x + w,
+                bottom: y + h,
+            },
+            Some(RECT {
+                left: x + w + gap,
+                top: y,
+                right: x + w + gap + w,
+                bottom: y + h,
+            }),
+        )
+    } else {
+        let w = 700;
+        let h = 300;
+        let x = (screen_w - w) / 2;
+        let y = (screen_h - h) / 2;
+        (
+            RECT {
+                left: x,
+                top: y,
+                right: x + w,
+                bottom: y + h,
+            },
+            None,
+        )
+    };
+
+    crate::overlay::process::show_audio_result(
+        preset,
+        final_text,
+        Vec::new(),
+        rect,
+        retrans,
+        overlay_hwnd,
+        true, // is_streaming_result: disable auto-paste
+    );
+}
+
 fn upload_audio_to_whisper(
     api_key: &str,
     model: &str,

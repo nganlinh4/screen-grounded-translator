@@ -550,6 +550,19 @@ lazy_static::lazy_static! {
             "20 요청/일",
             "20 requests/day"
         ),
+        ModelConfig::new(
+            "parakeet-local",
+            "parakeet",
+            "Offline (Nhanh)",
+            "오프라인 (빠름)",
+            "Offline (Fast)",
+            "parakeet-120m-v1",
+            ModelType::Audio,
+            true,
+            "Không giới hạn",
+            "무제한",
+            "Unlimited"
+        ),
 
     ];
 }

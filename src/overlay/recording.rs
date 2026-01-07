@@ -381,15 +381,25 @@ fn start_audio_thread(hwnd: HWND, preset_idx: usize) {
     };
     let hwnd_val = hwnd.0 as usize;
 
-    // Check if we should use Gemini Live streaming
-    let use_gemini_live_stream = preset.blocks.iter().any(|block| {
-        if block.block_type == "audio" {
-            if let Some(model_config) = crate::model_config::get_model_by_id(&block.model) {
-                return model_config.provider == "gemini-live";
+    // Check audio streaming modes
+    let (use_gemini_live_stream, use_parakeet_stream) = {
+        let mut gemini = false;
+        let mut parakeet = false;
+
+        for block in &preset.blocks {
+            if block.block_type == "audio" {
+                if let Some(config) = crate::model_config::get_model_by_id(&block.model) {
+                    if config.provider == "gemini-live" {
+                        gemini = true;
+                    }
+                    if config.provider == "parakeet" {
+                        parakeet = true;
+                    }
+                }
             }
         }
-        false
-    });
+        (gemini, parakeet)
+    };
 
     std::thread::spawn(move || {
         let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
@@ -398,6 +408,16 @@ fn start_audio_thread(hwnd: HWND, preset_idx: usize) {
         if use_gemini_live_stream {
             // Use real-time streaming for Gemini Live
             crate::api::record_and_stream_gemini_live(
+                preset,
+                AUDIO_STOP_SIGNAL.clone(),
+                AUDIO_PAUSE_SIGNAL.clone(),
+                AUDIO_ABORT_SIGNAL.clone(),
+                hwnd,
+                target,
+            );
+        } else if use_parakeet_stream {
+            // Use real-time streaming for Parakeet (Local)
+            crate::api::audio::record_and_stream_parakeet(
                 preset,
                 AUDIO_STOP_SIGNAL.clone(),
                 AUDIO_PAUSE_SIGNAL.clone(),
