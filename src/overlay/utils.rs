@@ -392,6 +392,60 @@ pub fn force_focus_and_paste(hwnd_target: HWND) {
     }
 }
 
+pub fn type_text_to_window(hwnd_target: HWND, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    unsafe {
+        // Ensure target is foreground
+        let fg_window = GetForegroundWindow();
+        if fg_window != hwnd_target {
+            let cur_thread = GetCurrentThreadId();
+            let target_thread = GetWindowThreadProcessId(hwnd_target, None);
+            if cur_thread != target_thread {
+                let _ = AttachThreadInput(cur_thread, target_thread, true);
+                let _ = SetForegroundWindow(hwnd_target);
+                let _ = AttachThreadInput(cur_thread, target_thread, false);
+            } else {
+                let _ = SetForegroundWindow(hwnd_target);
+            }
+        }
+
+        // Send Chars
+        for c in text.chars() {
+            let mut buffer = [0u16; 2];
+            let encoded = c.encode_utf16(&mut buffer);
+
+            for utf16_val in encoded.iter() {
+                let val = *utf16_val;
+                let input_down = INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VIRTUAL_KEY(0),
+                            wScan: val,
+                            dwFlags: KEYEVENTF_UNICODE,
+                            ..Default::default()
+                        },
+                    },
+                };
+                let input_up = INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VIRTUAL_KEY(0),
+                            wScan: val,
+                            dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                            ..Default::default()
+                        },
+                    },
+                };
+                SendInput(&[input_down, input_up], std::mem::size_of::<INPUT>() as i32);
+            }
+        }
+    }
+}
+
 pub fn get_error_message(error: &str, lang: &str, model_name: Option<&str>) -> String {
     // Parse NO_API_KEY:provider format
     if error.starts_with("NO_API_KEY") {

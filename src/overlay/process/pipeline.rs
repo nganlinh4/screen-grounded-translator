@@ -266,6 +266,7 @@ pub fn show_audio_result(
     rect: RECT,
     _unused_rect: Option<RECT>,
     recording_hwnd: HWND, // Recording overlay window - keep alive until first visible block
+    is_streaming_result: bool, // Explicit flag: if true, we disable auto-paste (real-time typing assumed)
 ) {
     let config = {
         let app = crate::APP.lock().unwrap();
@@ -302,6 +303,8 @@ pub fn show_audio_result(
         processing_hwnd.map(SendHwnd), // Pass recording overlay - will close when first visible block appears
         Arc::new(AtomicBool::new(false)), // New chains start with cancellation = false
         preset.id.clone(),
+        // Check if we should disable auto-paste (e.g. for Gemini Live real-time typing)
+        is_streaming_result,
     );
 }
 
@@ -399,6 +402,7 @@ pub fn start_processing_pipeline(
                         Some(processing_hwnd_send),
                         Arc::new(AtomicBool::new(false)),
                         preset_id,
+                        false, // disable_auto_paste
                     );
                 });
 
@@ -462,6 +466,7 @@ pub fn start_processing_pipeline(
             Some(SendHwnd(processing_hwnd)), // Pass the handle to be closed later
             Arc::new(AtomicBool::new(false)), // New chains start with cancellation = false
             preset_id,
+            false, // disable_auto_paste
         );
     });
 
@@ -534,6 +539,7 @@ pub fn start_processing_pipeline_parallel(
                 Some(SendHwnd(processing_hwnd)), // Pass the handle to be closed later
                 Arc::new(AtomicBool::new(false)),
                 preset_id,
+                false, // disable_auto_paste
             );
         } else {
             // Load failed or cancelled -> Close window immediately

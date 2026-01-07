@@ -59,6 +59,7 @@ pub fn execute_chain_pipeline(
             Some(processing_hwnd_send), // Pass the handle to be closed later
             Arc::new(AtomicBool::new(false)), // New chains start with cancellation = false
             preset_id,
+            false, // disable_auto_paste
         );
     });
 
@@ -109,6 +110,7 @@ pub fn execute_chain_pipeline_with_token(
         None, // No processing window for text presets
         cancel_token,
         preset.id.clone(),
+        false, // disable_auto_paste
     );
 }
 
@@ -126,6 +128,7 @@ pub fn run_chain_step(
     mut processing_indicator_hwnd: Option<SendHwnd>, // Handle to the "Processing..." overlay
     cancel_token: Arc<AtomicBool>, // Cancellation flag - if true, stop processing
     preset_id: String,
+    disable_auto_paste: bool,
 ) {
     // Check if cancelled before starting
     if cancel_token.load(Ordering::Relaxed) {
@@ -1159,7 +1162,7 @@ progressBar.onclick = (e) => {{
         // This prevents double-paste when input_adapter has auto_copy enabled alongside a processing block
         let should_trigger_paste = (has_content && !is_input_adapter) || image_copied;
 
-        if should_trigger_paste {
+        if should_trigger_paste && !disable_auto_paste {
             // Re-clone for the paste thread
             let txt_c = result_text.clone();
             let preset_id_clone = preset_id.clone();
@@ -1411,6 +1414,7 @@ progressBar.onclick = (e) => {{
                     None, // No processing indicator for parallel branches
                     cancel_clone,
                     preset_id_clone,
+                    disable_auto_paste, // Propagate the flag
                 );
             });
         }
@@ -1429,6 +1433,7 @@ progressBar.onclick = (e) => {{
             processing_indicator_hwnd, // Pass it along (might be None or Some)
             cancel_token,              // Pass the same token through the chain
             preset_id,
+            disable_auto_paste, // Propagate the flag
         );
     } else {
         // Chain stopped unexpectedly (empty result or error)

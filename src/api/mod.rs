@@ -8,6 +8,7 @@ pub mod tts;
 pub mod types;
 pub mod vision;
 
+pub use audio::record_and_stream_gemini_live;
 pub use audio::record_audio_and_transcribe;
 pub use text::{refine_text_streaming, translate_text_streaming};
 pub use vision::translate_image_streaming;

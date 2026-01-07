@@ -13,7 +13,7 @@ mod state;
 mod transcription;
 mod translation;
 mod utils;
-mod websocket;
+pub mod websocket;
 
 use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 

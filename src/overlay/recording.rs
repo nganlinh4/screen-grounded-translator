@@ -23,6 +23,8 @@ lazy_static::lazy_static! {
     pub static ref AUDIO_PAUSE_SIGNAL: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     pub static ref AUDIO_ABORT_SIGNAL: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     pub static ref AUDIO_WARMUP_COMPLETE: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    /// Signal for Gemini Live initialization phase (WebSocket setup)
+    pub static ref AUDIO_INITIALIZING: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
     static ref VISUALIZATION_BUFFER: Mutex<[f32; 40]> = Mutex::new([0.0; 40]);
 }
@@ -370,18 +372,49 @@ fn internal_create_recording_window() {
 }
 
 fn start_audio_thread(hwnd: HWND, preset_idx: usize) {
-    let preset = APP.lock().unwrap().config.presets[preset_idx].clone();
+    let (preset, last_active_window) = {
+        let app = APP.lock().unwrap();
+        (
+            app.config.presets[preset_idx].clone(),
+            app.last_active_window, // Keep as SendHwnd for safety across threads
+        )
+    };
     let hwnd_val = hwnd.0 as usize;
+
+    // Check if we should use Gemini Live streaming
+    let use_gemini_live_stream = preset.blocks.iter().any(|block| {
+        if block.block_type == "audio" {
+            if let Some(model_config) = crate::model_config::get_model_by_id(&block.model) {
+                return model_config.provider == "gemini-live";
+            }
+        }
+        false
+    });
 
     std::thread::spawn(move || {
         let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-        crate::api::record_audio_and_transcribe(
-            preset,
-            AUDIO_STOP_SIGNAL.clone(),
-            AUDIO_PAUSE_SIGNAL.clone(),
-            AUDIO_ABORT_SIGNAL.clone(),
-            hwnd,
-        );
+        let target = last_active_window.map(|h| h.0);
+
+        if use_gemini_live_stream {
+            // Use real-time streaming for Gemini Live
+            crate::api::record_and_stream_gemini_live(
+                preset,
+                AUDIO_STOP_SIGNAL.clone(),
+                AUDIO_PAUSE_SIGNAL.clone(),
+                AUDIO_ABORT_SIGNAL.clone(),
+                hwnd,
+                target,
+            );
+        } else {
+            // Use standard record-then-transcribe flow
+            crate::api::record_audio_and_transcribe(
+                preset,
+                AUDIO_STOP_SIGNAL.clone(),
+                AUDIO_PAUSE_SIGNAL.clone(),
+                AUDIO_ABORT_SIGNAL.clone(),
+                hwnd,
+            );
+        }
     });
 }
 
@@ -439,6 +472,7 @@ unsafe extern "system" fn recording_wnd_proc(
                 // VIZ UPDATE TIMER
                 let is_processing = AUDIO_STOP_SIGNAL.load(Ordering::SeqCst);
                 let is_paused = AUDIO_PAUSE_SIGNAL.load(Ordering::SeqCst);
+                let is_initializing = AUDIO_INITIALIZING.load(Ordering::SeqCst);
                 let warming_up = !AUDIO_WARMUP_COMPLETE.load(Ordering::SeqCst);
 
                 let rms_bits = CURRENT_RMS.load(Ordering::Relaxed);
@@ -448,6 +482,8 @@ unsafe extern "system" fn recording_wnd_proc(
                     "processing"
                 } else if is_paused {
                     "paused"
+                } else if is_initializing {
+                    "initializing"
                 } else if warming_up {
                     "warmup"
                 } else {
@@ -665,7 +701,7 @@ fn generate_html() -> String {
     let icon_pause = crate::overlay::html_components::icons::get_icon_svg("pause");
     let icon_play = crate::overlay::html_components::icons::get_icon_svg("play_arrow");
     let icon_close = crate::overlay::html_components::icons::get_icon_svg("close");
-    let (text_rec, text_proc, text_wait, subtext, text_paused, is_dark) = {
+    let (text_rec, text_proc, text_wait, text_init, subtext, text_paused, is_dark) = {
         let app = APP.lock().unwrap();
         let lang = app.config.ui_language.as_str();
         let locale = crate::gui::locale::LocaleText::get(lang);
@@ -691,6 +727,11 @@ fn generate_html() -> String {
                 "vi" => "Chuẩn bị...",
                 "ko" => "준비 중...",
                 _ => "Starting...",
+            },
+            match lang {
+                "vi" => "Đang kết nối...",
+                "ko" => "연결 중...",
+                _ => "Connecting...",
             },
             locale.recording_subtext,
             locale.recording_paused,
@@ -898,6 +939,7 @@ fn generate_html() -> String {
         const TEXT_REC = "{tx_rec}";
         const TEXT_PROC = "{tx_proc}";
         const TEXT_WAIT = "{tx_wait}";
+        const TEXT_INIT = "{tx_init}";
         const TEXT_PAUSED = "{tx_paused}";
 
         const statusEl = document.getElementById('status');
@@ -927,18 +969,20 @@ fn generate_html() -> String {
         
         // Color Schemes for Dark Mode
         const COLORS_DARK = {{
-            recording:  ['#00a8e0', '#00c8ff', '#40e0ff'], // Light Cyan
-            processing: ['#00FF00', '#32CD32', '#98FB98'], // Green (unused - rainbow)
-            warmup:     ['#FFD700', '#FFA500', '#FFDEAD'], // Gold/Orange
-            paused:     ['#888888', '#AAAAAA', '#CCCCCC']  // Grey
+            recording:    ['#00a8e0', '#00c8ff', '#40e0ff'], // Light Cyan
+            processing:   ['#00FF00', '#32CD32', '#98FB98'], // Green (unused - rainbow)
+            warmup:       ['#FFD700', '#FFA500', '#FFDEAD'], // Gold/Orange
+            initializing: ['#9F7AEA', '#805AD5', '#B794F4'], // Purple/Violet
+            paused:       ['#888888', '#AAAAAA', '#CCCCCC']  // Grey
         }};
         
         // Color Schemes for Light Mode (darker, more saturated)
         const COLORS_LIGHT = {{
-            recording:  ['#0066cc', '#0088dd', '#00aaee'], // Deep Blue
-            processing: ['#00AA00', '#008800', '#006600'], // Dark Green (unused - rainbow)
-            warmup:     ['#cc6600', '#dd8800', '#ee9900'], // Dark Orange
-            paused:     ['#666666', '#888888', '#aaaaaa']  // Dark Grey
+            recording:    ['#0066cc', '#0088dd', '#00aaee'], // Deep Blue
+            processing:   ['#00AA00', '#008800', '#006600'], // Dark Green (unused - rainbow)
+            warmup:       ['#cc6600', '#dd8800', '#ee9900'], // Dark Orange
+            initializing: ['#6B46C1', '#553C9A', '#805AD5'], // Deep Purple
+            paused:       ['#666666', '#888888', '#aaaaaa']  // Dark Grey
         }};
         
         let COLORS = isDark ? COLORS_DARK : COLORS_LIGHT;
@@ -964,6 +1008,14 @@ fn generate_html() -> String {
                  pauseBtn.style.pointerEvents = 'auto';
                  iconPause.classList.add('hidden');
                  iconPlay.classList.remove('hidden');
+            }} else if (state === 'initializing') {{
+                 statusEl.innerText = TEXT_INIT;
+                 currentColors = COLORS.initializing;
+                 // Pulsing bars during initialization
+                 for (let i = 0; i < barHeights.length; i++) barHeights[i] = 6;
+                 // Hide pause button during initialization
+                 pauseBtn.style.visibility = 'hidden';
+                 pauseBtn.style.pointerEvents = 'none';
             }} else if (state === 'warmup') {{
                  statusEl.innerText = TEXT_WAIT;
                  currentColors = COLORS.warmup;
@@ -1012,6 +1064,9 @@ fn generate_html() -> String {
                 if (currentState === 'processing') {{
                     // DNA-like sine wave pattern for processing
                     displayRMS = 0.12 + 0.2 * Math.abs(Math.sin(timestamp / 120));
+                }} else if (currentState === 'initializing') {{
+                    // Gentle pulsing wave for initialization
+                    displayRMS = 0.08 + 0.12 * Math.abs(Math.sin(timestamp / 300));
                 }} else if (currentState === 'paused') {{
                     displayRMS = 0.02; // Tiny dots
                 }} else if (currentState === 'warmup') {{
@@ -1138,6 +1193,7 @@ fn generate_html() -> String {
             if (currentState === 'recording') currentColors = COLORS.recording;
             else if (currentState === 'paused') currentColors = COLORS.paused;
             else if (currentState === 'warmup') currentColors = COLORS.warmup;
+            else if (currentState === 'initializing') currentColors = COLORS.initializing;
             else if (currentState === 'processing') currentColors = COLORS.processing;
         }};
     </script>
@@ -1150,6 +1206,7 @@ fn generate_html() -> String {
         tx_rec = text_rec,
         tx_proc = text_proc,
         tx_wait = text_wait,
+        tx_init = text_init,
         tx_sub = subtext,
         tx_paused = text_paused,
         icon_pause = icon_pause,
