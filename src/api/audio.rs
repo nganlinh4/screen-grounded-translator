@@ -1094,7 +1094,6 @@ pub fn record_and_stream_parakeet(
     let accumulated_text: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let full_audio_buffer: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
     let acc_clone = accumulated_text.clone();
-    let full_buffer_clone = full_audio_buffer.clone();
     let preset_clone = preset.clone();
     let target_window_clone = target_window;
 
@@ -1236,7 +1235,8 @@ pub fn record_and_stream_parakeet(
         pause_signal.clone(),
         Some(full_audio_buffer.clone()),
         Some(overlay_hwnd), // Send volume updates to overlay
-        true,               // Enable download badge
+        preset_clone.hide_recording_ui,
+        true, // Enable download badge
         Some(preset_clone.audio_source.clone()),
         preset_clone.auto_stop_recording,
         callback,

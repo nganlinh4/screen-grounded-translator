@@ -44,6 +44,7 @@ static RECORDING_STATE: AtomicI32 = AtomicI32::new(0);
 static RECORDING_HWND_VAL: AtomicIsize = AtomicIsize::new(0);
 static REGISTER_RECORDING_CLASS: Once = Once::new();
 static LAST_THEME_IS_DARK: AtomicBool = AtomicBool::new(true);
+static CURRENT_RECORDING_HIDDEN: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static RECORDING_WEBVIEW: RefCell<Option<WebView>> = RefCell::new(None);
@@ -322,7 +323,9 @@ fn internal_create_recording_window() {
                             // Kill fallback timer 99
                             let _ = KillTimer(Some(hwnd), 99);
                             // Add a tiny delay to ensure paint catch-up
-                            let _ = SetTimer(Some(hwnd), 2, 20, None);
+                            if !CURRENT_RECORDING_HIDDEN.load(Ordering::SeqCst) {
+                                let _ = SetTimer(Some(hwnd), 2, 20, None);
+                            }
                         }
                         "drag_window" => {
                             let _ = ReleaseCapture();
@@ -462,8 +465,22 @@ unsafe extern "system" fn recording_wnd_proc(
             // 3. Mark state as Active (Visible)
             RECORDING_STATE.store(2, Ordering::SeqCst);
 
+            // 4. Check if we should hide the UI
+            let is_hidden = {
+                let app = APP.lock().unwrap();
+                if preset_idx < app.config.presets.len() {
+                    app.config.presets[preset_idx].hide_recording_ui
+                } else {
+                    false
+                }
+            };
+            CURRENT_RECORDING_HIDDEN.store(is_hidden, Ordering::SeqCst);
+
             // 5. Fallback Timer (99) - If IPC ready signal doesn't come in 500ms, show anyway
-            SetTimer(Some(hwnd), 99, 500, None);
+            // If hidden, we don't set the show timers.
+            if !is_hidden {
+                SetTimer(Some(hwnd), 99, 500, None);
+            }
 
             // 5. REMOVED Timer 2 here. We now confirm via IPC "ready" signal to trigger the show.
             // This ensures we never show a blank window on first load.
@@ -583,6 +600,9 @@ unsafe extern "system" fn recording_wnd_proc(
         }
 
         WM_APP_REAL_SHOW => {
+            if CURRENT_RECORDING_HIDDEN.load(Ordering::SeqCst) {
+                return LRESULT(0);
+            }
             // Move to Center Screen
             let (ui_width, ui_height) = get_ui_dimensions();
             let screen_x = GetSystemMetrics(SM_CXSCREEN);

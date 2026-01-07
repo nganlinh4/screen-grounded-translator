@@ -1,6 +1,4 @@
-//! Parakeet local transcription using ONNX models
-
-use crate::api::realtime_audio::SharedRealtimeState;
+use super::state::{RealtimeState, TranscriptionMethod};
 use crate::config::Preset;
 use anyhow::Result;
 use parakeet_rs::{ExecutionConfig, ExecutionProvider, ParakeetEOU};
@@ -21,34 +19,37 @@ const CHUNK_SIZE: usize = 2560;
 pub fn run_parakeet_transcription(
     _preset: Preset,
     stop_signal: Arc<AtomicBool>,
-    pause_signal: Arc<AtomicBool>,
+    dummy_pause_signal: Arc<AtomicBool>,
     full_audio_buffer: Option<Arc<Mutex<Vec<i16>>>>,
-    overlay_hwnd: HWND,
-    state: SharedRealtimeState,
+    hide_recording_ui: bool,
+    hwnd_overlay: Option<HWND>,
+    state: Arc<Mutex<RealtimeState>>,
 ) -> Result<()> {
     // Set state early (best effort)
     if let Ok(mut s) = state.lock() {
-        s.set_transcription_method(super::state::TranscriptionMethod::Parakeet);
+        s.set_transcription_method(TranscriptionMethod::Parakeet);
     }
 
     run_parakeet_session(
-        stop_signal,
-        pause_signal,
+        stop_signal.clone(),
+        dummy_pause_signal,
         full_audio_buffer,
-        Some(overlay_hwnd), // Send volume updates to overlay
-        false,              // Don't show download badge (webview handles its own modal)
-        None,               // Use global config
-        false,              // auto_stop_enabled
-        |text| {
+        hwnd_overlay, // Send volume updates to overlay
+        hide_recording_ui,
+        true, // Don't show download badge (webview handles its own modal)
+        None, // Use global config
+        true, // auto_stop_enabled
+        move |text| {
             // Callback for each text segment
             if let Ok(mut s) = state.lock() {
                 s.append_transcript(&text);
             }
             // Notify overlay to update text
-            unsafe {
-                if !overlay_hwnd.is_invalid() {
-                    let _ =
-                        PostMessageW(Some(overlay_hwnd), WM_REALTIME_UPDATE, WPARAM(0), LPARAM(0));
+            if let Some(h) = hwnd_overlay {
+                unsafe {
+                    if !h.is_invalid() {
+                        let _ = PostMessageW(Some(h), WM_REALTIME_UPDATE, WPARAM(0), LPARAM(0));
+                    }
                 }
             }
         },
@@ -61,10 +62,11 @@ pub fn run_parakeet_session<F>(
     pause_signal: Arc<AtomicBool>,
     full_audio_buffer: Option<Arc<Mutex<Vec<i16>>>>,
     overlay_hwnd_opt: Option<HWND>,
+    hide_recording_ui: bool,
     use_badge: bool,
     audio_source_override: Option<String>,
-    auto_stop_enabled: bool,
-    mut on_text: F,
+    auto_stop_recording: bool,
+    mut callback: F,
 ) -> Result<()>
 where
     F: FnMut(String),
@@ -151,6 +153,15 @@ where
 
     // 4. Processing Loop
     while !stop_signal.load(Ordering::Relaxed) {
+        if !hide_recording_ui {
+            if let Some(hwnd) = overlay_hwnd_opt {
+                if unsafe {
+                    !windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool()
+                } {
+                    break;
+                }
+            }
+        }
         if pause_signal.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(50));
             continue;
@@ -181,7 +192,7 @@ where
                 crate::overlay::recording::AUDIO_WARMUP_COMPLETE.store(true, Ordering::SeqCst);
             }
 
-            if auto_stop_enabled {
+            if auto_stop_recording {
                 if rms > 0.015 {
                     last_active = std::time::Instant::now();
                     if !has_spoken {
@@ -225,7 +236,7 @@ where
                     if !text.is_empty() {
                         let processed = process_sentencepiece_text(&text);
                         if !processed.is_empty() {
-                            on_text(processed);
+                            callback(processed);
                         }
                     }
                 }
@@ -245,7 +256,7 @@ where
             if !text.is_empty() {
                 let processed = process_sentencepiece_text(&text);
                 if !processed.is_empty() {
-                    on_text(processed);
+                    callback(processed);
                 }
             }
         }

@@ -101,8 +101,9 @@ fn transcription_thread_entry(
                 current_preset.clone(),
                 stop_signal.clone(),
                 dummy_pause,
-                None, // No full audio buffer for standard realtime
-                hwnd_overlay,
+                None,  // No full audio buffer for standard realtime
+                false, // hide_recording_ui
+                Some(hwnd_overlay),
                 state.clone(),
             )
         } else {
