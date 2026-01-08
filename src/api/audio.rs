@@ -483,8 +483,6 @@ fn try_reconnect(
     let mut reconnect_buffer: Vec<i16> = Vec::new();
     let _ = socket.close(None);
 
-    println!("[GeminiLiveStream] Connection lost. Attempting to reconnect...");
-
     // Retry indefinitely until success or user stop
     loop {
         // Check if user stopped the recording while we were trying to reconnect
@@ -524,7 +522,6 @@ fn try_reconnect(
                 *last_transcription_time = Instant::now();
                 *consecutive_empty_reads = 0;
 
-                println!("[GeminiLiveStream] Reconnected successfully!");
                 return true;
             }
             Err(e) => {
