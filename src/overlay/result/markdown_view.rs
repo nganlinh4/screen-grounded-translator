@@ -1401,6 +1401,66 @@ pub fn reset_stream_counter(parent_hwnd: HWND) {
     });
 }
 
+/// Trigger Grid.js initialization on any tables in the WebView
+/// Call this after streaming ends to convert tables to interactive Grid.js tables
+pub fn init_gridjs(parent_hwnd: HWND) {
+    let hwnd_key = parent_hwnd.0 as isize;
+
+    WEBVIEWS.with(|webviews| {
+        if let Some(webview) = webviews.borrow().get(&hwnd_key) {
+            // Trigger the table initialization via the MutationObserver's mechanism
+            // The observer watches for DOM changes and schedules initGridJs via window.gridJsTimeout
+            // We can simulate this by triggering a DOM change or directly calling the init logic
+            let script = r#"
+                (function() {
+                    if (typeof gridjs === 'undefined') return;
+                    
+                    var tables = document.querySelectorAll('table:not(.gridjs-table):not([data-processed-table="true"])');
+                    for (var i = 0; i < tables.length; i++) {
+                        var table = tables[i];
+                        if (table.closest('.gridjs-container') || table.closest('.gridjs-injected-wrapper')) continue;
+                        
+                        table.setAttribute('data-processed-table', 'true');
+                        
+                        var wrapper = document.createElement('div');
+                        wrapper.className = 'gridjs-injected-wrapper';
+                        table.parentNode.insertBefore(wrapper, table);
+                        
+                        try {
+                            var grid = new gridjs.Grid({
+                                from: table,
+                                sort: true,
+                                fixedHeader: true,
+                                search: false,
+                                resizable: false,
+                                autoWidth: false,
+                                style: {
+                                    table: { 'width': '100%' },
+                                    td: { 'border': '1px solid #333' },
+                                    th: { 'border': '1px solid #333' }
+                                },
+                                className: {
+                                    table: 'gridjs-table-premium',
+                                    th: 'gridjs-th-premium',
+                                    td: 'gridjs-td-premium'
+                                }
+                            });
+                            grid.on('ready', function() {
+                                table.classList.add('gridjs-hidden-source');
+                            });
+                            grid.render(wrapper);
+                        } catch (e) {
+                            console.error('Grid.js streaming init error:', e);
+                            if(wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+                        }
+                    }
+                })();
+            "#;
+            let _ = webview.evaluate_script(script);
+        }
+    });
+}
+
 /// Resize the WebView to match parent window
 /// When hovered: leaves 52px at bottom for buttons
 /// When not hovered: expands to full height for clean view

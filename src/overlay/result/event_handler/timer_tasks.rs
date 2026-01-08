@@ -260,6 +260,8 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
                 println!("[DEBUG] Streaming ended in md_stream mode - final render then reset");
                 // Final render - only new words (if any) will animate
                 markdown_view::stream_markdown_content(hwnd, &md_text);
+                // Initialize Grid.js on any tables
+                markdown_view::init_gridjs(hwnd);
                 // Now reset for next session
                 markdown_view::reset_stream_counter(hwnd);
             } else {
