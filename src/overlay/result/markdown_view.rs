@@ -937,8 +937,7 @@ pub fn create_markdown_webview_ex(
     let margin_y = 2.0;
     let button_area_height = if is_hovered { 52.0 } else { 0.0 };
     let content_width = ((rect.right - rect.left) as f64 - margin_x * 2.0).max(50.0);
-    let content_height =
-        ((rect.bottom - rect.top) as f64 - margin_y - button_area_height).max(50.0);
+    let content_height = ((rect.bottom - rect.top) as f64 - margin_y - button_area_height).max(0.0); // No min height - allow shrink for button bar
 
     // Create WebView with small margins so resize handles remain accessible
     // Use Physical coordinates since GetClientRect returns physical pixels
@@ -1659,7 +1658,7 @@ pub fn resize_markdown_webview(parent_hwnd: HWND, is_hovered: bool) {
 
         let content_width = ((rect.right - rect.left) as f64 - margin_x * 2.0).max(50.0);
         let content_height =
-            ((rect.bottom - rect.top) as f64 - top_offset - button_area_height).max(50.0);
+            ((rect.bottom - rect.top) as f64 - top_offset - button_area_height).max(0.0); // No min height - allow shrink for button bar
 
         WEBVIEWS.with(|webviews| {
             if let Some(webview) = webviews.borrow().get(&hwnd_key) {
