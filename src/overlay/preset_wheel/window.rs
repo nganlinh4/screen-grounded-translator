@@ -98,8 +98,20 @@ pub fn show_preset_wheel(
         crate::overlay::auto_copy_badge::show_notification(locale.preset_wheel_loading);
 
         // Wait up to 5 seconds for it to become ready
-        for _ in 0..50 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        // Wait up to 5 seconds for it to become ready
+        // We use smaller sleep intervals (10ms) with message pumping to keep the UI thread responsive
+        // Total wait: 500 * 10ms = 5000ms (5 seconds)
+        for _ in 0..500 {
+            unsafe {
+                let mut msg = MSG::default();
+                // Drain message queue to prevent freezing the UI thread (input window)
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(10));
             if IS_WARMED_UP.load(Ordering::SeqCst) {
                 // It's ready! Proceed to show logic (fall through)
                 break;
