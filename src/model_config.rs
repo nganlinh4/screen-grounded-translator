@@ -616,11 +616,12 @@ pub fn resolve_fallback_model(
         }
     };
 
-    // 1. Try Same Provider
-    if !current_provider.is_empty() {
-        // If the current provider itself isn't configured (e.g. key removed during run?), we shouldn't retry same provider
-        // but likely it WAS configured if we just failed a request.
+    // 1. Determine requirements from the failed model
+    // If the failed model supported search, the fallback MUST also support search
+    let must_support_search = model_supports_search_by_id(failed_model_id);
 
+    // 2. Try Same Provider
+    if !current_provider.is_empty() {
         let same_provider_candidates: Vec<&ModelConfig> = all_models
             .iter()
             .filter(|m| {
@@ -628,15 +629,17 @@ pub fn resolve_fallback_model(
                     && m.model_type == *current_model_type
                     && m.id != failed_model_id
                     && !failed_model_ids.contains(&m.id)
+                    && (!must_support_search || model_supports_search_by_name(&m.full_name))
             })
             .collect();
 
-        if !same_provider_candidates.is_empty() {
-            return Some((*same_provider_candidates[0]).clone());
+        // Prioritize the LAST model in the list (often the most capable/specific one)
+        if let Some(last) = same_provider_candidates.last() {
+            return Some((*last).clone());
         }
     }
 
-    // 2. Try Different Provider
+    // 3. Try Different Provider
     let diff_provider_candidates: Vec<&ModelConfig> = all_models
         .iter()
         .filter(|m| {
@@ -644,19 +647,13 @@ pub fn resolve_fallback_model(
                 && m.model_type == *current_model_type
                 && !failed_model_ids.contains(&m.id)
                 && is_provider_configured(&m.provider)
+                && (!must_support_search || model_supports_search_by_name(&m.full_name))
         })
         .collect();
 
-    if !diff_provider_candidates.is_empty() {
-        // Preference for "Google" as a reliable fallback for Text/Vision
-        if let Some(google_model) = diff_provider_candidates
-            .iter()
-            .find(|m| m.provider == "google")
-        {
-            return Some((**google_model).clone());
-        }
-        // Fallback to first available
-        return Some((*diff_provider_candidates[0]).clone());
+    // Prioritize the LAST model in the list
+    if let Some(last) = diff_provider_candidates.last() {
+        return Some((*last).clone());
     }
 
     None

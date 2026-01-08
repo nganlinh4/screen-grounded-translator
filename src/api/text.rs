@@ -533,7 +533,7 @@ where
                     { "role": "user", "content": prompt }
                 ],
                 "temperature": 1,
-                "max_completion_tokens": 8192,
+                "max_tokens": 8192,
                 "stream": false,
                 "compound_custom": {
                     "tools": {
