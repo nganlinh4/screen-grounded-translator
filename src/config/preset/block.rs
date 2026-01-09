@@ -191,6 +191,19 @@ impl BlockBuilder {
         self
     }
 
+    /// Shorthand for markdown streaming render mode
+    pub fn markdown_stream(mut self) -> Self {
+        self.block.render_mode = "markdown_stream".to_string();
+        self.block.streaming_enabled = true;
+        self
+    }
+
+    /// Set explicit render mode
+    pub fn render_mode(mut self, mode: &str) -> Self {
+        self.block.render_mode = mode.to_string();
+        self
+    }
+
     /// Enable/disable overlay display
     pub fn show_overlay(mut self, show: bool) -> Self {
         self.block.show_overlay = show;

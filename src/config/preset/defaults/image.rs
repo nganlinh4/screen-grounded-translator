@@ -18,6 +18,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                 BlockBuilder::image("maverick")
                     .prompt("Extract text from this image and translate it to {language1}. Output ONLY the translation text directly, do not add introductory text.")
                     .language("Vietnamese")
+                    .markdown_stream() // Upgraded: Stream -> Đẹp+Str
                     .build(),
             ])
             .build(),
@@ -35,6 +36,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                     BlockBuilder::text("cerebras_qwen3")
                         .prompt("Translate to {language1}. Output ONLY the translation.")
                         .language("Vietnamese")
+                        .markdown() // Upgraded: Thường -> Đẹp (Special: keeping non-streaming as requested by original logic for this specific preset)
                         .streaming(false)
                         .build(),
                 ])
@@ -52,6 +54,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .prompt("Extract text from this image and translate it to {language1}. Output ONLY the translation text directly, do not add introductory text.")
                     .language("Vietnamese")
                     .show_overlay(false)
+                    .markdown_stream() // Upgraded: Stream -> Đẹp+Str
                     .auto_copy()
                     .build(),
             ])
@@ -64,11 +67,13 @@ pub fn create_image_presets() -> Vec<Preset> {
                 BlockBuilder::image("maverick")
                     .prompt("Extract text from this image and translate it to {language1}. Output ONLY the translation text directly, do not add introductory text.")
                     .language("Korean")
+                    .markdown() // Đẹp
                     .auto_copy()
                     .build(),
                 BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
+                    .markdown_stream() // Đẹp+Str
                     .build(),
             ])
             .build(),
@@ -85,11 +90,13 @@ pub fn create_image_presets() -> Vec<Preset> {
                 BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Korean")
+                    .markdown_stream() // Đẹp+Str
                     .auto_copy()
                     .build(),
                 BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
+                    .markdown_stream() // Đẹp+Str
                     .build(),
             ])
             .build(),
@@ -106,6 +113,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .prompt("Extract all text from this image exactly as it appears. Output ONLY the text.")
                     .language("English")
                     .show_overlay(false)
+                    .markdown() // Upgraded: Thường -> Đẹp
                     .auto_copy()
                     .build(),
             ])
@@ -119,6 +127,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .prompt("Extract all text from this image exactly as it appears. Output ONLY the text.")
                     .language("English")
                     .show_overlay(false)
+                    .markdown() // Upgraded: Thường -> Đẹp
                     .auto_speak()
                     .build(),
             ])
@@ -168,8 +177,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                         - If email/SMS: Format with recipient and content clearly\n\
                         Output clean markdown. DO NOT include code blocks or backticks.")
                     .language("Vietnamese")
-                    .streaming(false)
-                    .markdown()
+                    .markdown_stream() // Upgraded: Đẹp -> Đẹp+Str
                     .build(),
             ])
             .build(),
@@ -185,7 +193,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                 BlockBuilder::image("maverick")
                     .prompt("Analyze this image and summarize its content in {language1}. Only return the summary text, super concisely. Format the output as a markdown. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) or triple backticks.")
                     .language("Vietnamese")
-                    .markdown()
+                    .markdown_stream() // Upgraded: Đẹp -> Đẹp+Str
                     .build(),
             ])
             .build(),
@@ -197,7 +205,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                 BlockBuilder::image("maverick")
                     .prompt("Describe this image in {language1}. Format the output as a markdown. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) or triple backticks.")
                     .language("Vietnamese")
-                    .markdown()
+                    .markdown_stream() // Upgraded: Đẹp -> Đẹp+Str
                     .build(),
             ])
             .build(),
@@ -210,7 +218,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                 BlockBuilder::image("gemini-pro")
                     .prompt("")
                     .language("Vietnamese")
-                    .markdown()
+                    .markdown_stream() // Upgraded: Đẹp -> Đẹp+Str
                     .build(),
             ])
             .build(),
@@ -231,7 +239,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                 BlockBuilder::text("compound_mini")
                     .prompt("Fact-check the following claims/information. Search the internet to verify accuracy. Provide a clear verdict (TRUE/FALSE/PARTIALLY TRUE/UNVERIFIABLE) for each claim with evidence and sources. Respond in {language1}. Format as markdown. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) or triple backticks.")
                     .language("Vietnamese")
-                    .markdown()
+                    .markdown_stream() // Đẹp+Str
                     .build(),
             ])
             .build(),
@@ -256,17 +264,18 @@ pub fn create_image_presets() -> Vec<Preset> {
                 BlockBuilder::text("compound_mini")
                     .prompt("Search the internet to ensure of the accuracy of the following text as well as getting as much source information as possible. Summarize the following text into a detailed markdown summary with clickable links to the sources. Structure it clearly. Only OUTPUT the markdown, DO NOT include markdown file indicator (```markdown) or triple backticks.")
                     .language("Vietnamese")
-                    .markdown()
+                    .markdown_stream() // Đẹp+Str
                     .build(),
                 // Node 3: Translate (from 0)
                 BlockBuilder::text("cerebras_qwen3")
                     .prompt("Translate the following text to {language1}. Output ONLY the translation.")
                     .language("Vietnamese")
-                    .markdown()
+                    .markdown_stream() // Đẹp+Str
                     .build(),
                 // Node 4: Summarize keywords (from 3)
                 BlockBuilder::text("cerebras_qwen3")
                     .prompt("Summarize the essence of this text into 3-5 keywords or a short phrase in {language1}.")
+                    .markdown_stream() // Đẹp+Str
                     .language("Vietnamese")
                     .build(),
             ])
