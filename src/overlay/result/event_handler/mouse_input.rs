@@ -176,8 +176,15 @@ pub unsafe fn handle_lbutton_down(hwnd: HWND, lparam: LPARAM) -> LRESULT {
             state.interaction_mode = InteractionMode::DraggingWindow;
         }
     }
+    let is_markdown = if let Some(state) = states.get(&(hwnd.0 as isize)) {
+        state.is_markdown_mode
+    } else {
+        false
+    };
     SetCapture(hwnd);
-    button_canvas::set_drag_mode(true); // Enable unclipped drag mode for smooth UI
+    if is_markdown {
+        button_canvas::set_drag_mode(true); // Enable unclipped drag mode for smooth UI
+    }
     LRESULT(0)
 }
 

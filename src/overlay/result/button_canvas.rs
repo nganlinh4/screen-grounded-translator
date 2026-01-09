@@ -1068,6 +1068,17 @@ fn send_windows_update() {
         for (&hwnd_key, &(x, y, w, h)) in windows.iter() {
             let state = states.get(&hwnd_key);
 
+            // Skip if dragging - hides buttons during drag to prevent visual lag/clipping
+            if let Some(s) = state {
+                use super::state::{InteractionMode, ResizeEdge};
+                if matches!(
+                    s.interaction_mode,
+                    InteractionMode::DraggingWindow | InteractionMode::DraggingGroup(_)
+                ) {
+                    continue;
+                }
+            }
+
             let state_obj = serde_json::json!({
                 "copySuccess": state.map(|s| s.copy_success).unwrap_or(false),
                 "hasUndo": state.map(|s| !s.text_history.is_empty()).unwrap_or(false),
@@ -1116,12 +1127,32 @@ unsafe extern "system" fn canvas_wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_APP_UPDATE_WINDOWS => {
+            // Re-assert topmost position to stay above other result windows
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
             send_windows_update();
             LRESULT(0)
         }
 
         WM_APP_SHOW_CANVAS => {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            // Re-assert topmost position to stay above other result windows
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
             // Start cursor polling timer (100ms interval - balance between smoothness and performance)
             let _ = SetTimer(Some(hwnd), CURSOR_POLL_TIMER_ID, 100, None);
             LRESULT(0)
