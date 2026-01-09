@@ -255,6 +255,8 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
                 markdown_view::stream_markdown_content(hwnd, &md_text);
                 // Continuously scale font as content streams in (only shrinks, no delay)
                 markdown_view::fit_font_streaming(hwnd);
+                // Register with button canvas (may already be registered, that's fine)
+                crate::overlay::result::button_canvas::register_markdown_window(hwnd);
             } else if is_markdown_streaming && !is_streaming {
                 // Streaming just ended in markdown_stream mode
                 // Render the FINAL content first (in case last chunks weren't rendered due to throttling)
@@ -268,16 +270,16 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
                 markdown_view::fit_font_to_window(hwnd);
                 // Now reset for next session
                 markdown_view::reset_stream_counter(hwnd);
+                // Register with button canvas
+                crate::overlay::result::button_canvas::register_markdown_window(hwnd);
             } else {
-                println!(
-                    "[DEBUG] Using create_markdown_webview - streaming={} md_streaming={}",
-                    is_streaming, is_markdown_streaming
-                );
                 // Regular markdown mode (not streaming) - full render
                 markdown_view::reset_stream_counter(hwnd);
                 markdown_view::create_markdown_webview(hwnd, &md_text, is_hovered);
                 // Fit font to fill any unfilled space
                 markdown_view::fit_font_to_window(hwnd);
+                // Register with button canvas
+                crate::overlay::result::button_canvas::register_markdown_window(hwnd);
             }
         }
         need_repaint = true;

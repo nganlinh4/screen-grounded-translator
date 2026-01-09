@@ -309,6 +309,10 @@ fn main() -> eframe::Result<()> {
         wait_for_popup_close();
         overlay::result::markdown_view::warmup();
 
+        // 5.5 Warmup button canvas for floating markdown buttons
+        wait_for_popup_close();
+        overlay::result::button_canvas::warmup();
+
         // 6. Warmup PromptDJ (Chill Corner)
         wait_for_popup_close();
         overlay::prompt_dj::warmup();

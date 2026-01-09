@@ -32,7 +32,6 @@ pub fn init_gemini_live() {
             worker::run_live_worker(manager);
         });
     }
-    println!("Gemini Live LLM initialized with {} workers", WORKER_COUNT);
 }
 
 /// Streaming text generation using Gemini Live API

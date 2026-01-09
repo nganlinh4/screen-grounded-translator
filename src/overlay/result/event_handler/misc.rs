@@ -3,6 +3,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::overlay::result::button_canvas;
 use crate::overlay::result::markdown_view;
 use crate::overlay::result::paint;
 use crate::overlay::result::refine_input;
@@ -75,6 +76,9 @@ pub unsafe fn handle_destroy(hwnd: HWND) -> LRESULT {
             let _ = KillTimer(Some(hwnd), 2);
             markdown_view::destroy_markdown_webview(hwnd);
 
+            // Unregister from button canvas
+            button_canvas::unregister_markdown_window(hwnd);
+
             // Cleanup refine input if active
             refine_input::hide_refine_input(hwnd);
         } else {
@@ -118,6 +122,8 @@ pub unsafe fn handle_create_webview(hwnd: HWND) -> LRESULT {
         markdown_view::show_markdown_webview(hwnd);
         // Resize triggers fit_font_to_window internally
         markdown_view::resize_markdown_webview(hwnd, is_hovered);
+        // Register with button canvas for floating buttons
+        button_canvas::register_markdown_window(hwnd);
     } else {
         // Try to create WebView
         let result = markdown_view::create_markdown_webview(hwnd, &full_text, is_hovered);
@@ -130,6 +136,8 @@ pub unsafe fn handle_create_webview(hwnd: HWND) -> LRESULT {
         } else {
             // Resize triggers fit_font_to_window internally
             markdown_view::resize_markdown_webview(hwnd, is_hovered);
+            // Register with button canvas for floating buttons
+            button_canvas::register_markdown_window(hwnd);
         }
     }
 
