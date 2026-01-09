@@ -312,7 +312,7 @@ const MARKDOWN_CSS: &str = r#"
         font-variation-settings: 'wght' 500, 'wdth' 100, 'slnt' 0, 'ROND' 100;
     }
 
-    p { margin: 0.5em 0; }
+    p { margin: 0 0; }
     
     /* Interactive Word Styling - COLOR ONLY, preserves font scaling */
     .word {
@@ -372,7 +372,7 @@ const MARKDOWN_CSS: &str = r#"
     a .word { cursor: pointer; } /* Ensure link words show hand cursor */
     a:hover { color: #448aff; text-shadow: 0 0 10px rgba(68,138,255,0.4); text-decoration: none; }
     
-    ul, ol { padding-left: 20px; margin: 0.5em 0; }
+    ul, ol { padding-left: 20px; margin: 0 0; }
     li { margin: 2px 0; } /* Reduced from 4px */
     
     table { 

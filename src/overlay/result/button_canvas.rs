@@ -162,7 +162,6 @@ pub fn update_window_position(hwnd: HWND) {
 /// Update canvas with current window positions
 fn update_canvas() {
     let canvas_hwnd = CANVAS_HWND.load(Ordering::SeqCst);
-    eprintln!("[ButtonCanvas] update_canvas() canvas_hwnd={}", canvas_hwnd);
     if canvas_hwnd != 0 {
         let hwnd = HWND(canvas_hwnd as *mut std::ffi::c_void);
         unsafe {
@@ -174,7 +173,6 @@ fn update_canvas() {
 /// Show the canvas
 fn show_canvas() {
     let canvas_hwnd = CANVAS_HWND.load(Ordering::SeqCst);
-    eprintln!("[ButtonCanvas] show_canvas() canvas_hwnd={}", canvas_hwnd);
     if canvas_hwnd != 0 {
         let hwnd = HWND(canvas_hwnd as *mut std::ffi::c_void);
         unsafe {
@@ -966,8 +964,6 @@ fn send_windows_update() {
             let script = format!("window.updateWindows({});", windows_data);
 
             let _ = webview.evaluate_script(&script);
-        } else {
-            eprintln!("[ButtonCanvas] ERROR: WebView is None!");
         }
     });
 }
@@ -986,8 +982,8 @@ unsafe extern "system" fn canvas_wnd_proc(
 
         WM_APP_SHOW_CANVAS => {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-            // Start cursor polling timer (50ms interval for smooth fade)
-            let _ = SetTimer(Some(hwnd), CURSOR_POLL_TIMER_ID, 50, None);
+            // Start cursor polling timer (100ms interval - balance between smoothness and performance)
+            let _ = SetTimer(Some(hwnd), CURSOR_POLL_TIMER_ID, 100, None);
             LRESULT(0)
         }
 
