@@ -314,54 +314,34 @@ const MARKDOWN_CSS: &str = r#"
 
     p { margin: 0.5em 0; }
     
-    /* Interactive Word Styling - Seamless Fisheye */
+    /* Interactive Word Styling - COLOR ONLY, preserves font scaling */
     .word {
-        display: inline-block;
-        transition: font-variation-settings 0.2s ease-out, transform 0.2s ease-out, color 0.2s ease, text-shadow 0.2s ease;
+        display: inline;
+        transition: color 0.2s ease, text-shadow 0.2s ease;
         cursor: text;
-        white-space: pre-wrap;
-        position: relative;
-        z-index: 1;
-        transform-origin: bottom center; /* Scale from baseline */
     }
 
-    /* 1. Center (Hovered) */
+    /* 1. Center (Hovered) - Bright cyan + glow */
     .word:hover {
-        transform: scale(1.35);
-        font-variation-settings: 'wght' 800, 'wdth' 110, 'slnt' -5, 'ROND' 50;
         color: var(--primary);
         text-shadow: 0 0 12px rgba(79, 195, 247, 0.6);
-        z-index: 10;
-        margin: 0 1px; /* Slight push */
     }
 
-    /* 2. Immediate Neighbors (Distance: 1) */
-    /* Next Sibling */
+    /* 2. Immediate Neighbors (Distance: 1) - Light cyan */
     .word:hover + .word {
-        transform: scale(1.2);
-        font-variation-settings: 'wght' 700, 'wdth' 105, 'slnt' 0, 'ROND' 75;
         color: #e1f5fe;
-        z-index: 5;
+        text-shadow: 0 0 6px rgba(79, 195, 247, 0.3);
     }
-    /* Previous Sibling (using :has) */
     .word:has(+ .word:hover) {
-        transform: scale(1.2);
-        font-variation-settings: 'wght' 700, 'wdth' 105, 'slnt' 0, 'ROND' 75;
         color: #e1f5fe;
-        z-index: 5;
+        text-shadow: 0 0 6px rgba(79, 195, 247, 0.3);
     }
 
-    /* 3. Secondary Neighbors (Distance: 2) */
-    /* Next Next Sibling */
+    /* 3. Secondary Neighbors (Distance: 2) - Lighter cyan */
     .word:hover + .word + .word {
-        transform: scale(1.1);
-        font-variation-settings: 'wght' 600, 'wdth' 100, 'slnt' 0, 'ROND' 85;
         color: #b3e5fc;
     }
-    /* Previous Previous Sibling */
     .word:has(+ .word + .word:hover) {
-        transform: scale(1.1);
-        font-variation-settings: 'wght' 600, 'wdth' 100, 'slnt' 0, 'ROND' 85;
         color: #b3e5fc;
     }
 
@@ -378,11 +358,8 @@ const MARKDOWN_CSS: &str = r#"
     pre .word:hover, 
     pre .word:hover + .word,
     pre .word:has(+ .word:hover) {
-        transform: none;
-        font-variation-settings: initial;
         color: inherit;
         text-shadow: none;
-        margin: 0;
     }
     
     pre code { 
