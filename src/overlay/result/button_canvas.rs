@@ -821,7 +821,7 @@ fn handle_ipc_message(body: &str) {
         let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
 
         match action {
-            "copy_click" => unsafe {
+            "copy" => unsafe {
                 let _ = PostMessageW(
                     Some(hwnd),
                     super::event_handler::misc::WM_COPY_CLICK,

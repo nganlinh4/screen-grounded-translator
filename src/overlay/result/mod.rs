@@ -46,11 +46,13 @@ pub fn trigger_copy(hwnd: HWND) {
         let hwnd_val = hwnd.0 as usize;
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(1500));
-            let mut states = WINDOW_STATES.lock().unwrap();
-            if let Some(state) = states.get_mut(&(hwnd_val as isize)) {
-                state.copy_success = false;
+            {
+                let mut states = WINDOW_STATES.lock().unwrap();
+                if let Some(state) = states.get_mut(&(hwnd_val as isize)) {
+                    state.copy_success = false;
+                }
             }
-            // Update canvas
+            // Update canvas after dropping lock
             button_canvas::update_window_position(HWND(hwnd_val as *mut std::ffi::c_void));
         });
     }
