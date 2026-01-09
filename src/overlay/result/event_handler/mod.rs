@@ -86,6 +86,12 @@ pub unsafe extern "system" fn result_wnd_proc(
         }
         msg if msg == misc::WM_DOWNLOAD_CLICK => misc::handle_download_click(hwnd),
 
+        WM_WINDOWPOSCHANGED => {
+            // Update button canvas position when window moves/resizes
+            crate::overlay::result::button_canvas::register_markdown_window(hwnd);
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }

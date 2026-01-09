@@ -244,8 +244,19 @@ html, body {{
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.15s ease-out;
+    cursor: pointer;
+    transition: opacity 0.15s ease-out, background-color 0.15s ease-out, color 0.15s ease-out;
     color: rgba(255, 255, 255, 0.8);
+}}
+
+.button-group.vertical {{
+    flex-direction: column;
+    padding: 8px 4px;
+    height: auto;
+    width: 48px;
+}}
+.button-group.vertical .btn {{
+    margin: 4px 0;
 }}
 
 .btn:hover {{
@@ -338,7 +349,13 @@ function updateButtonOpacity() {{
         
         // Radius-based opacity: full at 0, fade to 0 at 150px from edge
         const maxRadius = 150;
-        const opacity = Math.max(0, Math.min(1, 1 - (dist / maxRadius)));
+        let opacity = Math.max(0, Math.min(1, 1 - (dist / maxRadius)));
+        
+        // Force full opacity if dragging this specific window
+        if (broomDragData && broomDragData.moved && broomDragData.hwnd === group.dataset.hwnd) {{
+            opacity = 1.0;
+        }}
+
         group.style.opacity = opacity;
         
         const isVisible = opacity > 0.1;
@@ -377,53 +394,78 @@ function updateButtonOpacity() {{
 }}
 
 // Calculate best position for button group based on window position and screen bounds
+// Calculate best position for button group based on window position and screen bounds
+// Calculate best position for button group based on window position and screen bounds
 function calculateButtonPosition(winRect) {{
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
-    const btnGroupW = 400; // Updated for 10 buttons (~382px actual width)
-    const btnGroupH = 40;  // Approximate height
+    const longDim = 400; // Length of the button group (Width in Horiz, Height in Vert)
+    const shortDim = 50;  // Thickness of the button group (Height in Horiz, Width in Vert)
     const margin = 8;
     
-    // Check available space on each side
+    // Check available space on each side (thickness-wise)
     const spaceBottom = screenH - (winRect.y + winRect.h);
     const spaceTop = winRect.y;
     const spaceRight = screenW - (winRect.x + winRect.w);
     const spaceLeft = winRect.x;
     
-    // Prefer bottom, then right, then top, then left
-    if (spaceBottom >= btnGroupH + margin) {{
-        // Bottom - center horizontally
+    // Helper to clamp position to keep bar on screen
+    const clamp = (val, max) => Math.max(0, Math.min(val, max));
+
+    // 1. Bottom Horizontal (Preferred) - Check if we have vertical space below
+    if (spaceBottom >= shortDim + margin) {{
+        // Right align relative to window (flush right), clamp to screen width
+        let x = winRect.x + winRect.w - longDim;
+        x = clamp(x, screenW - longDim);
         return {{
-            x: winRect.x + (winRect.w - btnGroupW) / 2,
+            x: x,
             y: winRect.y + winRect.h + margin,
             direction: 'bottom'
         }};
-    }} else if (spaceRight >= btnGroupW + margin) {{
-        // Right - center vertically
+    }}
+    // 2. Right Vertical - Check if we have horizontal space to the right
+    else if (spaceRight >= shortDim + margin) {{
+        // Center vertically relative to window, clamp to screen height
+        let y = winRect.y + (winRect.h - longDim) / 2;
+        y = clamp(y, screenH - longDim);
         return {{
             x: winRect.x + winRect.w + margin,
-            y: winRect.y + (winRect.h - btnGroupH) / 2,
+            y: y,
             direction: 'right'
         }};
-    }} else if (spaceTop >= btnGroupH + margin) {{
-        // Top - center horizontally
+    }}
+    // 3. Left Vertical
+    else if (spaceLeft >= shortDim + margin) {{
+        let y = winRect.y + (winRect.h - longDim) / 2;
+        y = clamp(y, screenH - longDim);
         return {{
-            x: winRect.x + (winRect.w - btnGroupW) / 2,
-            y: winRect.y - btnGroupH - margin,
-            direction: 'top'
-        }};
-    }} else if (spaceLeft >= btnGroupW + margin) {{
-        // Left - center vertically
-        return {{
-            x: winRect.x - btnGroupW - margin,
-            y: winRect.y + (winRect.h - btnGroupH) / 2,
+            x: winRect.x - shortDim - margin,
+            y: y,
             direction: 'left'
         }};
-    }} else {{
-        // Fallback: overlay inside window at bottom
+    }}
+    // 4. Top Horizontal
+    else if (spaceTop >= shortDim + margin) {{
+        let x = winRect.x + (winRect.w - longDim) / 2;
+        x = clamp(x, screenW - longDim);
         return {{
-            x: winRect.x + margin,
-            y: winRect.y + winRect.h - btnGroupH - margin,
+            x: x,
+            y: winRect.y - shortDim - margin,
+            direction: 'top'
+        }};
+    }}
+    // Fallback: overlay inside window at bottom (clamped)
+    else {{
+        let x = winRect.x + (winRect.w - longDim) / 2;
+        x = clamp(x, screenW - longDim);
+        
+        let y = winRect.y + winRect.h - shortDim - margin;
+        // Ensure it doesn't go off top if window is tiny
+        y = Math.max(winRect.y, y); 
+        
+        return {{
+            x: x,
+            y: y,
             direction: 'inside'
         }};
     }}
@@ -559,18 +601,20 @@ function action(hwnd, cmd) {{
 // Update all button groups
 function updateWindows(windowsData) {{
     window.registeredWindows = windowsData;
-    // lastVisibleState.clear(); // Removing clear to handle updates better
     
     const container = document.getElementById('button-container');
+    const screenW = window.innerWidth;
+    const screenH = window.innerHeight;
     
-    // Diffing logic to prevent blink
+    // Diffing logic
     const existingGroups = new Map();
     container.querySelectorAll('.button-group').forEach(el => {{
         existingGroups.set(el.dataset.hwnd, el);
     }});
     
     for (const [hwnd, data] of Object.entries(windowsData)) {{
-        const pos = calculateButtonPosition(data.rect);
+        // Pass 1: Estimate position
+        let pos = calculateButtonPosition(data.rect);
         let group = existingGroups.get(hwnd);
         
         if (!group) {{
@@ -583,15 +627,66 @@ function updateWindows(windowsData) {{
             existingGroups.delete(hwnd); // Mark as kept
         }}
         
-        group.style.left = pos.x + 'px';
-        group.style.top = pos.y + 'px';
-        
-        // Update content only if state changed
+        // Update content first to ensure correct dimensions for Pass 2
         const newStateStr = JSON.stringify(data.state || {{}});
         if (group.dataset.lastState !== newStateStr) {{
             group.innerHTML = generateButtonsHTML(hwnd, data.state || {{}});
             group.dataset.lastState = newStateStr;
         }}
+
+        // Apply estimated class to get approximate dimensions
+        if (pos.direction === 'left' || pos.direction === 'right') {{
+            group.classList.add('vertical');
+        }} else {{
+            group.classList.remove('vertical');
+        }}
+
+        // Pass 2: Measure and Correct
+        // Now that content and class are set, read actual dimensions
+        const actualW = group.offsetWidth || (pos.direction === 'left' || pos.direction === 'right' ? 50 : 400);
+        const actualH = group.offsetHeight || (pos.direction === 'left' || pos.direction === 'right' ? 400 : 50);
+
+        // Re-clamp position based on actual dimensions
+        // calculateButtonPosition returns a centered position, but we need to ensure it's on screen
+        // We can just clamp the estimated 'pos' using actual dimensions
+        
+        // Helper to clamp
+        const clamp = (val, size, max) => Math.max(0, Math.min(val, max - size));
+
+        let finalX = pos.x;
+        let finalY = pos.y;
+
+        // Recalculate centering if dimensions differ significantly? 
+        // calculateButtonPosition used hardcoded 400/50. 
+        // If actual is 600, centering based on 400 is wrong.
+        // Let's re-run the relevant centering logic with actual dims
+        
+        if (pos.direction === 'bottom') {{
+            // Right align relative to window
+            finalX = data.rect.x + data.rect.w - actualW;
+            finalY = data.rect.y + data.rect.h + 8; // margin
+        }} else if (pos.direction === 'top') {{
+            finalX = data.rect.x + (data.rect.w - actualW) / 2;
+            finalY = data.rect.y - actualH - 8;
+        }} else if (pos.direction === 'right') {{
+            finalX = data.rect.x + data.rect.w + 8;
+            finalY = data.rect.y + (data.rect.h - actualH) / 2;
+        }} else if (pos.direction === 'left') {{
+            finalX = data.rect.x - actualW - 8;
+            finalY = data.rect.y + (data.rect.h - actualH) / 2;
+        }} else {{ // inside
+            finalX = data.rect.x + 8;
+            finalY = data.rect.y + data.rect.h - actualH - 8;
+             // Ensure it doesn't go off top if window is tiny
+            finalY = Math.max(data.rect.y, finalY);
+        }}
+
+        // Final screen clamping
+        finalX = clamp(finalX, actualW, screenW);
+        finalY = clamp(finalY, actualH, screenH);
+        
+        group.style.left = finalX + 'px';
+        group.style.top = finalY + 'px';
     }}
     
     // Remove stale
@@ -599,7 +694,8 @@ function updateWindows(windowsData) {{
         el.remove();
         lastVisibleState.delete(key);
     }});
-    
+
+    // CRITICAL: Update regions immediately so clicks work at new position
     updateButtonOpacity();
 }}
 
@@ -905,6 +1001,7 @@ fn handle_ipc_message(body: &str) {
             }
             "broom_drag" => {
                 // Drag window group - JavaScript sends logical (CSS) pixels, scale to physical
+                // User reports raw JS delta is too slow (100 log < 150 phys), so scaling is required.
                 let scale = get_dpi_scale();
                 let dx =
                     (json.get("dx").and_then(|v| v.as_f64()).unwrap_or(0.0) * scale).round() as i32;
