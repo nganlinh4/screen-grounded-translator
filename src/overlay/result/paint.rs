@@ -237,6 +237,7 @@ pub fn paint_window(hwnd: HWND) {
                 let is_closing = false;
 
                 let show_broom = !is_closing
+                    && !state.is_markdown_mode // Hide broom cursor in markdown mode (buttons are external)
                     && (state.is_hovered
                         && !state.on_copy_btn
                         && !state.on_edit_btn
