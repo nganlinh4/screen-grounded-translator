@@ -92,6 +92,28 @@ pub unsafe extern "system" fn result_wnd_proc(
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
 
+        WM_ENTERSIZEMOVE => {
+            // Set interaction mode to Resizing to triggering "Hide All Buttons" logic
+            crate::overlay::result::state::set_window_interaction_mode(
+                hwnd,
+                crate::overlay::result::state::InteractionMode::Resizing(
+                    crate::overlay::result::state::ResizeEdge::None,
+                ),
+            );
+            crate::overlay::result::button_canvas::update_canvas();
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+
+        WM_EXITSIZEMOVE => {
+            // Reset interaction mode to show buttons again
+            crate::overlay::result::state::set_window_interaction_mode(
+                hwnd,
+                crate::overlay::result::state::InteractionMode::None,
+            );
+            crate::overlay::result::button_canvas::update_canvas();
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }

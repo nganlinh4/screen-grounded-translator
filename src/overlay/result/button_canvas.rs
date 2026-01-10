@@ -194,7 +194,7 @@ pub fn set_drag_mode(active: bool) {
 }
 
 /// Update canvas with current window positions
-fn update_canvas() {
+pub fn update_canvas() {
     let canvas_hwnd = CANVAS_HWND.load(Ordering::SeqCst);
     if canvas_hwnd != 0 {
         let hwnd = HWND(canvas_hwnd as *mut std::ffi::c_void);
@@ -1065,6 +1065,8 @@ fn handle_ipc_message(body: &str) {
                         if canvas_val != 0 {
                             let canvas_hwnd = HWND(canvas_val as *mut std::ffi::c_void);
                             let _ = SetCapture(canvas_hwnd);
+                            // Hide all buttons immediately
+                            update_canvas();
                         }
                     }
                 }
@@ -1091,27 +1093,32 @@ fn send_windows_update() {
 
         let mut data = serde_json::Map::new();
 
+        // Check for any active native interaction (Resizing/Moving)
+        let any_interacting = states.values().any(|s| {
+            matches!(
+                s.interaction_mode,
+                super::state::InteractionMode::Resizing(_)
+                    | super::state::InteractionMode::DraggingWindow
+                    | super::state::InteractionMode::DraggingGroup(_)
+            )
+        });
+
+        // If ANY drag (custom or native) or resize is active, hide ALL buttons
+        let dragging_target = ACTIVE_DRAG_TARGET.load(std::sync::atomic::Ordering::SeqCst);
+        if dragging_target != 0 || any_interacting {
+            // Send empty data -> Hides all
+            let json = serde_json::to_string(&data).unwrap_or_default();
+            CANVAS_WEBVIEW.with(|cell| {
+                if let Some(webview) = cell.borrow().as_ref() {
+                    let script = format!("window.updateWindows({});", json);
+                    let _ = webview.evaluate_script(&script);
+                }
+            });
+            return;
+        }
+
         for (&hwnd_key, &(x, y, w, h)) in windows.iter() {
             let state = states.get(&hwnd_key);
-
-            // Skip if dragging - hides buttons during drag to prevent visual lag/clipping
-            // Also checking ACTIVE_DRAG_TARGET for our Rust-side drag
-            let dragging_target = ACTIVE_DRAG_TARGET.load(std::sync::atomic::Ordering::SeqCst);
-            if (hwnd_key as isize) == dragging_target {
-                continue;
-            }
-
-            if let Some(s) = state {
-                use super::state::InteractionMode;
-                if matches!(
-                    s.interaction_mode,
-                    InteractionMode::DraggingWindow
-                        | InteractionMode::DraggingGroup(_)
-                        | InteractionMode::Resizing(_)
-                ) {
-                    continue;
-                }
-            }
 
             let state_obj = serde_json::json!({
                 "copySuccess": state.map(|s| s.copy_success).unwrap_or(false),
@@ -1125,7 +1132,6 @@ fn send_windows_update() {
             });
 
             // Scale physical coordinates to logical coordinates for WebView
-            // GetWindowRect returns physical pixels, but WebView uses logical (CSS) pixels
             let scale = get_dpi_scale();
             let logical_x = (x as f64 / scale) as i32;
             let logical_y = (y as f64 / scale) as i32;
@@ -1147,7 +1153,6 @@ fn send_windows_update() {
     CANVAS_WEBVIEW.with(|cell| {
         if let Some(webview) = cell.borrow().as_ref() {
             let script = format!("window.updateWindows({});", windows_data);
-
             let _ = webview.evaluate_script(&script);
         }
     });
@@ -1264,6 +1269,7 @@ unsafe extern "system" fn canvas_wnd_proc(
                 // End drag
                 ACTIVE_DRAG_TARGET.store(0, Ordering::SeqCst);
                 let _ = ReleaseCapture();
+                update_canvas(); // Restore buttons after drag
 
                 // Click vs Drag Check
                 let mut pt = POINT::default();

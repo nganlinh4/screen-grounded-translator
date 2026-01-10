@@ -252,3 +252,11 @@ pub fn close_windows_with_token(token: &Arc<AtomicBool>) {
         }
     }
 }
+
+/// Set the interaction mode for a specific window
+pub fn set_window_interaction_mode(hwnd: HWND, mode: InteractionMode) {
+    let mut states = WINDOW_STATES.lock().unwrap();
+    if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+        state.interaction_mode = mode;
+    }
+}
