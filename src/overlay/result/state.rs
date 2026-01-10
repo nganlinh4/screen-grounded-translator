@@ -253,6 +253,65 @@ pub fn close_windows_with_token(token: &Arc<AtomicBool>) {
     }
 }
 
+/// Get a group of windows that should be moved together (linked or share same token)
+pub fn get_window_group(hwnd: HWND) -> Vec<(HWND, RECT)> {
+    let mut group = Vec::new();
+    let mut token_to_match = None;
+
+    {
+        let states = WINDOW_STATES.lock().unwrap();
+        if let Some(state) = states.get(&(hwnd.0 as isize)) {
+            token_to_match = state.cancellation_token.clone();
+        }
+
+        // Strategy 1: Cancellation Token (Group Identity)
+        if let Some(token) = token_to_match {
+            for (&h_val, s) in states.iter() {
+                if let Some(ref t) = s.cancellation_token {
+                    if std::sync::Arc::ptr_eq(&token, t) {
+                        let h = HWND(h_val as *mut std::ffi::c_void);
+                        let mut r = RECT::default();
+                        unsafe {
+                            let _ =
+                                windows::Win32::UI::WindowsAndMessaging::GetWindowRect(h, &mut r);
+                        }
+                        group.push((h, r));
+                    }
+                }
+            }
+        }
+
+        // Strategy 2: Linked Window Chain (Fallback/Augment)
+        if group.len() <= 1 {
+            group.clear();
+            let mut visited = std::collections::HashSet::new();
+            let mut queue = std::collections::VecDeque::new();
+
+            queue.push_back(hwnd);
+            visited.insert(hwnd.0);
+
+            while let Some(current) = queue.pop_front() {
+                let mut r = RECT::default();
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(current, &mut r);
+                }
+                group.push((current, r));
+
+                if let Some(s) = states.get(&(current.0 as isize)) {
+                    if let Some(linked) = s.linked_window {
+                        if states.contains_key(&(linked.0 as isize)) && !visited.contains(&linked.0)
+                        {
+                            visited.insert(linked.0);
+                            queue.push_back(linked);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    group
+}
+
 /// Set the interaction mode for a specific window
 pub fn set_window_interaction_mode(hwnd: HWND, mode: InteractionMode) {
     let mut states = WINDOW_STATES.lock().unwrap();

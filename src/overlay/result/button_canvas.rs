@@ -594,7 +594,7 @@ function generateButtonsHTML(hwnd, state) {{
 // Handle broom drag
 // Handle broom drag - NATIVE IMPLEMENTATION
 function handleBroomDrag(e, hwnd) {{
-    if (e.button !== 0) return; // Only left click
+    if (e.button !== 0 && e.button !== 2) return; // Allow left (0) or right (2) click
     
     // 1. Hide the button group immediately (it will reappear after drag via updateWindows)
     const group = document.querySelector('.button-group[data-hwnd="' + hwnd + '"]');
@@ -607,8 +607,9 @@ function handleBroomDrag(e, hwnd) {{
     }}
 
     // 2. Trigger native drag immediately
+    const action = e.button === 2 ? 'broom_group_drag_start' : 'broom_drag_start';
     window.ipc.postMessage(JSON.stringify({{
-        action: 'broom_drag_start',
+        action: action,
         hwnd: hwnd
     }}));
     
@@ -1046,6 +1047,7 @@ fn handle_ipc_message(body: &str) {
                     if GetCursorPos(&mut pt).is_ok() {
                         use std::sync::atomic::Ordering;
                         ACTIVE_DRAG_TARGET.store(hwnd.0 as isize, Ordering::SeqCst);
+                        DRAG_IS_GROUP.store(false, Ordering::SeqCst);
 
                         let mut last = LAST_DRAG_POS.lock().unwrap();
                         last.x = pt.x;
@@ -1055,11 +1057,40 @@ fn handle_ipc_message(body: &str) {
                         start.x = pt.x;
                         start.y = pt.y;
 
-                        // Capture mouse on the canvas window (since we are in IPC callback,
-                        // we need the canvas HWND. We can get it from the static if available
-                        // or we assume this thread handles it. But we need 'hwnd' to be the CANVAS hwnd?
-                        // No, 'hwnd' here is the TARGET window from IPC.
-                        // We need CANVAS_HWND.
+                        let canvas_val = CANVAS_HWND.load(Ordering::SeqCst);
+                        if canvas_val != 0 {
+                            let canvas_hwnd = HWND(canvas_val as *mut std::ffi::c_void);
+                            let _ = SetCapture(canvas_hwnd);
+                            // Hide all buttons immediately
+                            update_canvas();
+                        }
+                    }
+                }
+            }
+            "broom_group_drag_start" => {
+                // Initiate mass drag for linked windows (Right-click drag)
+                unsafe {
+                    use windows::Win32::UI::Input::KeyboardAndMouse::SetCapture;
+                    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+                    let mut pt = windows::Win32::Foundation::POINT::default();
+                    if GetCursorPos(&mut pt).is_ok() {
+                        use std::sync::atomic::Ordering;
+                        ACTIVE_DRAG_TARGET.store(hwnd.0 as isize, Ordering::SeqCst);
+                        DRAG_IS_GROUP.store(true, Ordering::SeqCst);
+
+                        // Collect the entire group once at start
+                        let group = crate::overlay::result::state::get_window_group(hwnd);
+                        let mut snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
+                        *snapshot = group.into_iter().map(|(h, _)| h.0 as isize).collect();
+
+                        let mut last = LAST_DRAG_POS.lock().unwrap();
+                        last.x = pt.x;
+                        last.y = pt.y;
+
+                        let mut start = START_DRAG_POS.lock().unwrap();
+                        start.x = pt.x;
+                        start.y = pt.y;
 
                         let canvas_val = CANVAS_HWND.load(Ordering::SeqCst);
                         if canvas_val != 0 {
@@ -1160,6 +1191,8 @@ fn send_windows_update() {
 
 // Global state for manual Rust-side dragging
 static ACTIVE_DRAG_TARGET: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static DRAG_IS_GROUP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ACTIVE_DRAG_SNAPSHOT: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
 static LAST_DRAG_POS: std::sync::Mutex<POINT> = std::sync::Mutex::new(POINT { x: 0, y: 0 });
 static START_DRAG_POS: std::sync::Mutex<POINT> = std::sync::Mutex::new(POINT { x: 0, y: 0 });
 
@@ -1239,8 +1272,6 @@ unsafe extern "system" fn canvas_wnd_proc(
         windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE => {
             let target_val = ACTIVE_DRAG_TARGET.load(Ordering::SeqCst);
             if target_val != 0 {
-                let target_hwnd = HWND(target_val as *mut std::ffi::c_void);
-
                 // Get current cursor pos
                 let mut pt = POINT::default();
                 if GetCursorPos(&mut pt).is_ok() {
@@ -1249,8 +1280,16 @@ unsafe extern "system" fn canvas_wnd_proc(
                     let dy = pt.y - last.y;
 
                     if dx != 0 || dy != 0 {
-                        // Move the actual window
-                        crate::overlay::result::trigger_drag_window(target_hwnd, dx, dy);
+                        if DRAG_IS_GROUP.load(Ordering::SeqCst) {
+                            let snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
+                            for &h_val in snapshot.iter() {
+                                let h = HWND(h_val as *mut std::ffi::c_void);
+                                crate::overlay::result::trigger_drag_window(h, dx, dy);
+                            }
+                        } else {
+                            let target_hwnd = HWND(target_val as *mut std::ffi::c_void);
+                            crate::overlay::result::trigger_drag_window(target_hwnd, dx, dy);
+                        }
 
                         // Update last pos
                         last.x = pt.x;
@@ -1262,12 +1301,14 @@ unsafe extern "system" fn canvas_wnd_proc(
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
 
-        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP => {
+        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP
+        | windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP => {
             let target_val = ACTIVE_DRAG_TARGET.load(Ordering::SeqCst);
             if target_val != 0 {
                 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
                 // End drag
                 ACTIVE_DRAG_TARGET.store(0, Ordering::SeqCst);
+                DRAG_IS_GROUP.store(false, Ordering::SeqCst);
                 let _ = ReleaseCapture();
                 update_canvas(); // Restore buttons after drag
 
@@ -1279,9 +1320,18 @@ unsafe extern "system" fn canvas_wnd_proc(
                 let dist_sq = ((pt.x - start.x).pow(2) + (pt.y - start.y).pow(2)) as f64;
 
                 if dist_sq.sqrt() < 5.0 {
-                    // Treating as CLICK -> Dismiss window
+                    // Treating as CLICK
+                    let is_right_click =
+                        msg == windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP;
                     let target_hwnd = HWND(target_val as *mut std::ffi::c_void);
-                    let _ = PostMessageW(Some(target_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+
+                    if is_right_click {
+                        // Right-click broom click: perform copy (standard broom right-click behavior)
+                        crate::overlay::result::trigger_copy(target_hwnd);
+                    } else {
+                        // Left-click broom click: perform close
+                        let _ = PostMessageW(Some(target_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    }
                 }
 
                 // Force Immediate Cursor Update to JS (so buttons reappear correctly under mouse)
