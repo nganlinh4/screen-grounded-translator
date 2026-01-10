@@ -158,6 +158,8 @@ pub struct WindowState {
     // Font recalc throttling: timestamp of last font recalculation (for 200ms streaming throttle)
     pub last_font_calc_time: u32,
 
+    pub last_webview_update_time: u32,
+
     // BACKGROUND CACHING
     pub bg_bitmap: HBITMAP,
     pub bg_w: i32,

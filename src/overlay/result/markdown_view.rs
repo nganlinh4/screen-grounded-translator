@@ -926,16 +926,16 @@ pub fn create_markdown_webview_ex(
     // html_content is already a full HTML document from markdown_to_html
     let full_html = html_content;
 
-    // Use store_html_page with reliable retry
+    // Use store_html_page with safe, minimal retry (max 100ms total block)
     let mut page_url = String::new();
-    for _ in 0..50 {
+    for _ in 0..10 {
         if let Some(url) =
             crate::overlay::html_components::font_manager::store_html_page(full_html.clone())
         {
             page_url = url;
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     if page_url.is_empty() {
@@ -1398,27 +1398,13 @@ pub fn stream_markdown_content_ex(
          body.style.fontSize = best + 'px';
          
     }} else {{
-        // Incremental updates
+        // Incrementally adjust font size if overflow occurs (Heuristic skip for speed)
         var hasOverflow = doc.scrollHeight > (winH + 2);
         if (hasOverflow) {{
             var currentSize = parseFloat(body.style.fontSize) || 14;
-            let safety = 20; 
-            
-            // Allow shrinking only down to minSize
-            while (hasOverflow && currentSize > minSize && safety > 0) {{
-                currentSize = currentSize - 1;
-                body.style.fontSize = currentSize + 'px';
-                hasOverflow = doc.scrollHeight > (winH + 2);
-                safety--;
-            }}
-            
-            // Width condensing
-            if (hasOverflow) {{
-                 var widths = [85, 80, 75, 70, 65, 60, 55, 50]; 
-                 for (var w = 0; w < widths.length; w++) {{
-                     body.style.fontVariationSettings = "'wght' 400, 'wdth' " + widths[w] + ", 'slnt' 0, 'ROND' 100";
-                     if (doc.scrollHeight <= (winH + 2)) break;
-                 }}
+            if (currentSize > minSize) {{
+                // Quick jump instead of loop for streaming smoothness
+                body.style.fontSize = (currentSize - 1) + 'px';
             }}
         }}
     }}

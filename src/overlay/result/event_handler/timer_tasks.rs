@@ -252,9 +252,29 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
 
             // Use streaming-optimized update for markdown_stream mode during active streaming
             if is_markdown_streaming && is_streaming {
-                markdown_view::stream_markdown_content(hwnd, &md_text);
-                // Register with button canvas (may already be registered, that's fine)
-                crate::overlay::result::button_canvas::register_markdown_window(hwnd);
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u32)
+                    .unwrap_or(0);
+
+                let mut should_update_webview = false;
+                {
+                    let mut states = WINDOW_STATES.lock().unwrap();
+                    if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                        let time_since_last_webview =
+                            now.wrapping_sub(state.last_webview_update_time);
+                        if time_since_last_webview >= 80 || state.last_webview_update_time == 0 {
+                            state.last_webview_update_time = now;
+                            should_update_webview = true;
+                        }
+                    }
+                }
+
+                if should_update_webview {
+                    markdown_view::stream_markdown_content(hwnd, &md_text);
+                    // Register with button canvas (may already be registered, that's fine)
+                    crate::overlay::result::button_canvas::register_markdown_window(hwnd);
+                }
             } else if is_markdown_streaming && !is_streaming {
                 // Streaming just ended in markdown_stream mode
                 // Render the FINAL content first (in case last chunks weren't rendered due to throttling)
@@ -265,6 +285,13 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
                 markdown_view::fit_font_to_window(hwnd);
                 // Now reset for next session
                 markdown_view::reset_stream_counter(hwnd);
+                // Reset throttle for next time
+                {
+                    let mut states = WINDOW_STATES.lock().unwrap();
+                    if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                        state.last_webview_update_time = 0;
+                    }
+                }
                 // Register with button canvas
                 crate::overlay::result::button_canvas::register_markdown_window(hwnd);
             } else {
