@@ -565,7 +565,11 @@ pub fn record_and_stream_gemini_live(
         .or_else(|| preset.blocks.first());
 
     let streaming_enabled = audio_block
-        .map(|b| b.show_overlay && (b.streaming_enabled || b.render_mode == "stream"))
+        .map(|b| {
+            b.show_overlay
+                && (b.streaming_enabled || b.render_mode == "stream")
+                && b.render_mode != "plain"
+        })
         .unwrap_or(false);
     let mut streaming_hwnd: Option<HWND> = None;
 
@@ -1302,7 +1306,11 @@ pub fn record_and_stream_parakeet(
         .or_else(|| preset.blocks.first());
 
     let streaming_enabled = audio_block
-        .map(|b| b.show_overlay && (b.streaming_enabled || b.render_mode == "stream"))
+        .map(|b| {
+            b.show_overlay
+                && (b.streaming_enabled || b.render_mode == "stream")
+                && b.render_mode != "plain"
+        })
         .unwrap_or(false);
     let mut streaming_hwnd: Option<HWND> = None;
 
