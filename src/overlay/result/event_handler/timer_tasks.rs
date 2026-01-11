@@ -120,7 +120,6 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
 
             // Track if we need to force font cache dirty (bypass 200ms throttle)
             // This is critical for rendering the final text after streaming ends
-            let mut force_font_dirty = false;
 
             // Throttle - but bypass if:
             // 1. streaming_just_ended (transition detection)
@@ -139,7 +138,6 @@ pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
                 // CRITICAL: When streaming ends, force font recalculation
                 // to ensure the final text is properly rendered (bypass 200ms throttle)
                 if not_streaming {
-                    force_font_dirty = true;
                     state.font_cache_dirty = true;
                 }
             }

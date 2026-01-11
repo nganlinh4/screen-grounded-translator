@@ -14,13 +14,6 @@ use super::state::{
     WINDOW_STATES,
 };
 
-// Palette for chain windows
-// 0: Dark (Primary)
-// 1: Green (Secondary)
-// 2: Blue
-// 3: Purple
-// 4: Orange
-// 5+: Random/Cyclic
 pub const CHAIN_PALETTE: [u32; 5] = [
     0x001a1a1c, // Slate Gray (Primary)
     0x00113832, // Deep Teal
@@ -29,12 +22,27 @@ pub const CHAIN_PALETTE: [u32; 5] = [
     0x004a2c22, // Deep Sienna
 ];
 
+pub const CHAIN_PALETTE_LIGHT: [u32; 5] = [
+    0x00f5f5f7, // Off White (Primary)
+    0x00e0f2f1, // Light Teal
+    0x00e3f2fd, // Light Blue
+    0x00f3e5f5, // Light Purple
+    0x00fbe9e7, // Light Orange
+];
+
 pub fn get_chain_color(visible_index: usize) -> u32 {
-    if visible_index == 0 {
-        CHAIN_PALETTE[0]
+    let is_dark = crate::overlay::is_dark_mode();
+    let palette = if is_dark {
+        &CHAIN_PALETTE
     } else {
-        let cycle_idx = (visible_index - 1) % (CHAIN_PALETTE.len() - 1);
-        CHAIN_PALETTE[cycle_idx + 1]
+        &CHAIN_PALETTE_LIGHT
+    };
+
+    if visible_index == 0 {
+        palette[0]
+    } else {
+        let cycle_idx = (visible_index - 1) % (palette.len() - 1);
+        palette[cycle_idx + 1]
     }
 }
 
@@ -95,7 +103,7 @@ pub fn create_result_window(
             // Plain text mode: prevent focus stealing, use clip children
             (
                 WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                WS_POPUP | WS_CLIPCHILDREN,
+                WS_POPUP, // Removed WS_CLIPCHILDREN to fix ghost text artifacts
             )
         };
 

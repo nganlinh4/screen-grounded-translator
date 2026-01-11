@@ -5,6 +5,10 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, UpdateLayeredWindow, ULW_ALPHA};
 
 pub fn update_bubble_visual(hwnd: HWND) {
+    // Sync theme state
+    let is_dark = crate::overlay::is_dark_mode();
+    LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
+
     unsafe {
         let hdc_screen = GetDC(None);
         let hdc_mem = CreateCompatibleDC(Some(hdc_screen));

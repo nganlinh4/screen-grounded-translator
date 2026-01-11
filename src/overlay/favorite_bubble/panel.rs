@@ -525,14 +525,14 @@ unsafe extern "system" fn panel_wnd_proc(
             LRESULT(0)
         }
         WM_REFRESH_PANEL => {
+            let bubble_hwnd = HWND(BUBBLE_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void);
+
             if let Ok(app) = APP.lock() {
                 let is_dark = match app.config.theme_mode {
                     crate::config::ThemeMode::Dark => true,
                     crate::config::ThemeMode::Light => false,
                     crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
                 };
-
-                let bubble_hwnd = HWND(BUBBLE_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void);
 
                 // Set expanded to true so it moves with bubble
                 IS_EXPANDED.store(true, Ordering::SeqCst);
@@ -544,9 +544,13 @@ unsafe extern "system" fn panel_wnd_proc(
                     &app.config.ui_language,
                     is_dark,
                 );
-
-                update_bubble_visual(bubble_hwnd);
             }
+            // Lock released here
+
+            // Correctly call update_bubble_visual outside the lock
+            // (update_bubble_visual internally calls is_dark_mode() which locks APP)
+            update_bubble_visual(bubble_hwnd);
+
             LRESULT(0)
         }
         WM_NCCALCSIZE => {
@@ -615,7 +619,6 @@ fn resize_panel_height(content_height: i32) {
     }
 
     // Add a small buffer to ensure no scrollbars appear
-    let new_height = content_height + 2;
 
     unsafe {
         let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);

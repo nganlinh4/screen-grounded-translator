@@ -65,3 +65,25 @@ pub fn clear_webview_permissions() -> bool {
         true
     }
 }
+/// Check if we should use dark mode based on config
+pub fn is_dark_mode() -> bool {
+    let (mode, _) = {
+        let app = crate::APP.lock().unwrap();
+        (
+            app.config.theme_mode.clone(),
+            app.config.ui_language.clone(),
+        )
+    };
+
+    match mode {
+        crate::config::types::ThemeMode::Dark => true,
+        crate::config::types::ThemeMode::Light => false,
+        crate::config::types::ThemeMode::System => {
+            // Check system theme (default to dark if check fails)
+            match dark_light::detect() {
+                Ok(dark_light::Mode::Light) => false,
+                _ => true,
+            }
+        }
+    }
+}

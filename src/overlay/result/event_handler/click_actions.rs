@@ -258,20 +258,38 @@ pub unsafe fn handle_lbutton_up(hwnd: HWND) -> LRESULT {
                 };
 
                 if toggle_on {
+                    // Switch TO Markdown:
+                    // window.rs now creates window without WS_CLIPCHILDREN by default
+
                     // DEFER WebView creation to after this handler returns
-                    // Using PostMessage allows the handler to return first.
                     let _ = PostMessageW(Some(hwnd), WM_CREATE_WEBVIEW, WPARAM(0), LPARAM(0));
-                    // Start hover polling timer (ID 2, 30ms interval)
                     SetTimer(Some(hwnd), 2, 30, None);
                 } else {
-                    // Hide markdown webview, show plain text
-                    markdown_view::hide_markdown_webview(hwnd);
-                    // Stop hover polling timer
+                    // Switch TO Plain Text:
+                    // 1. Destroy the WebView completely
+                    markdown_view::destroy_markdown_webview(hwnd);
+
+                    // 2. Add WS_CLIPCHILDREN back
+                    unsafe {
+                        // Force style update (WS_CLIPCHILDREN is permanently off)
+                        let _ = SetWindowPos(
+                            hwnd,
+                            Some(HWND::default()),
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_FRAMECHANGED
+                                | SWP_NOMOVE
+                                | SWP_NOSIZE
+                                | SWP_NOZORDER
+                                | SWP_NOACTIVATE,
+                        );
+                    }
+
+                    // 3. Cleanup timers and restore event tracking
                     let _ = KillTimer(Some(hwnd), 2);
 
-                    // Re-establish TrackMouseEvent for plain text mode
-                    // This is needed because Timer 2 was handling hover state,
-                    // but now we need WM_MOUSELEAVE to fire again
                     let mut tme = TRACKMOUSEEVENT {
                         cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
                         dwFlags: TME_LEAVE,

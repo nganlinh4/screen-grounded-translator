@@ -226,6 +226,41 @@ fn hide_canvas() {
     }
 }
 
+// Track last applied theme to avoid redundant injections
+static LAST_THEME_IS_DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+fn get_canvas_theme_css(is_dark: bool) -> &'static str {
+    if is_dark {
+        r#"
+        :root {
+            --btn-bg: rgba(30, 30, 30, 0.85);
+            --btn-border: rgba(255, 255, 255, 0.1);
+            --btn-color: rgba(255, 255, 255, 0.8);
+            --btn-hover-bg: rgba(60, 60, 60, 0.95);
+            --btn-hover-color: #4fc3f7;
+            --btn-active-bg: rgba(30, 30, 30, 0.95);
+            --btn-active-color: #4fc3f7;
+            --btn-success-color: #81c784;
+            --shadow-color: rgba(79, 195, 247, 0.35);
+        }
+        "#
+    } else {
+        r#"
+        :root {
+            --btn-bg: rgba(255, 255, 255, 0.92);
+            --btn-border: rgba(0, 0, 0, 0.08);
+            --btn-color: rgba(0, 0, 0, 0.7);
+            --btn-hover-bg: #ffffff;
+            --btn-hover-color: #0277bd;
+            --btn-active-bg: #ffffff;
+            --btn-active-color: #0277bd;
+            --btn-success-color: #43a047;
+            --shadow-color: rgba(2, 119, 189, 0.25);
+        }
+        "#
+    }
+}
+
 fn generate_canvas_html() -> String {
     let font_css = crate::overlay::html_components::font_manager::get_font_css();
 
@@ -246,6 +281,11 @@ fn generate_canvas_html() -> String {
     })
     .to_string();
 
+    let is_dark = crate::overlay::is_dark_mode();
+    // Initialize state
+    LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
+    let theme_css = get_canvas_theme_css(is_dark);
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -254,6 +294,11 @@ fn generate_canvas_html() -> String {
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
 <style>
 {font_css}
+</style>
+<style id="theme-css">
+{theme_css}
+</style>
+<style>
 
 .icons {{
     font-family: 'Material Symbols Rounded';
@@ -286,17 +331,16 @@ html, body {{
     width: 24px;
     height: 24px;
     border-radius: 6px;
-    background: rgba(30, 30, 30, 0.85);
+    background: var(--btn-bg);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--btn-border);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    cursor: pointer;
     transition: opacity 0.15s ease-out, background-color 0.15s ease-out, color 0.15s ease-out;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--btn-color);
 }}
 
 .button-group.vertical {{
@@ -310,14 +354,14 @@ html, body {{
 }}
 
 .btn:hover {{
-    background: rgba(60, 60, 60, 0.95);
-    color: #4fc3f7;
+    background: var(--btn-hover-bg);
+    color: var(--btn-hover-color);
     transform: scale(1.05);
     /* Directional glow: left, right, bottom only (no top to avoid resize area) */
     box-shadow: 
-        -5px 0 6px -3px rgba(79, 195, 247, 0.35),  /* left */
-        5px 0 6px -3px rgba(79, 195, 247, 0.35),   /* right */
-        0 5px 6px -3px rgba(79, 195, 247, 0.4);    /* bottom */
+        -5px 0 6px -3px var(--shadow-color),  /* left */
+        5px 0 6px -3px var(--shadow-color),   /* right */
+        0 5px 6px -3px var(--shadow-color);    /* bottom */
 }}
 
 .btn:active {{
@@ -330,15 +374,15 @@ html, body {{
 }}
 
 .btn.active {{
-    background: rgba(30, 30, 30, 0.95);
-    border-color: #4fc3f7;
-    color: #4fc3f7;
+    background: var(--btn-active-bg);
+    border-color: var(--btn-active-color);
+    color: var(--btn-active-color);
 }}
 
 .btn.success {{
-    background: rgba(30, 30, 30, 0.95);
-    border-color: #81c784;
-    color: #81c784;
+    background: var(--btn-active-bg);
+    border-color: var(--btn-success-color);
+    color: var(--btn-success-color);
 }}
 
 .btn.loading {{
@@ -1137,6 +1181,25 @@ fn handle_ipc_message(body: &str) {
 
 /// Send updated window data to the canvas
 fn send_windows_update() {
+    // Check if theme has changed and inject new CSS if needed
+    let is_dark = crate::overlay::is_dark_mode();
+    let last_dark = LAST_THEME_IS_DARK.load(Ordering::SeqCst);
+    if is_dark != last_dark {
+        let new_css = get_canvas_theme_css(is_dark);
+        // Escape content safely for JS string
+        let content_escaped = new_css.replace('`', "\\`").replace('\\', "\\\\");
+        let script = format!(
+            "var s = document.getElementById('theme-css'); if(s) s.innerHTML = `{}`;",
+            content_escaped
+        );
+        CANVAS_WEBVIEW.with(|cell| {
+            if let Some(webview) = cell.borrow().as_ref() {
+                let _ = webview.evaluate_script(&script);
+            }
+        });
+        LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
+    }
+
     let windows_data = {
         let states = WINDOW_STATES.lock().unwrap();
         let windows = MARKDOWN_WINDOWS.lock().unwrap();

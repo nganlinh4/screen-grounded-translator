@@ -59,6 +59,7 @@ windows-core = "0.62"
 parakeet-rs = { version = "0.2.7", features = ["directml"] }
 ort = { version = "2.0.0-rc.10", features = ["directml"] }
 ringbuf = "0.4.8"
+dark-light = "2.0.0"
 
 [dependencies.windows]
 version = "0.62"

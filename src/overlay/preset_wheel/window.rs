@@ -129,19 +129,11 @@ pub fn show_preset_wheel(
         WHEEL_ACTIVE.store(true, Ordering::SeqCst);
         *SELECTED_PRESET.lock().unwrap() = None;
 
-        let (presets, ui_lang, is_dark) = {
+        let (presets, ui_lang) = {
             let app = APP.lock().unwrap();
-            let is_dark = match app.config.theme_mode {
-                crate::config::ThemeMode::Dark => true,
-                crate::config::ThemeMode::Light => false,
-                crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
-            };
-            (
-                app.config.presets.clone(),
-                app.config.ui_language.clone(),
-                is_dark,
-            )
+            (app.config.presets.clone(), app.config.ui_language.clone())
         };
+        let is_dark = crate::overlay::is_dark_mode();
 
         // Generate themed CSS for injection
         let themed_css = generate_css(is_dark);

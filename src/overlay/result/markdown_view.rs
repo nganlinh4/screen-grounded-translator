@@ -112,10 +112,13 @@ fn warmup_internal() {
 
         // Create a WebView to warm up WebView2 infrastructure using shared context
         // Include font CSS AND render text in those fonts to force browser to download them
+        let is_dark = crate::overlay::is_dark_mode();
+        let theme_css = get_theme_css(is_dark);
         let warmup_html = format!(
             r#"<html>
 <head>
 <style>
+{}
 {}
 body {{ font-family: 'Google Sans Flex', sans-serif; }}
 .icons {{ font-family: 'Material Symbols Rounded'; font-size: 24px; }}
@@ -130,6 +133,7 @@ body {{ font-family: 'Google Sans Flex', sans-serif; }}
     <span class="icons">pause stop mic</span>
 </body>
 </html>"#,
+            theme_css,
             crate::overlay::html_components::font_manager::get_font_css()
         );
         let wrapper = HwndWrapper(hwnd);
@@ -215,11 +219,7 @@ fn get_font_style() -> String {
 /// CSS styling for the markdown content
 const MARKDOWN_CSS: &str = r#"
     :root {
-        --primary: #4fc3f7;
-        --secondary: #81d4fa;
         --bg: transparent;
-        --glass: rgba(255, 255, 255, 0.03);
-        --glass-border: rgba(255, 255, 255, 0.05);
     }
     * { box-sizing: border-box; }
     
@@ -257,7 +257,7 @@ const MARKDOWN_CSS: &str = r#"
         line-height: 1.5; /* Reduced line height for compactness */
         background: var(--bg);
         /* Removed min-height: 100vh to enable proper overflow detection for font scaling */
-        color: white;
+        color: var(--text-color);
         margin: 0;
         padding: 0; /* Padding now handled by WebView edge margin */
         overflow-x: hidden;
@@ -296,14 +296,14 @@ const MARKDOWN_CSS: &str = r#"
 
     h3 { 
         font-size: 1.2em; 
-        color: #b3e5fc; 
+        color: var(--h3-color); 
         margin-top: 0.8em; /* Reduced from 1.0em */
         margin-bottom: 0.4em;
         font-variation-settings: 'wght' 500, 'wdth' 100, 'slnt' 0, 'ROND' 100;
     }
     
     h4, h5, h6 { 
-        color: #e1f5fe; 
+        color: var(--h4-color); 
         margin-top: 0.8em;
         margin-bottom: 0.4em;
         font-variation-settings: 'wght' 500, 'wdth' 100, 'slnt' 0, 'ROND' 100;
@@ -321,25 +321,25 @@ const MARKDOWN_CSS: &str = r#"
     /* 1. Center (Hovered) - Bright cyan + glow */
     .word:hover {
         color: var(--primary);
-        text-shadow: 0 0 12px rgba(79, 195, 247, 0.6);
+        text-shadow: 0 0 12px var(--shadow-color);
     }
 
     /* 2. Immediate Neighbors (Distance: 1) - Light cyan */
     .word:hover + .word {
-        color: #e1f5fe;
-        text-shadow: 0 0 6px rgba(79, 195, 247, 0.3);
+        color: var(--h4-color);
+        text-shadow: 0 0 6px var(--shadow-weak);
     }
     .word:has(+ .word:hover) {
-        color: #e1f5fe;
-        text-shadow: 0 0 6px rgba(79, 195, 247, 0.3);
+        color: var(--h4-color);
+        text-shadow: 0 0 6px var(--shadow-weak);
     }
 
     /* 3. Secondary Neighbors (Distance: 2) - Lighter cyan */
     .word:hover + .word + .word {
-        color: #b3e5fc;
+        color: var(--h3-color);
     }
     .word:has(+ .word + .word:hover) {
-        color: #b3e5fc;
+        color: var(--h3-color);
     }
 
     /* Headers need specific overriding to ensure the fisheye works on top of their base styles */
@@ -362,12 +362,12 @@ const MARKDOWN_CSS: &str = r#"
     pre code { 
         background: transparent; 
         padding: 0; 
-        color: #d4d4d4;
+        color: var(--code-color);
     }
     
-    a { color: #82b1ff; text-decoration: none; transition: all 0.2s; cursor: pointer; }
+    a { color: var(--link-color); text-decoration: none; transition: all 0.2s; cursor: pointer; }
     a .word { cursor: pointer; } /* Ensure link words show hand cursor */
-    a:hover { color: #448aff; text-shadow: 0 0 10px rgba(68,138,255,0.4); text-decoration: none; }
+    a:hover { color: var(--link-hover-color); text-shadow: 0 0 10px var(--link-shadow); text-decoration: none; }
     
     ul, ol { padding-left: 20px; margin: 0 0; }
     li { margin: 2px 0; } /* Reduced from 4px */
@@ -379,26 +379,26 @@ const MARKDOWN_CSS: &str = r#"
         margin: 12px 0; /* Reduced from 16px */
         border-radius: 8px; 
         overflow: hidden; 
-        border: 1px solid #333; 
-        background: rgba(0,0,0,0.2);
+        border: 1px solid var(--border-color); 
+        background: var(--table-bg);
     }
     th { 
-        background: #222; 
+        background: var(--table-header-bg); 
         padding: 8px 10px; /* Reduced from 10px */
         color: var(--primary); 
         text-align: left;
         font-weight: 600;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--border-color);
         font-variation-settings: 'wght' 600, 'wdth' 100, 'slnt' 0, 'ROND' 100;
     }
     td { 
         padding: 6px 10px; /* Reduced from 8px */
-        border-top: 1px solid #333;
+        border-top: 1px solid var(--border-color);
     }
     tr:first-child td { border-top: none; }
-    tr:hover td { background: rgba(255,255,255,0.03); }
+    tr:hover td { background: var(--glass); }
     
-    hr { border: none; height: 1px; background: #333; margin: 16px 0; } /* Reduced from 24px */
+    hr { border: none; height: 1px; background: var(--border-color); margin: 16px 0; } /* Reduced from 24px */
     img { max-width: 100%; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
     
     /* Streaming chunk animation - blur-dissolve for ONLY new content */
@@ -651,6 +651,55 @@ fn inject_auto_scaling(html: &str) -> String {
     html.to_string()
 }
 
+/// Get theme CSS variables based on mode
+fn get_theme_css(is_dark: bool) -> String {
+    if is_dark {
+        r#"
+        :root {
+            --primary: #4fc3f7; /* Cyan 300 */
+            --secondary: #81d4fa; /* Cyan 200 */
+            --text-color: white;
+            --h3-color: #b3e5fc; /* Cyan 100 */
+            --h4-color: #e1f5fe; /* Cyan 50 */
+            --code-color: #d4d4d4;
+            --link-color: #82b1ff; /* Blue A100 */
+            --link-hover-color: #448aff; /* Blue A200 */
+            --link-shadow: rgba(68,138,255,0.4);
+            --border-color: #333;
+            --table-bg: rgba(0,0,0,0.2);
+            --table-header-bg: #222;
+            --glass: rgba(255, 255, 255, 0.03);
+            --shadow-color: rgba(79, 195, 247, 0.6);
+            --shadow-weak: rgba(79, 195, 247, 0.3);
+            --bg: transparent;
+        }
+        "#
+        .to_string()
+    } else {
+        r#"
+        :root {
+            --primary: #0288d1; /* Light Blue 700 */
+            --secondary: #0277bd; /* Light Blue 800 */
+            --text-color: #222;
+            --h3-color: #01579b; /* Light Blue 900 */
+            --h4-color: #0277bd;
+            --code-color: #444;
+            --link-color: #1976d2; /* Blue 700 */
+            --link-hover-color: #0d47a1; /* Blue 900 */
+            --link-shadow: rgba(13, 71, 161, 0.25);
+            --border-color: #ddd;
+            --table-bg: rgba(255,255,255,0.4);
+            --table-header-bg: rgba(240,240,240,0.8);
+            --glass: rgba(0, 0, 0, 0.03);
+            --shadow-color: rgba(2, 136, 209, 0.4);
+            --shadow-weak: rgba(2, 136, 209, 0.2);
+            --bg: transparent;
+        }
+        "#
+        .to_string()
+    }
+}
+
 /// Convert markdown text to styled HTML, or pass through raw HTML
 pub fn markdown_to_html(
     markdown: &str,
@@ -658,6 +707,9 @@ pub fn markdown_to_html(
     preset_prompt: &str,
     input_text: &str,
 ) -> String {
+    let is_dark = crate::overlay::is_dark_mode();
+    let theme_css = get_theme_css(is_dark);
+
     if is_refining && crate::overlay::utils::SHOW_REFINING_CONTEXT_QUOTE {
         let combined = if input_text.is_empty() {
             preset_prompt.to_string()
@@ -671,6 +723,7 @@ pub fn markdown_to_html(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>{}</style>
     {}
     <style>
         {} 
@@ -693,6 +746,7 @@ pub fn markdown_to_html(
     {}
 </body>
 </html>"#,
+            theme_css,
             get_font_style(),
             MARKDOWN_CSS,
             quote,
@@ -803,6 +857,7 @@ pub fn markdown_to_html(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>{}</style>
     {}
     <style>{}</style>
     {}
@@ -812,6 +867,7 @@ pub fn markdown_to_html(
     {}
 </body>
 </html>"#,
+        theme_css,
         get_font_style(),
         MARKDOWN_CSS,
         gridjs_head,
@@ -876,7 +932,7 @@ pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovere
 pub fn create_markdown_webview_ex(
     parent_hwnd: HWND,
     markdown_text: &str,
-    is_hovered: bool,
+    _is_hovered: bool,
     is_refining: bool,
     preset_prompt: &str,
     input_text: &str,

@@ -59,7 +59,7 @@ pub fn execute_chain_pipeline(
             Some(processing_hwnd_send), // Pass the handle to be closed later
             Arc::new(AtomicBool::new(false)), // New chains start with cancellation = false
             preset_id,
-            false, // disable_auto_paste
+            false,    // disable_auto_paste
             chain_id, // Per-chain position tracking
         );
     });
@@ -111,7 +111,7 @@ pub fn execute_chain_pipeline_with_token(
         None, // No processing window for text presets
         cancel_token,
         preset.id.clone(),
-        false, // disable_auto_paste
+        false,    // disable_auto_paste
         chain_id, // Per-chain position tracking
     );
 }
@@ -847,7 +847,7 @@ progressBar.onclick = (e) => {{
         let mut current_provider = provider.clone();
         let mut current_model_full_name = model_full_name.clone();
         // Variable to hold the model name for error reporting (must survive loop)
-        let mut model_name_for_error = model_full_name.clone();
+        let mut model_name_for_error = String::new();
 
         let mut failed_model_ids: Vec<String> = Vec::new();
         let mut retry_count = 0;
@@ -1422,7 +1422,7 @@ progressBar.onclick = (e) => {{
                     cancel_clone,
                     preset_id_clone,
                     disable_auto_paste, // Propagate the flag
-                    chain_id_clone, // Same chain ID for all branches
+                    chain_id_clone,     // Same chain ID for all branches
                 );
             });
         }
@@ -1442,7 +1442,7 @@ progressBar.onclick = (e) => {{
             cancel_token,              // Pass the same token through the chain
             preset_id,
             disable_auto_paste, // Propagate the flag
-            chain_id, // Same chain ID through the chain
+            chain_id,           // Same chain ID through the chain
         );
     } else {
         // Chain stopped unexpectedly (empty result or error)

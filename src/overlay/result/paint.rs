@@ -181,9 +181,6 @@ pub fn paint_window(hwnd: HWND) {
                             p_bg_bits as *mut u32,
                             (width * height) as usize,
                         );
-                        let top_r = (state.bg_color >> 16) & 0xFF;
-                        let top_g = (state.bg_color >> 8) & 0xFF;
-                        let top_b = state.bg_color & 0xFF;
                         let r = (state.bg_color >> 16) & 0xFF;
                         let g = (state.bg_color >> 8) & 0xFF;
                         let b = state.bg_color & 0xFF;
@@ -387,7 +384,18 @@ pub fn paint_window(hwnd: HWND) {
                 let _ = DeleteObject(dark_brush.into());
 
                 SetBkMode(cache_dc, TRANSPARENT);
-                SetTextColor(cache_dc, COLORREF(0x00FFFFFF));
+                // Auto-contrast text color based on background luminance
+                let bg_r = (bg_color_u32 >> 16) & 0xFF;
+                let bg_g = (bg_color_u32 >> 8) & 0xFF;
+                let bg_b = bg_color_u32 & 0xFF;
+                let luminance =
+                    (0.299 * bg_r as f32) + (0.587 * bg_g as f32) + (0.114 * bg_b as f32);
+                let text_col = if luminance > 140.0 {
+                    0x00000000 // Black text for light background
+                } else {
+                    0x00FFFFFF // White text for dark background
+                };
+                SetTextColor(cache_dc, COLORREF(text_col));
 
                 let mut buf = if is_refining {
                     if !crate::overlay::utils::SHOW_REFINING_CONTEXT_QUOTE {
