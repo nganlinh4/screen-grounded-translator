@@ -181,6 +181,13 @@ pub fn create_result_window(
         let mut physics = CursorPhysics::default();
         physics.initialized = true;
 
+        // Initialize physics with current cursor position to prevent (0,0) glitch
+        let mut pt = POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        let _ = ScreenToClient(hwnd, &mut pt);
+        physics.x = pt.x as f32;
+        physics.y = pt.y as f32;
+
         // Get graphics mode from config
         let graphics_mode = {
             let app = crate::APP.lock().unwrap();
