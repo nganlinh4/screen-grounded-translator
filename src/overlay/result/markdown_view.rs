@@ -1938,7 +1938,7 @@ pub fn has_markdown_webview(parent_hwnd: HWND) -> bool {
 
 /// Generate a filename using Cerebras' gpt-oss-120b model
 fn generate_filename(content: &str) -> String {
-    let default_name = "game.html".to_string();
+    let default_name = "result.html".to_string();
 
     // Get API Key
     let cerebras_key = if let Ok(app) = crate::APP.lock() {

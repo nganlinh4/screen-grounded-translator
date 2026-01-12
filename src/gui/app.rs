@@ -51,14 +51,21 @@ impl eframe::App for SettingsApp {
         self.update_tips_logic(ctx);
 
         // --- UI LAYOUT ---
+        // Title Bar (Custom Windows Bar)
+        self.render_title_bar(ctx);
+
         // Footer & Tips Modal
         self.render_footer_and_tips_modal(ctx);
 
         // Main Layout
         self.render_main_layout(ctx);
 
-        // Fade In Overlay (Last)
+        // Window Resizing (Must be last to override cursors at edges)
+        self.render_window_resize_handles(ctx);
+
+        // Overlays
         self.render_fade_overlay(ctx);
+        self.render_drop_overlay(ctx);
 
         // Render Minimal Mode Overlay (Realtime)
         crate::overlay::realtime_egui::render_minimal_overlay(ctx);

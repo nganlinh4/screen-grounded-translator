@@ -7,7 +7,10 @@ use crate::gui::settings_ui::{
 };
 use eframe::egui;
 use egui::text::{LayoutJob, TextFormat};
+use image;
+use image::GenericImageView;
 
+// compile_error!("Find me!");
 impl SettingsApp {
     pub(crate) fn render_footer_and_tips_modal(&mut self, ctx: &egui::Context) {
         let text = LocaleText::get(&self.config.ui_language);
@@ -31,7 +34,21 @@ impl SettingsApp {
             .frame(
                 egui::Frame::default()
                     .inner_margin(egui::Margin::symmetric(10, 4))
-                    .fill(footer_bg),
+                    .fill(footer_bg)
+                    .corner_radius(egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+                            0
+                        } else {
+                            12
+                        },
+                        se: if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+                            0
+                        } else {
+                            12
+                        },
+                    }),
             )
             .show(ctx, |ui| {
                 render_footer(
@@ -129,118 +146,640 @@ impl SettingsApp {
         }
     }
 
+    pub(crate) fn render_title_bar(&mut self, ctx: &egui::Context) {
+        let text = LocaleText::get(&self.config.ui_language);
+        let is_dark = ctx.style().visuals.dark_mode;
+        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+
+        // Match Footer Color
+        let bar_bg = if is_dark {
+            egui::Color32::from_gray(20)
+        } else {
+            egui::Color32::from_gray(240)
+        };
+
+        egui::TopBottomPanel::top("title_bar")
+            .exact_height(40.0)
+            .frame(
+                egui::Frame::default()
+                    .inner_margin(if is_maximized {
+                        egui::Margin {
+                            left: 8,
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                        }
+                    } else {
+                        egui::Margin {
+                            left: 8,
+                            right: 8,
+                            top: 6,
+                            bottom: 6,
+                        }
+                    })
+                    .fill(bar_bg)
+                    .corner_radius(egui::CornerRadius {
+                        nw: if is_maximized { 0 } else { 12 },
+                        ne: if is_maximized { 0 } else { 12 },
+                        sw: 0,
+                        se: 0,
+                    })
+                    .stroke(egui::Stroke::NONE),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                // --- DRAG HANDLE (Whole Bar) ---
+                // We use interact instead of allocate_response to avoid pushing content
+                let drag_resp =
+                    ui.interact(ui.max_rect(), ui.id().with("drag_bar"), egui::Sense::drag());
+                if drag_resp.dragged() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+
+                    // --- LEFT SIDE: Sidebar Controls ---
+                    // Theme Switcher
+                    let (theme_icon, tooltip) = match self.config.theme_mode {
+                        crate::config::ThemeMode::Dark => {
+                            (crate::gui::icons::Icon::Moon, "Theme: Dark")
+                        }
+                        crate::config::ThemeMode::Light => {
+                            (crate::gui::icons::Icon::Sun, "Theme: Light")
+                        }
+                        crate::config::ThemeMode::System => {
+                            (crate::gui::icons::Icon::Device, "Theme: System (Auto)")
+                        }
+                    };
+
+                    if crate::gui::icons::icon_button_sized(ui, theme_icon, 18.0)
+                        .on_hover_text(tooltip)
+                        .clicked()
+                    {
+                        self.config.theme_mode = match self.config.theme_mode {
+                            crate::config::ThemeMode::System => crate::config::ThemeMode::Dark,
+                            crate::config::ThemeMode::Dark => crate::config::ThemeMode::Light,
+                            crate::config::ThemeMode::Light => crate::config::ThemeMode::System,
+                        };
+                        self.save_and_sync();
+                    }
+
+                    // Language Switcher
+                    let original_lang = self.config.ui_language.clone();
+                    let lang_flag = match self.config.ui_language.as_str() {
+                        "vi" => "🇻🇳",
+                        "ko" => "🇰🇷",
+                        _ => "🇺🇸",
+                    };
+                    egui::ComboBox::from_id_salt("title_lang_switch")
+                        .width(30.0)
+                        .selected_text(lang_flag)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.config.ui_language,
+                                "en".to_string(),
+                                "🇺🇸 English",
+                            );
+                            ui.selectable_value(
+                                &mut self.config.ui_language,
+                                "vi".to_string(),
+                                "🇻🇳 Tiếng Việt",
+                            );
+                            ui.selectable_value(
+                                &mut self.config.ui_language,
+                                "ko".to_string(),
+                                "🇰🇷 한국어",
+                            );
+                        });
+                    if original_lang != self.config.ui_language {
+                        self.save_and_sync();
+                    }
+
+                    // History Button
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    crate::gui::icons::draw_icon_static(
+                        ui,
+                        crate::gui::icons::Icon::History,
+                        Some(14.0),
+                    );
+                    let is_history = matches!(self.view_mode, ViewMode::History);
+                    if ui
+                        .selectable_label(
+                            is_history,
+                            egui::RichText::new(text.history_btn).size(13.0),
+                        )
+                        .clicked()
+                    {
+                        self.view_mode = ViewMode::History;
+                    }
+
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.add_space(2.0);
+
+                    // Chill Corner (PromptDJ)
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(format!("🎵 {}", text.prompt_dj_btn))
+                                    .color(egui::Color32::WHITE)
+                                    .size(12.0),
+                            )
+                            .fill(egui::Color32::from_rgb(100, 100, 200))
+                            .corner_radius(6.0),
+                        )
+                        .clicked()
+                    {
+                        crate::overlay::prompt_dj::show_prompt_dj();
+                    }
+
+                    // Help Assistant
+                    let help_bg = if is_dark {
+                        egui::Color32::from_rgb(80, 60, 120)
+                    } else {
+                        egui::Color32::from_rgb(180, 160, 220)
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(format!("❓ {}", text.help_assistant_btn))
+                                    .color(egui::Color32::WHITE)
+                                    .size(12.0),
+                            )
+                            .fill(help_bg)
+                            .corner_radius(6.0),
+                        )
+                        .on_hover_text(text.help_assistant_title)
+                        .clicked()
+                    {
+                        std::thread::spawn(|| {
+                            crate::gui::settings_ui::help_assistant::show_help_input();
+                        });
+                    }
+
+                    // Global Settings
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    crate::gui::icons::draw_icon_static(
+                        ui,
+                        crate::gui::icons::Icon::Settings,
+                        Some(14.0),
+                    );
+                    let is_global = matches!(self.view_mode, ViewMode::Global);
+                    if ui
+                        .selectable_label(
+                            is_global,
+                            egui::RichText::new(text.global_settings).size(13.0),
+                        )
+                        .clicked()
+                    {
+                        self.view_mode = ViewMode::Global;
+                    }
+
+                    // --- RIGHT SIDE: Window Controls & Branding ---
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+
+                        let grid_h = if is_maximized { 40.0 } else { 28.0 };
+                        let btn_size = egui::vec2(40.0, grid_h);
+
+                        // Close Button
+                        let close_resp = ui.allocate_response(btn_size, egui::Sense::click());
+                        if close_resp.clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        if close_resp.hovered() {
+                            ui.painter().rect_filled(
+                                close_resp.rect,
+                                0.0,
+                                egui::Color32::from_rgb(232, 17, 35),
+                            );
+                        }
+                        crate::gui::icons::paint_icon(
+                            ui.painter(),
+                            close_resp
+                                .rect
+                                .shrink2(egui::vec2(12.0, if is_maximized { 12.0 } else { 6.0 })),
+                            crate::gui::icons::Icon::Close,
+                            if close_resp.hovered() {
+                                egui::Color32::WHITE
+                            } else {
+                                if is_dark {
+                                    egui::Color32::WHITE
+                                } else {
+                                    egui::Color32::BLACK
+                                }
+                            },
+                        );
+
+                        // Maximize / Restore
+                        let max_resp = ui.allocate_response(btn_size, egui::Sense::click());
+                        if max_resp.clicked() {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                        }
+                        if max_resp.hovered() {
+                            ui.painter().rect_filled(
+                                max_resp.rect,
+                                0.0,
+                                if is_dark {
+                                    egui::Color32::from_gray(60)
+                                } else {
+                                    egui::Color32::from_gray(220)
+                                },
+                            );
+                        }
+                        let max_icon = if is_maximized {
+                            crate::gui::icons::Icon::Restore
+                        } else {
+                            crate::gui::icons::Icon::Maximize
+                        };
+                        crate::gui::icons::paint_icon(
+                            ui.painter(),
+                            max_resp
+                                .rect
+                                .shrink2(egui::vec2(13.0, if is_maximized { 13.0 } else { 7.0 })),
+                            max_icon,
+                            if is_dark {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::BLACK
+                            },
+                        );
+
+                        // Minimize
+                        let min_resp = ui.allocate_response(btn_size, egui::Sense::click());
+                        if min_resp.clicked() {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                        if min_resp.hovered() {
+                            ui.painter().rect_filled(
+                                min_resp.rect,
+                                0.0,
+                                if is_dark {
+                                    egui::Color32::from_gray(60)
+                                } else {
+                                    egui::Color32::from_gray(220)
+                                },
+                            );
+                        }
+                        crate::gui::icons::paint_icon(
+                            ui.painter(),
+                            min_resp
+                                .rect
+                                .shrink2(egui::vec2(13.0, if is_maximized { 13.0 } else { 7.0 })),
+                            crate::gui::icons::Icon::Minimize,
+                            if is_dark {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::BLACK
+                            },
+                        );
+
+                        ui.add_space(8.0);
+
+                        // Title Text
+                        let title_text =
+                            egui::RichText::new("Screen Goated Toolbox (by nganlinh4)")
+                                .strong()
+                                .size(13.0)
+                                .color(if is_dark {
+                                    egui::Color32::WHITE
+                                } else {
+                                    egui::Color32::BLACK
+                                });
+
+                        if ui
+                            .add(egui::Label::new(title_text).sense(egui::Sense::click()))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(
+                                "https://github.com/nganlinh4/screen-goated-toolbox",
+                            ));
+                        }
+
+                        ui.add_space(6.0);
+
+                        // App Icon
+                        let icon_handle = if is_dark {
+                            if self.icon_dark.is_none() {
+                                let bytes = include_bytes!("../../../assets/app-icon-small.png");
+                                if let Ok(image) = image::load_from_memory(bytes) {
+                                    let resized = image.resize(
+                                        128,
+                                        20,
+                                        image::imageops::FilterType::Lanczos3,
+                                    );
+                                    let image_buffer = resized.to_rgba8();
+                                    let size =
+                                        [image_buffer.width() as _, image_buffer.height() as _];
+                                    let pixels = image_buffer.as_raw();
+                                    let color_image =
+                                        egui::ColorImage::from_rgba_unmultiplied(size, pixels);
+                                    let handle = ctx.load_texture(
+                                        "app-icon-dark",
+                                        color_image,
+                                        Default::default(),
+                                    );
+                                    self.icon_dark = Some(handle);
+                                }
+                            }
+                            self.icon_dark.as_ref()
+                        } else {
+                            if self.icon_light.is_none() {
+                                let bytes =
+                                    include_bytes!("../../../assets/app-icon-small-light.png");
+                                if let Ok(image) = image::load_from_memory(bytes) {
+                                    let resized = image.resize(
+                                        128,
+                                        20,
+                                        image::imageops::FilterType::Lanczos3,
+                                    );
+                                    let image_buffer = resized.to_rgba8();
+                                    let size =
+                                        [image_buffer.width() as _, image_buffer.height() as _];
+                                    let pixels = image_buffer.as_raw();
+                                    let color_image =
+                                        egui::ColorImage::from_rgba_unmultiplied(size, pixels);
+                                    let handle = ctx.load_texture(
+                                        "app-icon-light",
+                                        color_image,
+                                        Default::default(),
+                                    );
+                                    self.icon_light = Some(handle);
+                                }
+                            }
+                            self.icon_light.as_ref()
+                        };
+
+                        if let Some(texture) = icon_handle {
+                            ui.add(egui::Image::new(texture).max_height(20.0));
+                        }
+                    });
+                });
+            });
+    }
+
     pub(crate) fn render_main_layout(&mut self, ctx: &egui::Context) {
         let text = LocaleText::get(&self.config.ui_language);
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let available_width = ui.available_width();
-            let left_width = available_width * 0.35;
-            let right_width = available_width * 0.65;
+        let is_dark = ctx.style().visuals.dark_mode;
 
-            ui.horizontal(|ui| {
-                // Left Sidebar
-                ui.allocate_ui_with_layout(
-                    egui::vec2(left_width, ui.available_height()),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        if render_sidebar(ui, &mut self.config, &mut self.view_mode, &text) {
-                            self.save_and_sync();
-                        }
-                    },
-                );
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::NONE
+                    .fill(ctx.style().visuals.panel_fill)
+                    .corner_radius(egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: 0, // Footer handles bottom corners now
+                        se: 0, // Footer handles bottom corners now
+                    }),
+            )
+            .show(ctx, |ui| {
+                let available_width = ui.available_width();
+                let left_width = available_width * 0.35;
+                let right_width = available_width * 0.65;
 
-                ui.add_space(10.0);
-
-                // Right Detail View
-                ui.allocate_ui_with_layout(
-                    egui::vec2((right_width - 20.0).max(0.0), ui.available_height()),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        match self.view_mode {
-                            ViewMode::Global => {
-                                let usage_stats = {
-                                    let app = self.app_state_ref.lock().unwrap();
-                                    app.model_usage_stats.clone()
-                                };
-                                if render_global_settings(
-                                    ui,
-                                    &mut self.config,
-                                    &mut self.show_api_key,
-                                    &mut self.show_gemini_api_key,
-                                    &mut self.show_openrouter_api_key,
-                                    &mut self.show_cerebras_api_key,
-                                    &usage_stats,
-                                    &self.updater,
-                                    &self.update_status,
-                                    &mut self.run_at_startup,
-                                    &self.auto_launcher,
-                                    self.current_admin_state, // <-- Pass current admin state
-                                    &text,
-                                    &mut self.show_usage_modal,
-                                    &mut self.show_tts_modal,
-                                    &self.cached_audio_devices,
-                                ) {
-                                    self.save_and_sync();
-                                }
-                            }
-                            ViewMode::History => {
-                                let history_manager = {
-                                    let app = self.app_state_ref.lock().unwrap();
-                                    app.history.clone()
-                                };
-                                if render_history_panel(
-                                    ui,
-                                    &mut self.config,
-                                    &history_manager,
-                                    &mut self.search_query,
-                                    &text,
-                                ) {
-                                    self.save_and_sync();
-                                }
-                            }
-                            ViewMode::Preset(idx) => {
-                                // Sync snarl state if switching presets or first load
-                                if self.last_edited_preset_idx != Some(idx) {
-                                    if idx < self.config.presets.len() {
-                                        self.snarl = Some(blocks_to_snarl(
-                                            &self.config.presets[idx].blocks,
-                                            &self.config.presets[idx].block_connections,
-                                            &self.config.presets[idx].preset_type,
-                                        ));
-                                        self.last_edited_preset_idx = Some(idx);
-                                    }
-                                }
-
-                                if let Some(snarl) = &mut self.snarl {
-                                    if render_preset_editor(
+                ui.horizontal(|ui| {
+                    // Left Sidebar
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_width, ui.available_height()),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            // Add Left Margin/Padding for Sidebar
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin {
+                                    left: 8,
+                                    right: 0,
+                                    top: 8,
+                                    bottom: 0,
+                                })
+                                .show(ui, |ui| {
+                                    if render_sidebar(
                                         ui,
                                         &mut self.config,
-                                        idx,
-                                        &mut self.search_query,
-                                        &mut self.cached_monitors,
-                                        &mut self.recording_hotkey_for_preset,
-                                        &self.hotkey_conflict_msg,
+                                        &mut self.view_mode,
                                         &text,
-                                        snarl,
                                     ) {
-                                        // Sync back to blocks and connections
-                                        if idx < self.config.presets.len() {
-                                            let (blocks, connections) = snarl_to_graph(snarl);
-                                            self.config.presets[idx].blocks = blocks;
-                                            self.config.presets[idx].block_connections =
-                                                connections;
-                                        }
+                                        self.save_and_sync();
+                                    }
+                                });
+                        },
+                    );
+
+                    ui.add_space(10.0);
+
+                    // Right Detail View
+                    ui.allocate_ui_with_layout(
+                        egui::vec2((right_width - 20.0).max(0.0), ui.available_height()),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            match self.view_mode {
+                                ViewMode::Global => {
+                                    let usage_stats = {
+                                        let app = self.app_state_ref.lock().unwrap();
+                                        app.model_usage_stats.clone()
+                                    };
+                                    if render_global_settings(
+                                        ui,
+                                        &mut self.config,
+                                        &mut self.show_api_key,
+                                        &mut self.show_gemini_api_key,
+                                        &mut self.show_openrouter_api_key,
+                                        &mut self.show_cerebras_api_key,
+                                        &usage_stats,
+                                        &self.updater,
+                                        &self.update_status,
+                                        &mut self.run_at_startup,
+                                        &self.auto_launcher,
+                                        self.current_admin_state, // <-- Pass current admin state
+                                        &text,
+                                        &mut self.show_usage_modal,
+                                        &mut self.show_tts_modal,
+                                        &self.cached_audio_devices,
+                                    ) {
                                         self.save_and_sync();
                                     }
                                 }
+                                ViewMode::History => {
+                                    let history_manager = {
+                                        let app = self.app_state_ref.lock().unwrap();
+                                        app.history.clone()
+                                    };
+                                    if render_history_panel(
+                                        ui,
+                                        &mut self.config,
+                                        &history_manager,
+                                        &mut self.search_query,
+                                        &text,
+                                    ) {
+                                        self.save_and_sync();
+                                    }
+                                }
+                                ViewMode::Preset(idx) => {
+                                    // Sync snarl state if switching presets or first load
+                                    if self.last_edited_preset_idx != Some(idx) {
+                                        if idx < self.config.presets.len() {
+                                            self.snarl = Some(blocks_to_snarl(
+                                                &self.config.presets[idx].blocks,
+                                                &self.config.presets[idx].block_connections,
+                                                &self.config.presets[idx].preset_type,
+                                            ));
+                                            self.last_edited_preset_idx = Some(idx);
+                                        }
+                                    }
+
+                                    if let Some(snarl) = &mut self.snarl {
+                                        if render_preset_editor(
+                                            ui,
+                                            &mut self.config,
+                                            idx,
+                                            &mut self.search_query,
+                                            &mut self.cached_monitors,
+                                            &mut self.recording_hotkey_for_preset,
+                                            &self.hotkey_conflict_msg,
+                                            &text,
+                                            snarl,
+                                        ) {
+                                            // Sync back to blocks and connections
+                                            if idx < self.config.presets.len() {
+                                                let (blocks, connections) = snarl_to_graph(snarl);
+                                                self.config.presets[idx].blocks = blocks;
+                                                self.config.presets[idx].block_connections =
+                                                    connections;
+                                            }
+                                            self.save_and_sync();
+                                        }
+                                    }
+                                }
                             }
-                        }
-                    },
-                );
+                        },
+                    );
+                });
             });
-        });
 
         // Help assistant is now handled via TextInput overlay (show_help_input)
         // No egui modal rendering needed
+    }
+
+    pub(crate) fn render_window_resize_handles(&self, ctx: &egui::Context) {
+        let border = 8.0; // Increased sensitivity
+        let corner = 16.0; // Larger corner area
+
+        // Fix recursive lock: Get inner_rect first, release lock, then fallback
+        let inner_rect = ctx.input(|i| i.viewport().inner_rect);
+        let viewport_rect = inner_rect.unwrap_or_else(|| ctx.viewport_rect());
+        let size = viewport_rect.size();
+
+        // Use a single Area for all resize handles to reduce overhead
+        // Disable resize when maximized
+        if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+            return;
+        }
+
+        egui::Area::new(egui::Id::new("resize_handles_overlay"))
+            .order(egui::Order::Debug)
+            .fixed_pos(egui::Pos2::ZERO)
+            .show(ctx, |ui| {
+                let directions = [
+                    // Corners (NorthWest, NorthEast, SouthWest, SouthEast)
+                    (
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(corner, corner)),
+                        egui::viewport::ResizeDirection::NorthWest,
+                        "nw",
+                    ),
+                    (
+                        egui::Rect::from_min_max(
+                            egui::Pos2::new(size.x - corner, 0.0),
+                            egui::Pos2::new(size.x, corner),
+                        ),
+                        egui::viewport::ResizeDirection::NorthEast,
+                        "ne",
+                    ),
+                    (
+                        egui::Rect::from_min_max(
+                            egui::Pos2::new(0.0, size.y - corner),
+                            egui::Pos2::new(corner, size.y),
+                        ),
+                        egui::viewport::ResizeDirection::SouthWest,
+                        "sw",
+                    ),
+                    (
+                        egui::Rect::from_min_max(
+                            egui::Pos2::new(size.x - corner, size.y - corner),
+                            egui::Pos2::new(size.x, size.y),
+                        ),
+                        egui::viewport::ResizeDirection::SouthEast,
+                        "se",
+                    ),
+                    // Edges (North, South, West, East)
+                    (
+                        egui::Rect::from_min_max(
+                            egui::Pos2::new(corner, 0.0),
+                            egui::Pos2::new(size.x - corner, border),
+                        ),
+                        egui::viewport::ResizeDirection::North,
+                        "n",
+                    ),
+                    (
+                        egui::Rect::from_min_max(
+                            egui::Pos2::new(corner, size.y - border),
+                            egui::Pos2::new(size.x - corner, size.y),
+                        ),
+                        egui::viewport::ResizeDirection::South,
+                        "s",
+                    ),
+                    (
+                        egui::Rect::from_min_max(
+                            egui::Pos2::new(0.0, corner),
+                            egui::Pos2::new(border, size.y - corner),
+                        ),
+                        egui::viewport::ResizeDirection::West,
+                        "w",
+                    ),
+                    (
+                        egui::Rect::from_min_max(
+                            egui::Pos2::new(size.x - border, corner),
+                            egui::Pos2::new(size.x, size.y - corner),
+                        ),
+                        egui::viewport::ResizeDirection::East,
+                        "e",
+                    ),
+                ];
+
+                for (rect, dir, id_suffix) in directions {
+                    // Use ui.allocate_rect to reserve space (though in an Area it might not push layout much if fixed,
+                    // but interaction is key). ui.interact is better for explicit rects.
+                    let response = ui.interact(rect, ui.id().with(id_suffix), egui::Sense::drag());
+
+                    if response.hovered() || response.dragged() {
+                        ui.ctx().set_cursor_icon(match dir {
+                            egui::viewport::ResizeDirection::North
+                            | egui::viewport::ResizeDirection::South => {
+                                egui::CursorIcon::ResizeVertical
+                            }
+                            egui::viewport::ResizeDirection::East
+                            | egui::viewport::ResizeDirection::West => {
+                                egui::CursorIcon::ResizeHorizontal
+                            }
+                            egui::viewport::ResizeDirection::NorthWest
+                            | egui::viewport::ResizeDirection::SouthEast => {
+                                egui::CursorIcon::ResizeNwSe
+                            }
+                            egui::viewport::ResizeDirection::NorthEast
+                            | egui::viewport::ResizeDirection::SouthWest => {
+                                egui::CursorIcon::ResizeNeSw
+                            }
+                        });
+                    }
+
+                    if response.drag_started() {
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+                    }
+                }
+            });
     }
 
     pub(crate) fn render_fade_overlay(&mut self, ctx: &egui::Context) {

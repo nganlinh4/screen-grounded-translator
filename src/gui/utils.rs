@@ -8,8 +8,8 @@ use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateIcon, FindWindowW, GetSystemMetrics, SendMessageW, ICON_BIG, ICON_SMALL, SM_CXICON,
-    SM_CXSMICON, SM_CYICON, SM_CYSMICON, WM_SETICON,
+    CreateIcon, FindWindowW, GetSystemMetrics, ICON_BIG, ICON_SMALL, SM_CXICON, SM_CXSMICON,
+    SM_CYICON, SM_CYSMICON, WM_SETICON,
 };
 use windows_core::BOOL;
 
@@ -324,20 +324,20 @@ pub fn set_window_icon(hwnd: HWND, is_dark_mode: bool) {
             let big_h = GetSystemMetrics(SM_CYICON);
 
             if let Some(hicon_small) = create_hicon_from_bytes(icon_bytes, small_w, small_h) {
-                let _ = SendMessageW(
-                    hwnd,
+                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    Some(hwnd),
                     WM_SETICON,
-                    Some(WPARAM(ICON_SMALL as usize)),
-                    Some(LPARAM(hicon_small.0 as isize)),
+                    WPARAM(ICON_SMALL as usize),
+                    LPARAM(hicon_small.0 as isize),
                 );
             }
 
             if let Some(hicon_big) = create_hicon_from_bytes(icon_bytes, big_w, big_h) {
-                let _ = SendMessageW(
-                    hwnd,
+                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    Some(hwnd),
                     WM_SETICON,
-                    Some(WPARAM(ICON_BIG as usize)),
-                    Some(LPARAM(hicon_big.0 as isize)),
+                    WPARAM(ICON_BIG as usize),
+                    LPARAM(hicon_big.0 as isize),
                 );
             }
         }

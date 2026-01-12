@@ -209,129 +209,10 @@ pub fn render_sidebar(
     // They will appear in the order they are defined in config.presets.
 
     let current_view_mode = view_mode.clone();
-    let mut should_set_global = false;
-    let mut should_set_history = false;
-
     // Use actual grid width from previous frame for Global Settings position
     thread_local! {
         static GRID_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
     }
-
-    // --- Header Navigation ---
-    // Use horizontal layout that doesn't claim fixed space (avoids influencing grid)
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let is_dark = ui.visuals().dark_mode;
-
-        // Theme Switcher
-        let (theme_icon, tooltip) = match config.theme_mode {
-            ThemeMode::Dark => (Icon::Moon, "Theme: Dark"),
-            ThemeMode::Light => (Icon::Sun, "Theme: Light"),
-            ThemeMode::System => (Icon::Device, "Theme: System (Auto)"),
-        };
-
-        if icon_button_sized(ui, theme_icon, 20.0)
-            .on_hover_text(tooltip)
-            .clicked()
-        {
-            config.theme_mode = match config.theme_mode {
-                ThemeMode::System => ThemeMode::Dark,
-                ThemeMode::Dark => ThemeMode::Light,
-                ThemeMode::Light => ThemeMode::System,
-            };
-            changed = true;
-        }
-
-        // Language Switcher
-        let original_lang = config.ui_language.clone();
-        let lang_flag = match config.ui_language.as_str() {
-            "vi" => "🇻🇳",
-            "ko" => "🇰🇷",
-            _ => "🇺🇸",
-        };
-        egui::ComboBox::from_id_salt("header_lang_switch")
-            .width(32.0)
-            .selected_text(lang_flag)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut config.ui_language, "en".to_string(), "🇺🇸 English");
-                ui.selectable_value(&mut config.ui_language, "vi".to_string(), "🇻🇳 Tiếng Việt");
-                ui.selectable_value(&mut config.ui_language, "ko".to_string(), "🇰🇷 한국어");
-            });
-        if original_lang != config.ui_language {
-            changed = true;
-        }
-
-        // History Button
-        ui.spacing_mut().item_spacing.x = 4.0;
-        draw_icon_static(ui, Icon::History, None);
-        let is_history = matches!(current_view_mode, ViewMode::History);
-        if ui.selectable_label(is_history, text.history_btn).clicked() {
-            should_set_history = true;
-        }
-
-        ui.spacing_mut().item_spacing.x = 8.0; // Restore spacing for next items
-
-        ui.add_space(8.0);
-
-        // Góc chill chill Button
-        if ui
-            .add(
-                egui::Button::new(
-                    egui::RichText::new(format!("🎵 {}", text.prompt_dj_btn))
-                        .color(egui::Color32::WHITE),
-                )
-                .fill(egui::Color32::from_rgb(100, 100, 200))
-                .corner_radius(8.0),
-            )
-            .clicked()
-        {
-            crate::overlay::prompt_dj::show_prompt_dj();
-        }
-
-        // Push remaining items to the right side
-
-        let remaining = (ui.available_width()).max(0.0);
-        ui.add_space(remaining * 0.9);
-
-        // Help Assistant Button
-        let help_bg = if is_dark {
-            egui::Color32::from_rgb(80, 60, 120)
-        } else {
-            egui::Color32::from_rgb(180, 160, 220)
-        };
-        if ui
-            .add(
-                egui::Button::new(
-                    egui::RichText::new(format!("❓ {}", text.help_assistant_btn))
-                        .color(egui::Color32::WHITE),
-                )
-                .fill(help_bg)
-                .corner_radius(8.0),
-            )
-            .on_hover_text(text.help_assistant_title)
-            .clicked()
-        {
-            // Trigger the help assistant using TextInput overlay
-            std::thread::spawn(|| {
-                crate::gui::settings_ui::help_assistant::show_help_input();
-            });
-        }
-
-        ui.add_space(4.0);
-
-        // Global Settings
-        ui.spacing_mut().item_spacing.x = 4.0;
-        draw_icon_static(ui, Icon::Settings, None);
-        let is_global = matches!(current_view_mode, ViewMode::Global);
-        if ui
-            .selectable_label(is_global, text.global_settings)
-            .clicked()
-        {
-            should_set_global = true;
-        }
-    });
-
-    ui.add_space(8.0);
 
     // --- Presets Grid ---
     // Use stable ID based on preset count and IDs (not names - those change during typing)
@@ -485,12 +366,6 @@ pub fn render_sidebar(
     // Update cached grid width for next frame
     GRID_WIDTH.with(|w| w.set(grid_response.response.rect.width()));
 
-    if should_set_global {
-        *view_mode = ViewMode::Global;
-    }
-    if should_set_history {
-        *view_mode = ViewMode::History;
-    }
     if let Some(idx) = preset_idx_to_select {
         *view_mode = ViewMode::Preset(idx);
     }

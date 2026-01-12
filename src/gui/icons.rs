@@ -37,6 +37,11 @@ pub enum Icon {
     DragHandle,      // New: Drag handle for reordering
     History,         // New: History icon (clock)
     Parakeet,        // New: Parakeet icon (Bird)
+
+    // Window Controls
+    Minimize,
+    Maximize,
+    Restore,
 }
 
 /// Main entry point: Draw a clickable icon button (default size 24.0)
@@ -951,6 +956,48 @@ fn paint_internal(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: 
                 center + egui::vec2(4.0 * scale, 5.0 * scale),  // Bottom-right of head
             ];
             painter.add(egui::Shape::convex_polygon(beak_pts, color, stroke));
+        }
+
+        Icon::Minimize => {
+            let h_line = 0.5 * scale;
+            let w = 6.0 * scale;
+            painter.line_segment(
+                [
+                    center - egui::vec2(w, -h_line),
+                    center + egui::vec2(w, h_line),
+                ],
+                stroke,
+            );
+        }
+
+        Icon::Maximize => {
+            let sz = 6.0 * scale;
+            let rect = egui::Rect::from_center_size(center, egui::vec2(sz * 2.0, sz * 2.0));
+            painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Middle);
+        }
+
+        Icon::Restore => {
+            let sz = 5.0 * scale;
+            let offset = 2.0 * scale;
+
+            // Back rect
+            let rect_back = egui::Rect::from_center_size(
+                center + egui::vec2(offset, -offset),
+                egui::vec2(sz * 2.0, sz * 2.0),
+            );
+            painter.rect_stroke(rect_back, 0.0, stroke, egui::StrokeKind::Middle);
+
+            // Front rect
+            let rect_front = egui::Rect::from_center_size(
+                center + egui::vec2(-offset, offset),
+                egui::vec2(sz * 2.0, sz * 2.0),
+            );
+            painter.rect_filled(
+                rect_front.expand(stroke.width / 2.0),
+                0.0,
+                painter.ctx().style().visuals.panel_fill,
+            );
+            painter.rect_stroke(rect_front, 0.0, stroke, egui::StrokeKind::Middle);
         }
     }
 }

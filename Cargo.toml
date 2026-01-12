@@ -48,6 +48,7 @@ cpal = "0.17"
 hound = "3.5"
 wasapi = "0.22"
 minimp3 = "0.6"
+egui_extras = { version = "0.33", features = ["all_loaders"] }
 # Audio file decoding (MP3, FLAC, OGG, WAV, AAC, ALAC)
 symphonia = { version = "0.5", features = ["mp3", "flac", "ogg", "wav", "aac", "alac", "pcm"] }
 

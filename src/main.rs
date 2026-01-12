@@ -362,8 +362,8 @@ fn main() -> eframe::Result<()> {
         .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
         .with_resizable(true)
         .with_visible(false) // Start invisible
-        .with_transparent(false)
-        .with_decorations(true); // FIX: Start WITH decorations, opaque window
+        .with_transparent(true)
+        .with_decorations(false); // Enable custom title bar by disabling native decorations
 
     // 2. Detect System Theme
     let system_dark = gui::utils::is_system_in_dark_mode();

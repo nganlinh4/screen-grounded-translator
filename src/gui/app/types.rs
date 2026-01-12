@@ -3,6 +3,7 @@ use crate::gui::settings_ui::node_graph::ChainNode;
 use crate::gui::settings_ui::ViewMode;
 use crate::updater::{UpdateStatus, Updater};
 use auto_launch::AutoLaunch;
+use eframe::egui;
 use egui_snarl::Snarl;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
@@ -46,6 +47,8 @@ pub struct SettingsApp {
     pub(crate) show_gemini_api_key: bool,
     pub(crate) show_openrouter_api_key: bool,
     pub(crate) show_cerebras_api_key: bool,
+    pub(crate) icon_dark: Option<egui::TextureHandle>,
+    pub(crate) icon_light: Option<egui::TextureHandle>,
 
     pub(crate) view_mode: ViewMode,
     pub(crate) recording_hotkey_for_preset: Option<usize>,
