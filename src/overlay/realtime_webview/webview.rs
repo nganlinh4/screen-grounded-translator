@@ -37,6 +37,16 @@ pub fn create_realtime_webview(
         LocaleText::get(&lang)
     };
 
+    let is_dark = if let Ok(app) = crate::APP.lock() {
+        match app.config.theme_mode {
+            crate::config::ThemeMode::Dark => true,
+            crate::config::ThemeMode::Light => false,
+            crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+        }
+    } else {
+        true
+    };
+
     let html = get_realtime_html(
         is_translation,
         audio_source,
@@ -46,6 +56,7 @@ pub fn create_realtime_webview(
         transcription_model,
         font_size,
         &locale_text,
+        is_dark,
     );
     let wrapper = HwndWrapper(hwnd);
 
@@ -102,6 +113,9 @@ pub fn create_realtime_webview(
                     MIC_VISIBLE.store(visible, Ordering::SeqCst);
                     unsafe {
                         if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
+                            if visible {
+                                update_webview_theme(REALTIME_HWND);
+                            }
                             let _ =
                                 ShowWindow(REALTIME_HWND, if visible { SW_SHOW } else { SW_HIDE });
                         }
@@ -137,6 +151,9 @@ pub fn create_realtime_webview(
 
                     unsafe {
                         if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
+                            if visible {
+                                update_webview_theme(TRANSLATION_HWND);
+                            }
                             let _ = ShowWindow(
                                 TRANSLATION_HWND,
                                 if visible { SW_SHOW } else { SW_HIDE },
@@ -541,3 +558,49 @@ pub fn clear_webview_text(hwnd: HWND) {
 }
 
 use super::app_selection::show_app_selection_popup;
+
+pub fn update_webview_theme(hwnd: HWND) {
+    let hwnd_key = hwnd.0 as isize;
+
+    let is_dark = if let Ok(app) = crate::APP.lock() {
+        match app.config.theme_mode {
+            crate::config::ThemeMode::Dark => true,
+            crate::config::ThemeMode::Light => false,
+            crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+        }
+    } else {
+        true
+    };
+
+    let font_size = if let Ok(app) = crate::APP.lock() {
+        app.config.realtime_font_size
+    } else {
+        24
+    };
+
+    // Determine glow color based on whether this is a translation window
+    let is_translation = unsafe { hwnd == TRANSLATION_HWND };
+    let glow_color = if is_translation { "#ff9633" } else { "#00c8ff" };
+
+    let css = format!(
+        "{}{}",
+        crate::overlay::html_components::css_main::get(glow_color, font_size, is_dark),
+        crate::overlay::html_components::css_modals::get(is_dark)
+    );
+    let css_escaped = css.replace("`", "\\`");
+
+    let script = format!(
+        r#"
+        if (document.getElementById('main-style')) {{
+            document.getElementById('main-style').innerHTML = `{}`;
+        }}
+        "#,
+        css_escaped
+    );
+
+    REALTIME_WEBVIEWS.with(|wvs| {
+        if let Some(webview) = wvs.borrow().get(&hwnd_key) {
+            let _ = webview.evaluate_script(&script);
+        }
+    });
+}

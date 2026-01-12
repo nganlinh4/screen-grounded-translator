@@ -69,6 +69,35 @@ impl SettingsApp {
                 let _ = tray.set_icon(Some(new_icon));
             }
             crate::gui::utils::update_window_icon_native(effective_dark);
+
+            // C. Update Realtime Webviews
+            unsafe {
+                use crate::api::realtime_audio::WM_THEME_UPDATE;
+                use crate::overlay::realtime_webview::state::{REALTIME_HWND, TRANSLATION_HWND};
+                use windows::Win32::Foundation::{LPARAM, WPARAM};
+                use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+
+                if !REALTIME_HWND.is_invalid() {
+                    let _ =
+                        PostMessageW(Some(REALTIME_HWND), WM_THEME_UPDATE, WPARAM(0), LPARAM(0));
+                }
+                if !TRANSLATION_HWND.is_invalid() {
+                    let _ = PostMessageW(
+                        Some(TRANSLATION_HWND),
+                        WM_THEME_UPDATE,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
+                }
+
+                use crate::overlay::realtime_webview::state::APP_SELECTION_HWND;
+                let app_sel_val = APP_SELECTION_HWND.load(std::sync::atomic::Ordering::SeqCst);
+                if app_sel_val != 0 {
+                    let hwnd =
+                        windows::Win32::Foundation::HWND(app_sel_val as *mut std::ffi::c_void);
+                    let _ = PostMessageW(Some(hwnd), WM_THEME_UPDATE, WPARAM(0), LPARAM(0));
+                }
+            }
         }
 
         // --- TRAY MENU I18N UPDATE ---

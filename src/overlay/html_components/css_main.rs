@@ -1,15 +1,81 @@
-pub fn get(glow_color: &str, font_size: u32) -> String {
+pub fn get(glow_color: &str, font_size: u32, is_dark: bool) -> String {
+    let (
+        bg_color,
+        text_color,
+        header_bg,
+        border_color,
+        ctrl_bg,
+        ctrl_hover_bg,
+        select_bg,
+        select_option_bg,
+        placeholder_color,
+        resize_hint_color,
+        scrollbar_track,
+        scrollbar_thumb,
+        scrollbar_thumb_hover,
+        ctrl_hover_text,
+        icon_inactive_color,
+    ) = if is_dark {
+        (
+            "rgba(26, 26, 26, 0.95)",    // bg_color
+            "#fff",                      // text_color
+            "rgba(26, 26, 26, 0.6)",     // header_bg
+            format!("{}40", glow_color), // border_color
+            "rgba(30,30,30,0.8)",        // ctrl_bg
+            "rgba(255,255,255,0.15)",    // ctrl_hover_bg
+            "rgba(30, 30, 30, 0.9)",     // select_bg
+            "#2a2a2a",                   // select_option_bg
+            "#aaa",                      // placeholder_color
+            "#888",                      // resize_hint_color
+            "#2a2a2a",                   // scrollbar_track
+            "#555",                      // scrollbar_thumb
+            "#777",                      // scrollbar_thumb_hover
+            "#ffffff",                   // ctrl_hover_text
+            "#888",                      // icon_inactive_color
+        )
+    } else {
+        (
+            "rgba(255, 255, 255, 0.95)",
+            "#202124",
+            "rgba(255, 255, 255, 0.8)",
+            format!("{}80", glow_color),
+            "rgba(240, 240, 245, 0.8)",
+            "rgba(0, 0, 0, 0.05)",
+            "rgba(255, 255, 255, 0.9)",
+            "#ffffff",
+            "#80868b",
+            "#9aa0a6",
+            "#f1f3f4",
+            "#dadce0",
+            "#bdc1c6",
+            "#202124",
+            "#dadce0", // icon_inactive_color
+        )
+    };
+
+    let box_shadow = if is_dark {
+        format!("0 0 20px {}30", glow_color)
+    } else {
+        format!("0 0 20px {}20", glow_color)
+    };
+
+    let ctrl_border = if is_dark {
+        "rgba(255,255,255,0.1)"
+    } else {
+        "rgba(0,0,0,0.1)"
+    };
+
     format!(
         r###"        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         html, body {{
             height: 100%;
             overflow: hidden;
-            background: rgba(26, 26, 26, 0.95);
+            background: {bg_color};
             font-family: 'Google Sans Flex', sans-serif;
-            color: #fff;
+            color: {text_color};
             border-radius: 8px;
-            border: 1px solid {glow_color}40;
-            box-shadow: 0 0 20px {glow_color}30;
+            border: 1px solid {border_color};
+            box-shadow: {box_shadow};
         }}
         /* Loading overlay - TEMPORARILY DISABLED FOR TESTING */
         #loading-overlay {{
@@ -19,7 +85,7 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgb(26, 26, 26);
+            background: {bg_color};
             z-index: 9999;
             pointer-events: none;
             justify-content: center;
@@ -95,7 +161,7 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             transition: all 0.25s ease-out;
             overflow: hidden;
             max-height: 40px;
-            background: rgba(26, 26, 26, 0.6);
+            background: {header_bg};
             backdrop-filter: blur(8px);
             border-radius: 6px;
         }}
@@ -151,7 +217,7 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
         #title {{
             font-size: 12px;
             font-weight: bold;
-            color: #aaa;
+            color: {placeholder_color};
             flex-shrink: 0;
             display: flex;
             align-items: center;
@@ -178,12 +244,12 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
         }}
         .ctrl-btn {{
             font-size: 20px;
-            color: #888;
+            color: {resize_hint_color};
             cursor: pointer;
             padding: 2px;
             border-radius: 50%;
-            background: rgba(30,30,30,0.8);
-            border: 1px solid rgba(255,255,255,0.1);
+            background: {ctrl_bg};
+            border: 1px solid {ctrl_border};
             transition: all 0.2s;
             user-select: none;
             width: 26px;
@@ -193,8 +259,8 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             justify-content: center;
         }}
         .ctrl-btn:hover {{
-            color: #fff;
-            background: rgba(255,255,255,0.15);
+            color: {ctrl_hover_text};
+            background: {ctrl_hover_bg};
             border-color: {glow_color};
             box-shadow: 0 0 8px {glow_color}40;
         }}
@@ -206,8 +272,8 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
         .pill-group {{
             display: flex;
             align-items: center;
-            background: rgba(30,30,30,0.8);
-            border: 1px solid rgba(255,255,255,0.1);
+            background: {ctrl_bg};
+            border: 1px solid {ctrl_border};
             border-radius: 20px;
             padding: 2px;
             gap: 1px;
@@ -255,9 +321,9 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
         select {{
             font-family: 'Google Sans Flex', sans-serif;
             font-variation-settings: 'wght' 600, 'ROND' 100;
-            background: rgba(30, 30, 30, 0.9);
-            color: #ccc;
-            border: 1px solid rgba(255,255,255,0.15);
+            background: {select_bg};
+            color: {text_color};
+            border: 1px solid {ctrl_border};
             border-radius: 50%;
             padding: 0;
             font-size: 10px;
@@ -267,7 +333,7 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             width: 26px;
             height: 26px;
             scrollbar-width: thin;
-            scrollbar-color: #555 #2a2a2a;
+            scrollbar-color: {scrollbar_thumb} {scrollbar_track};
             transition: all 0.2s;
             -webkit-appearance: none;
             -moz-appearance: none;
@@ -281,8 +347,8 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
         }}
         select option {{
             font-family: 'Google Sans Flex', sans-serif;
-            background: #2a2a2a;
-            color: #ccc;
+            background: {select_option_bg};
+            color: {text_color};
             padding: 4px 8px;
         }}
         select option:checked {{
@@ -293,15 +359,15 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             width: 8px;
         }}
         select::-webkit-scrollbar-track {{
-            background: #2a2a2a;
+            background: {scrollbar_track};
             border-radius: 4px;
         }}
         select::-webkit-scrollbar-thumb {{
-            background: #555;
+            background: {scrollbar_thumb};
             border-radius: 4px;
         }}
         select::-webkit-scrollbar-thumb:hover {{
-            background: #777;
+            background: {scrollbar_thumb_hover};
         }}
         #viewport {{
             flex: 1;
@@ -346,19 +412,19 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
         
         /* Old/committed text styling */
         .text-chunk.old {{
-            color: #9aa0a6;
+            color: {placeholder_color};
             font-variation-settings: 'wght' 300, 'wdth' 100, 'slnt' 0, 'GRAD' 0, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
         }}
         
         /* New/uncommitted text styling */
         .text-chunk.new {{
-            color: #ffffff;
+            color: {text_color};
             font-variation-settings: 'wght' 350, 'wdth' 99, 'slnt' 0, 'GRAD' 150, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
         }}
         
         /* Appearing state - wipe animation */
         .text-chunk.appearing {{
-            color: #ffffff;
+            color: {text_color};
             font-variation-settings: 'wght' 350, 'wdth' 99, 'slnt' 0, 'GRAD' 150, 'ROND' 100, 'ROUN' 100, 'RNDS' 100;
             
             -webkit-mask-image: linear-gradient(to right, black 50%, transparent 100%);
@@ -396,18 +462,18 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
              justify-content: flex-end;
              padding: 2px;
              font-size: 10px;
-             color: #888;
+             color: {resize_hint_color};
              user-select: none;
          }}
         #resize-hint:hover {{
-            opacity: 1;
-            color: {glow_color};
-        }}
+             opacity: 1;
+             color: {glow_color};
+         }}
         .audio-icon {{
             font-size: 22px;
             padding: 0;
             cursor: pointer;
-            color: #555;
+            color: {icon_inactive_color};
             transition: all 0.2s;
             background: transparent;
             border: none;
@@ -422,7 +488,7 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             font-size: 22px;
             padding: 0;
             cursor: pointer;
-            color: #555;
+            color: {icon_inactive_color};
             transition: all 0.2s;
             background: transparent;
             border: none;
@@ -451,7 +517,7 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             font-size: 22px;
             padding: 0;
             cursor: pointer;
-            color: #555;
+            color: {icon_inactive_color};
             transition: all 0.2s;
             background: transparent;
             border: none;
@@ -516,7 +582,24 @@ pub fn get(glow_color: &str, font_size: u32) -> String {
             50% {{ opacity: 0.5; }}
         }}
         "###,
+        bg_color = bg_color,
+        text_color = text_color,
+        header_bg = header_bg,
+        border_color = border_color,
+        box_shadow = box_shadow,
         glow_color = glow_color,
-        font_size = font_size
+        font_size = font_size,
+        ctrl_bg = ctrl_bg,
+        ctrl_border = ctrl_border,
+        select_bg = select_bg,
+        select_option_bg = select_option_bg,
+        scrollbar_thumb = scrollbar_thumb,
+        scrollbar_track = scrollbar_track,
+        scrollbar_thumb_hover = scrollbar_thumb_hover,
+        placeholder_color = placeholder_color,
+        resize_hint_color = resize_hint_color,
+        ctrl_hover_bg = ctrl_hover_bg,
+        ctrl_hover_text = ctrl_hover_text,
+        icon_inactive_color = icon_inactive_color,
     )
 }

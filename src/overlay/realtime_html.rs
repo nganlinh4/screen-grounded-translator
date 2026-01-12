@@ -9,6 +9,7 @@ pub fn get_realtime_html(
     transcription_model: &str,
     font_size: u32,
     text: &LocaleText,
+    is_dark: bool,
 ) -> String {
     let _title_icon = if is_translation {
         "translate"
@@ -141,8 +142,8 @@ pub fn get_realtime_html(
     // Construct CSS and JS from components
     let css = format!(
         "{}{}",
-        crate::overlay::html_components::css_main::get(glow_color, font_size),
-        crate::overlay::html_components::css_modals::get()
+        crate::overlay::html_components::css_main::get(glow_color, font_size, is_dark),
+        crate::overlay::html_components::css_modals::get(is_dark)
     );
     let js = format!(
         "{}{}",
@@ -158,8 +159,8 @@ pub fn get_realtime_html(
 <html>
 <head>
     <meta charset="UTF-8">
-    <style>
-        {font_css}
+    <style>{font_css}</style>
+    <style id="main-style">
         {css_content}
     </style>
 </head>

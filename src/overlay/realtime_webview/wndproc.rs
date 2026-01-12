@@ -1,11 +1,11 @@
 //! Window procedures for realtime overlay windows
 
 use super::state::*;
-use super::webview::update_webview_text;
+use super::webview::{update_webview_text, update_webview_theme};
 use crate::api::realtime_audio::{
     REALTIME_RMS, WM_COPY_TEXT, WM_DOWNLOAD_PROGRESS, WM_EXEC_SCRIPT, WM_MODEL_SWITCH,
-    WM_REALTIME_UPDATE, WM_START_DRAG, WM_TOGGLE_MIC, WM_TOGGLE_TRANS, WM_TRANSLATION_UPDATE,
-    WM_UPDATE_TTS_SPEED, WM_VOLUME_UPDATE,
+    WM_REALTIME_UPDATE, WM_START_DRAG, WM_THEME_UPDATE, WM_TOGGLE_MIC, WM_TOGGLE_TRANS,
+    WM_TRANSLATION_UPDATE, WM_UPDATE_TTS_SPEED, WM_VOLUME_UPDATE,
 };
 use std::sync::atomic::Ordering;
 use windows::Win32::Foundation::*;
@@ -166,6 +166,10 @@ pub unsafe extern "system" fn realtime_wnd_proc(
                     let _ = webview.evaluate_script(&script);
                 }
             });
+            LRESULT(0)
+        }
+        WM_THEME_UPDATE => {
+            update_webview_theme(hwnd);
             LRESULT(0)
         }
         WM_SIZE => {
@@ -369,6 +373,10 @@ pub unsafe extern "system" fn translation_wnd_proc(
                     let _ = webview.evaluate_script(&script);
                 }
             });
+            LRESULT(0)
+        }
+        WM_THEME_UPDATE => {
+            update_webview_theme(hwnd);
             LRESULT(0)
         }
         WM_SIZE => {

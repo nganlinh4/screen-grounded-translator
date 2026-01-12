@@ -14,7 +14,12 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 lazy_static::lazy_static! {
     /// Cache for app icons (PID -> base64 PNG)
+    /// Cache for app icons (PID -> base64 PNG)
     static ref ICON_CACHE: Mutex<HashMap<u32, Option<String>>> = Mutex::new(HashMap::new());
+}
+
+thread_local! {
+    static APP_SELECT_WEBVIEW: std::cell::RefCell<Option<wry::WebView>> = std::cell::RefCell::new(None);
 }
 
 /// Get the executable path for a given process ID
@@ -338,128 +343,27 @@ pub fn show_app_selection_popup() {
         })
         .collect();
 
-    // Get local font CSS (cached fonts, no network loading)
-    let font_css = crate::overlay::html_components::font_manager::get_font_css();
+    // Determine initial theme
+    let is_dark = if let Ok(app) = crate::APP.lock() {
+        match app.config.theme_mode {
+            crate::config::ThemeMode::Dark => true,
+            crate::config::ThemeMode::Light => false,
+            crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+        }
+    } else {
+        true
+    };
+
+    // Get CSS
+    let css_content = get_app_selection_css(is_dark);
 
     let html = format!(
         r##"<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <style>
-        {font_css}
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: 'Google Sans Flex', 'Segoe UI', system-ui, sans-serif;
-            background: rgba(20, 20, 30, 0.98);
-            color: #fff;
-            padding: 20px;
-            height: 100vh;
-            overflow: hidden;
-        }}
-
-        .material-symbols-rounded {{
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 1em;
-            height: 1em;
-            font-size: 24px;
-            vertical-align: middle;
-        }}
-        .material-symbols-rounded svg {{
-            width: 100%;
-            height: 100%;
-            fill: currentColor;
-            display: block;
-        }}
-        h1 {{
-            font-size: 18px;
-            font-weight: 500;
-            margin-bottom: 8px;
-            color: #fff;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        h1 .material-symbols-rounded {{
-            font-size: 22px;
-            color: #00c8ff;
-        }}
-        .hint {{
-            font-size: 12px;
-            color: #888;
-            margin-bottom: 16px;
-        }}
-        .app-list {{
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            max-height: calc(100vh - 100px);
-            overflow-y: auto;
-        }}
-        .app-item {{
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            border: 1px solid transparent;
-        }}
-        .app-item:hover {{
-            background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(100, 180, 255, 0.5);
-        }}
-        .app-icon {{
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(100, 180, 255, 0.15);
-            border-radius: 8px;
-            flex-shrink: 0;
-            overflow: hidden;
-        }}
-        .app-icon-img {{
-            width: 32px;
-            height: 32px;
-            object-fit: contain;
-            image-rendering: auto;
-        }}
-        .app-icon-fallback {{
-            font-size: 24px;
-            color: #00c8ff;
-        }}
-        .app-info {{
-            flex: 1;
-            min-width: 0;
-        }}
-        .app-name {{
-            display: block;
-            font-size: 14px;
-            font-weight: 500;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }}
-        .app-pid {{
-            font-size: 11px;
-            color: #888;
-        }}
-        .app-list::-webkit-scrollbar {{
-            width: 6px;
-        }}
-        .app-list::-webkit-scrollbar-track {{
-            background: transparent;
-        }}
-        .app-list::-webkit-scrollbar-thumb {{
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 3px;
-        }}
+    <style id="main-style">
+        {css_content}
     </style>
 </head>
 <body>
@@ -476,11 +380,11 @@ pub fn show_app_selection_popup() {
     </script>
 </body>
 </html>"##,
-        font_css = font_css,
         app_title = locale_text.app_select_title,
         app_hint = locale_text.app_select_hint,
         app_list = app_items.join("\n"),
-        headphones_svg = headphones_svg
+        headphones_svg = headphones_svg,
+        css_content = css_content
     );
 
     // Create popup window
@@ -630,8 +534,11 @@ pub fn show_app_selection_popup() {
                 return;
             }
 
-            // Keep WebView alive
-            let _webview = result.unwrap();
+            // Keep WebView alive in thread-local storage
+            let webview = result.unwrap();
+            APP_SELECT_WEBVIEW.with(|w| {
+                *w.borrow_mut() = Some(webview);
+            });
 
             // Message loop
             let mut msg = MSG::default();
@@ -649,29 +556,240 @@ pub unsafe extern "system" fn app_select_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    use windows::Win32::UI::WindowsAndMessaging::*;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        use crate::api::realtime_audio::WM_THEME_UPDATE;
+        use windows::Win32::UI::WindowsAndMessaging::*;
 
-    match msg {
-        WM_CLOSE => {
-            let _ = DestroyWindow(hwnd);
-            LRESULT(0)
-        }
-        WM_DESTROY => {
-            APP_SELECTION_HWND.store(0, std::sync::atomic::Ordering::SeqCst);
-            PostQuitMessage(0);
-            LRESULT(0)
-        }
-        WM_SIZE => {
-            // Resize child (WebView) to match parent
-            let width = (lparam.0 & 0xFFFF) as i32;
-            let height = ((lparam.0 >> 16) & 0xFFFF) as i32;
-            if let Ok(child) = GetWindow(hwnd, GW_CHILD) {
-                if child.0 != std::ptr::null_mut() {
-                    let _ = MoveWindow(child, 0, 0, width, height, true);
-                }
+        match msg {
+            WM_THEME_UPDATE => {
+                update_app_selection_theme(hwnd);
+                LRESULT(0)
             }
-            LRESULT(0)
+            WM_CLOSE => {
+                let _ = DestroyWindow(hwnd);
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                // Drop WebView before thread exit to ensure clean cleanup
+                APP_SELECT_WEBVIEW.with(|w| {
+                    *w.borrow_mut() = None;
+                });
+
+                APP_SELECTION_HWND.store(0, std::sync::atomic::Ordering::SeqCst);
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
+            WM_SIZE => {
+                // Resize child (WebView) to match parent
+                let width = (lparam.0 & 0xFFFF) as i32;
+                let height = ((lparam.0 >> 16) & 0xFFFF) as i32;
+                if let Ok(child) = GetWindow(hwnd, GW_CHILD) {
+                    if child.0 != std::ptr::null_mut() {
+                        let _ = MoveWindow(child, 0, 0, width, height, true);
+                    }
+                }
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }));
+
+    match result {
+        Ok(lresult) => lresult,
+        Err(_) => {
+            eprintln!("Panic in app_select_wndproc");
+            // Try to provide default processing if panic occurred
+            windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
     }
+}
+
+fn get_app_selection_css(is_dark: bool) -> String {
+    let font_css = crate::overlay::html_components::font_manager::get_font_css();
+    let (
+        bg_color,
+        text_color,
+        hint_color,
+        item_bg,
+        item_hover_bg,
+        item_border_hover,
+        scrollbar_thumb,
+    ) = if is_dark {
+        (
+            "rgba(20, 20, 30, 0.98)",    // bg
+            "#fff",                      // text
+            "#888",                      // hint
+            "rgba(255, 255, 255, 0.05)", // item bg
+            "rgba(255, 255, 255, 0.1)",  // item hover
+            "rgba(100, 180, 255, 0.5)",  // item border hover
+            "rgba(255, 255, 255, 0.2)",  // scrollbar thumb
+        )
+    } else {
+        (
+            "rgba(255, 255, 255, 0.98)",
+            "#202124",
+            "#5f6368",
+            "rgba(0, 0, 0, 0.03)",
+            "rgba(0, 200, 255, 0.08)",
+            "#00c8ff50",
+            "#dadce0",
+        )
+    };
+
+    format!(
+        r##"
+        {font_css}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Google Sans Flex', 'Segoe UI', system-ui, sans-serif;
+            background: {bg_color};
+            color: {text_color};
+            padding: 20px;
+            height: 100vh;
+            overflow: hidden;
+        }}
+
+        .material-symbols-rounded {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1em;
+            height: 1em;
+            font-size: 24px;
+            vertical-align: middle;
+        }}
+        .material-symbols-rounded svg {{
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
+            display: block;
+        }}
+        h1 {{
+            font-size: 18px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: {text_color};
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        h1 .material-symbols-rounded {{
+            font-size: 22px;
+            color: #00c8ff;
+        }}
+        .hint {{
+            font-size: 12px;
+            color: {hint_color};
+            margin-bottom: 16px;
+        }}
+        .app-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: calc(100vh - 100px);
+            overflow-y: auto;
+        }}
+        .app-item {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: {item_bg};
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            border: 1px solid transparent;
+        }}
+        .app-item:hover {{
+            background: {item_hover_bg};
+            border-color: {item_border_hover};
+        }}
+        .app-icon {{
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(100, 180, 255, 0.15);
+            border-radius: 8px;
+            flex-shrink: 0;
+            overflow: hidden;
+        }}
+        .app-icon-img {{
+            width: 32px;
+            height: 32px;
+            object-fit: contain;
+            image-rendering: auto;
+        }}
+        .app-icon-fallback {{
+            font-size: 24px;
+            color: #00c8ff;
+        }}
+        .app-info {{
+            flex: 1;
+            min-width: 0;
+        }}
+        .app-name {{
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: {text_color};
+        }}
+        .app-pid {{
+            font-size: 11px;
+            color: {hint_color};
+        }}
+        .app-list::-webkit-scrollbar {{
+            width: 6px;
+        }}
+        .app-list::-webkit-scrollbar-track {{
+            background: transparent;
+        }}
+        .app-list::-webkit-scrollbar-thumb {{
+            background: {scrollbar_thumb};
+            border-radius: 3px;
+        }}
+    "##,
+        font_css = font_css,
+        bg_color = bg_color,
+        text_color = text_color,
+        hint_color = hint_color,
+        item_bg = item_bg,
+        item_hover_bg = item_hover_bg,
+        item_border_hover = item_border_hover,
+        scrollbar_thumb = scrollbar_thumb
+    )
+}
+
+pub fn update_app_selection_theme(_hwnd: HWND) {
+    let is_dark = if let Ok(app) = crate::APP.lock() {
+        match app.config.theme_mode {
+            crate::config::ThemeMode::Dark => true,
+            crate::config::ThemeMode::Light => false,
+            crate::config::ThemeMode::System => crate::gui::utils::is_system_in_dark_mode(),
+        }
+    } else {
+        true
+    };
+
+    let css = get_app_selection_css(is_dark);
+    let css_escaped = css.replace("`", "\\`");
+
+    let script = format!(
+        r#"
+        if (document.getElementById('main-style')) {{
+            document.getElementById('main-style').innerHTML = `{}`;
+        }}
+        "#,
+        css_escaped
+    );
+
+    APP_SELECT_WEBVIEW.with(|w| {
+        if let Some(webview) = w.borrow().as_ref() {
+            let _ = webview.evaluate_script(&script);
+        }
+    });
 }
