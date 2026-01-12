@@ -688,7 +688,7 @@ pub fn model_supports_search_by_name(full_name: &str) -> bool {
         return true;
     }
     if full_name.contains("gemma") {
-        return true;
+        return false;
     }
     if full_name.contains("compound") {
         return true;

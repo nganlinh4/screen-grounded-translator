@@ -685,7 +685,7 @@ pub fn is_retryable_error(error: &str) -> bool {
     // 2. Check HTTP status if present
     if let Some(code) = extract_http_status_code(error) {
         // 429: Rate Limit (Retry!)
-        if code == 429 {
+        if code == 429 || code == 400 {
             return true;
         }
         // 5xx: Server Errors (Retry!)
