@@ -10,7 +10,7 @@ pub mod result;
 mod selection;
 pub mod text_input; // NEW MODULE
 pub mod text_selection;
-pub mod text_selection_webview;
+
 pub mod utils; // MASTER preset wheel
                // realtime_overlay module removed (was old GDI-based, now using realtime_webview)
 pub mod favorite_bubble; // Floating bubble for favorite presets
@@ -24,7 +24,7 @@ pub use recording::{
     is_recording_overlay_active, show_recording_overlay, stop_recording_and_submit,
 };
 pub use selection::{is_selection_overlay_active_and_dismiss, show_selection_overlay};
-pub use text_selection_webview::show_text_selection_tag;
+pub use text_selection::show_text_selection_tag;
 // Use the new WebView2-based realtime overlay
 pub use realtime_webview::{
     is_realtime_overlay_active, show_realtime_overlay, stop_realtime_overlay,

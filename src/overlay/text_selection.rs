@@ -1,76 +1,76 @@
 use crate::APP;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicIsize, Ordering},
     Arc, Mutex, Once,
 };
 use windows::core::*;
 use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Dwm::*;
-
-use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::DataExchange::*;
 use windows::Win32::System::LibraryLoader::*;
 use windows::Win32::System::Memory::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+// Shared wrapper for WebView parent
+use crate::overlay::realtime_webview::state::HwndWrapper;
+
+// --- SHARED STATE ---
 struct TextSelectionState {
-    hwnd: HWND,
     preset_idx: usize,
     is_selecting: bool,
     is_processing: bool,
-    animation_offset: f32,
-    current_alpha: i32,
-    cached_bitmap: HBITMAP,
-    cached_bits: *mut u32,
-    cached_font: HFONT,
-    cached_lang: Option<String>,
     hook_handle: HHOOK,
+    webview: Option<wry::WebView>,
 }
 unsafe impl Send for TextSelectionState {}
 
 static SELECTION_STATE: Mutex<TextSelectionState> = Mutex::new(TextSelectionState {
-    hwnd: HWND(std::ptr::null_mut()),
     preset_idx: 0,
     is_selecting: false,
     is_processing: false,
-    animation_offset: 0.0,
-    current_alpha: 0,
-    cached_bitmap: HBITMAP(std::ptr::null_mut()),
-    cached_bits: std::ptr::null_mut(),
-    cached_font: HFONT(std::ptr::null_mut()),
-    cached_lang: None,
     hook_handle: HHOOK(std::ptr::null_mut()),
+    webview: None,
 });
 
 static REGISTER_TAG_CLASS: Once = Once::new();
 
 lazy_static::lazy_static! {
     pub static ref TAG_ABORT_SIGNAL: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    pub static ref INITIAL_TEXT_GLOBAL: Mutex<String> = Mutex::new(String::from("Select text..."));
 }
 
+// Warmup / Persistence Globals
+static TAG_HWND: AtomicIsize = AtomicIsize::new(0);
+static IS_WARMING_UP: AtomicBool = AtomicBool::new(false);
+static IS_WARMED_UP: AtomicBool = AtomicBool::new(false);
+
+// Messages
+const WM_APP_SHOW: u32 = WM_USER + 200;
+const WM_APP_HIDE: u32 = WM_USER + 201;
+
+// --- PUBLIC API ---
+
 pub fn is_active() -> bool {
-    !SELECTION_STATE.lock().unwrap().hwnd.is_invalid()
+    let hwnd_val = TAG_HWND.load(Ordering::SeqCst);
+    if hwnd_val == 0 {
+        return false;
+    }
+    unsafe { IsWindowVisible(HWND(hwnd_val as *mut std::ffi::c_void)).as_bool() }
 }
 
 /// Try to process already-selected text instantly.
-/// Returns true if text was found and processing started (caller should NOT show selection tag).
-/// Returns false if no text was selected (caller should show selection tag for manual selection).
 pub fn try_instant_process(preset_idx: usize) -> bool {
     unsafe {
-        // Step 1: Save current clipboard content (we'll restore if empty selection)
+        // Step 1: Save clipboard
         let original_clipboard = get_clipboard_text();
 
-        // Step 2: Clear clipboard and send Ctrl+C to copy current selection
+        // Step 2: Clear & Copy
         if OpenClipboard(Some(HWND::default())).is_ok() {
             let _ = EmptyClipboard();
             let _ = CloseClipboard();
         }
-
-        // Small delay to ensure clipboard is clear
         std::thread::sleep(std::time::Duration::from_millis(30));
 
-        // Send Ctrl+C
         let send_input_event = |vk: u16, flags: KEYBD_EVENT_FLAGS| {
             let input = INPUT {
                 r#type: INPUT_KEYBOARD,
@@ -95,10 +95,9 @@ pub fn try_instant_process(preset_idx: usize) -> bool {
         std::thread::sleep(std::time::Duration::from_millis(15));
         send_input_event(VK_CONTROL.0, KEYEVENTF_KEYUP);
 
-        // Step 3: Wait for clipboard to update and check for text
+        // Step 3: Wait & Check
         let mut clipboard_text = String::new();
         for _ in 0..6 {
-            // Fewer retries since we need to be quick
             std::thread::sleep(std::time::Duration::from_millis(20));
             clipboard_text = get_clipboard_text();
             if !clipboard_text.is_empty() {
@@ -106,179 +105,199 @@ pub fn try_instant_process(preset_idx: usize) -> bool {
             }
         }
 
-        // Step 4: Check if we got any text
         if clipboard_text.trim().is_empty() {
-            // No text was selected - restore original clipboard if we had content
             if !original_clipboard.is_empty() {
                 crate::overlay::utils::copy_to_clipboard(&original_clipboard, HWND::default());
             }
-            return false; // Signal caller to show selection tag
+            return false;
         }
 
-        // Step 5: Text found! Process it immediately
+        // HIDE BADGE BEFORE PROCESSING (Critical for Master Wheel appearance)
+        cancel_selection();
+
         process_selected_text(preset_idx, clipboard_text);
-        true // Signal caller that we handled it
-    }
-}
-
-/// Get text from clipboard (returns empty string if no text available)
-unsafe fn get_clipboard_text() -> String {
-    let mut result = String::new();
-    if OpenClipboard(Some(HWND::default())).is_ok() {
-        if let Ok(h_data) = GetClipboardData(13u32) {
-            // CF_UNICODETEXT
-            let h_global: HGLOBAL = std::mem::transmute(h_data);
-            let ptr = GlobalLock(h_global);
-            if !ptr.is_null() {
-                let size = GlobalSize(h_global);
-                let wide_slice = std::slice::from_raw_parts(ptr as *const u16, size / 2);
-                if let Some(end) = wide_slice.iter().position(|&c| c == 0) {
-                    result = String::from_utf16_lossy(&wide_slice[..end]);
-                }
-            }
-            let _ = GlobalUnlock(h_global);
-        }
-        let _ = CloseClipboard();
-    }
-    result
-}
-
-/// Process selected text with the given preset (shared logic for both instant and manual selection)
-fn process_selected_text(preset_idx: usize, clipboard_text: String) {
-    unsafe {
-        // Check if this is a MASTER preset
-        let (is_master, _original_mode) = {
-            let app = APP.lock().unwrap();
-            let p = &app.config.presets[preset_idx];
-            (p.is_master, p.text_input_mode.clone())
-        };
-
-        let final_preset_idx = if is_master {
-            // Get cursor position for wheel center
-            let mut cursor_pos = POINT { x: 0, y: 0 };
-            let _ = GetCursorPos(&mut cursor_pos);
-
-            // Show preset wheel
-            let selected =
-                super::preset_wheel::show_preset_wheel("text", Some("select"), cursor_pos);
-
-            if let Some(idx) = selected {
-                idx
-            } else {
-                // User dismissed wheel - cancel operation
-                return;
-            }
-        } else {
-            preset_idx
-        };
-
-        // Process with the selected preset
-        let (config, mut preset, screen_w, screen_h) = {
-            let mut app = APP.lock().unwrap();
-            // CRITICAL: Update active_preset_idx so auto_paste logic works!
-            app.config.active_preset_idx = final_preset_idx;
-            (
-                app.config.clone(),
-                app.config.presets[final_preset_idx].clone(),
-                GetSystemMetrics(SM_CXSCREEN),
-                GetSystemMetrics(SM_CYSCREEN),
-            )
-        };
-
-        // CRITICAL FIX: Force text_input_mode to "select" so the text is processed
-        // directly, not re-opened in a text input modal
-        preset.text_input_mode = "select".to_string();
-
-        let center_rect = RECT {
-            left: (screen_w - 700) / 2,
-            top: (screen_h - 300) / 2,
-            right: (screen_w + 700) / 2,
-            bottom: (screen_h + 300) / 2,
-        };
-        // Get localized preset name and hotkey for the text input header
-        let localized_name =
-            crate::gui::settings_ui::get_localized_preset_name(&preset.id, &config.ui_language);
-        let cancel_hotkey = preset
-            .hotkeys
-            .first()
-            .map(|h| h.name.clone())
-            .unwrap_or_default();
-
-        super::process::start_text_processing(
-            clipboard_text,
-            center_rect,
-            config,
-            preset,
-            localized_name,
-            cancel_hotkey,
-        );
+        true
     }
 }
 
 pub fn cancel_selection() {
     TAG_ABORT_SIGNAL.store(true, Ordering::SeqCst);
-    let hwnd = SELECTION_STATE.lock().unwrap().hwnd;
-    unsafe {
-        if !hwnd.is_invalid() {
-            let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+    let hwnd_val = TAG_HWND.load(Ordering::SeqCst);
+    if hwnd_val != 0 {
+        unsafe {
+            // Just hide it, don't destroy
+            let _ = PostMessageW(
+                Some(HWND(hwnd_val as *mut std::ffi::c_void)),
+                WM_APP_HIDE,
+                WPARAM(0),
+                LPARAM(0),
+            );
         }
     }
 }
 
-unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code == HC_ACTION as i32 {
-        let kbd_struct = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        if wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize {
-            if kbd_struct.vkCode == VK_ESCAPE.0 as u32 {
-                TAG_ABORT_SIGNAL.store(true, Ordering::SeqCst);
-                return LRESULT(1);
-            }
-        }
+pub fn warmup() {
+    if IS_WARMED_UP.load(Ordering::SeqCst) {
+        return;
     }
-    CallNextHookEx(None, code, wparam, lparam)
+    if IS_WARMING_UP
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+
+    std::thread::spawn(|| {
+        internal_create_tag_thread();
+    });
 }
+
+// Positioning constants
+const OFFSET_X: i32 = -20;
+const OFFSET_Y: i32 = -90;
 
 pub fn show_text_selection_tag(preset_idx: usize) {
-    unsafe {
-        // Scope 1: Check and Init
-        {
-            let mut state = SELECTION_STATE.lock().unwrap();
-            if !state.hwnd.is_invalid() {
-                return;
+    // 1. Ensure Warmed Up / Recover
+    if !IS_WARMED_UP.load(Ordering::SeqCst) {
+        warmup();
+        // Wait up to 5s for recovery
+        for _ in 0..500 {
+            use windows::Win32::UI::WindowsAndMessaging::*;
+            unsafe {
+                let mut msg = MSG::default();
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
             }
-
-            state.preset_idx = preset_idx;
-            state.is_selecting = false;
-            state.is_processing = false;
-            state.animation_offset = 0.0;
-            state.current_alpha = 0;
-            TAG_ABORT_SIGNAL.store(false, Ordering::SeqCst);
-
-            // Cleanup old cache
-            if !state.cached_bitmap.is_invalid() {
-                let _ = DeleteObject(state.cached_bitmap.into());
-                state.cached_bitmap = HBITMAP::default();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if IS_WARMED_UP.load(Ordering::SeqCst) {
+                break;
             }
-            if !state.cached_font.is_invalid() {
-                let _ = DeleteObject(state.cached_font.into());
-                state.cached_font = HFONT(std::ptr::null_mut());
-            }
-            state.cached_bits = std::ptr::null_mut();
         }
+        if !IS_WARMED_UP.load(Ordering::SeqCst) {
+            return;
+        }
+    }
+
+    // 2. Prepare State
+    {
+        let mut state = SELECTION_STATE.lock().unwrap();
+        state.preset_idx = preset_idx;
+        state.is_selecting = false;
+        state.is_processing = false;
+        TAG_ABORT_SIGNAL.store(false, Ordering::SeqCst);
+    }
+
+    // 3. Signal Show (Pre-position to prevent jump/lag)
+    let hwnd_val = TAG_HWND.load(Ordering::SeqCst);
+    if hwnd_val != 0 {
+        unsafe {
+            let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+
+            // Decouple delay: Move window immediately to cursor BEFORE showing
+            let mut pt = POINT::default();
+            let _ = GetCursorPos(&mut pt);
+            let target_x = pt.x + OFFSET_X;
+            let target_y = pt.y + OFFSET_Y;
+
+            let _ = MoveWindow(hwnd, target_x, target_y, 200, 120, false);
+
+            let _ = PostMessageW(Some(hwnd), WM_APP_SHOW, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+// helper to reset state UI
+fn reset_ui_state(initial_text: &str) {
+    let state = SELECTION_STATE.lock().unwrap();
+    if let Some(wv) = state.webview.as_ref() {
+        let reset_js = format!("updateState(false, '{}')", initial_text);
+        let _ = wv.evaluate_script(&reset_js);
+    }
+}
+
+unsafe extern "system" fn tag_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
+        WM_APP_SHOW => {
+            // Trigger Fade In Script
+            {
+                let state = SELECTION_STATE.lock().unwrap();
+                if let Some(wv) = state.webview.as_ref() {
+                    let _ = wv.evaluate_script("playEntry();");
+                }
+            }
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            LRESULT(0)
+        }
+        WM_APP_HIDE => {
+            // Trigger Fade Out Script & Delay Hide
+            {
+                let state = SELECTION_STATE.lock().unwrap();
+                if let Some(wv) = state.webview.as_ref() {
+                    let _ = wv.evaluate_script("playExit();");
+                }
+            }
+            // 150ms delay for animation
+            SetTimer(Some(hwnd), 1, 150, None);
+            LRESULT(0)
+        }
+        WM_TIMER => {
+            if wparam.0 == 1 {
+                KillTimer(Some(hwnd), 1);
+                // Reset text state internally when truly hidden
+                {
+                    let initial_text = INITIAL_TEXT_GLOBAL.lock().unwrap();
+                    reset_ui_state(&initial_text);
+                }
+                ShowWindow(hwnd, SW_HIDE);
+            }
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            KillTimer(Some(hwnd), 1);
+            let initial_text = INITIAL_TEXT_GLOBAL.lock().unwrap();
+            reset_ui_state(&initial_text);
+            ShowWindow(hwnd, SW_HIDE);
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }));
+    match result {
+        Ok(lresult) => lresult,
+        Err(_) => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+fn internal_create_tag_thread() {
+    unsafe {
+        use windows::Win32::System::Com::*;
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
         let instance = GetModuleHandleW(None).unwrap();
-        let class_name = w!("SGT_TextTag");
+        let class_name = w!("SGT_TextTag_Web_Persistent");
 
         REGISTER_TAG_CLASS.call_once(|| {
-            let mut wc = WNDCLASSW::default();
+            let mut wc = WNDCLASSEXW::default();
+            wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
             wc.lpfnWndProc = Some(tag_wnd_proc);
             wc.hInstance = instance.into();
             wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
             wc.lpszClassName = class_name;
             wc.style = CS_HREDRAW | CS_VREDRAW;
-            let _ = RegisterClassW(&wc);
+            let _ = RegisterClassExW(&wc);
         });
 
+        // Create Layered Transparent Window
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
             class_name,
@@ -287,7 +306,7 @@ pub fn show_text_selection_tag(preset_idx: usize) {
             -1000,
             -1000,
             200,
-            50,
+            120, // Increased height for glow
             None,
             None,
             Some(instance.into()),
@@ -295,114 +314,220 @@ pub fn show_text_selection_tag(preset_idx: usize) {
         )
         .unwrap_or_default();
 
-        {
-            SELECTION_STATE.lock().unwrap().hwnd = hwnd;
+        if hwnd.is_invalid() {
+            IS_WARMING_UP.store(false, Ordering::SeqCst);
+            return;
         }
 
-        // Install Keyboard Hook to swallow ESC
-        let hook = SetWindowsHookExW(
-            WH_KEYBOARD_LL,
-            Some(keyboard_hook_proc),
-            Some(GetModuleHandleW(None).unwrap().into()),
-            0,
-        );
-        if let Ok(h) = hook {
-            SELECTION_STATE.lock().unwrap().hook_handle = h;
+        // Initialize WebView with dynamic theme support
+        let (initial_is_dark, lang) = {
+            let app = APP.lock().unwrap();
+            (
+                app.config.theme_mode == crate::config::ThemeMode::Dark
+                    || (app.config.theme_mode == crate::config::ThemeMode::System
+                        && crate::gui::utils::is_system_in_dark_mode()),
+                app.config.ui_language.clone(),
+            )
+        };
+
+        let initial_text = match lang.as_str() {
+            "vi" => "Bôi đen văn bản...",
+            "ko" => "텍스트 선택...",
+            _ => "Select text...",
+        };
+        *INITIAL_TEXT_GLOBAL.lock().unwrap() = initial_text.to_string();
+
+        // Use new get_html with CSS variables and updateTheme function
+        let html_content = get_html(initial_text);
+
+        let mut web_context =
+            wry::WebContext::new(Some(crate::overlay::get_shared_webview_data_dir()));
+        let page_url = format!("data:text/html,{}", urlencoding::encode(&html_content));
+
+        let builder = wry::WebViewBuilder::new_with_web_context(&mut web_context);
+        let webview_res = builder
+            .with_bounds(wry::Rect {
+                position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
+                size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(200, 120)),
+            })
+            .with_url(&page_url)
+            .with_transparent(true)
+            .build_as_child(&HwndWrapper(hwnd));
+
+        if let Ok(webview) = webview_res {
+            // Set initial theme
+            let init_script = format!("updateTheme({});", initial_is_dark);
+            let _ = webview.evaluate_script(&init_script);
+            SELECTION_STATE.lock().unwrap().webview = Some(webview);
+        } else {
+            eprintln!("Failed to create TextSelection WebView during warmup");
+            DestroyWindow(hwnd);
+            IS_WARMING_UP.store(false, Ordering::SeqCst);
+            return;
         }
 
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        TAG_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
+        IS_WARMED_UP.store(true, Ordering::SeqCst);
+        IS_WARMING_UP.store(false, Ordering::SeqCst);
 
         let mut msg = MSG::default();
+        let mut visible = false;
 
-        // "Game Loop" for smooth window movement
+        // Theme tracking
+        let mut current_is_dark = initial_is_dark;
+        let mut last_sent_is_selecting = false;
+
         loop {
-            // 1. Process all pending messages
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).into() {
-                if msg.message == WM_QUIT {
-                    break;
-                }
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
+            // Check Quit
             if msg.message == WM_QUIT {
                 break;
             }
 
-            // 2. Check Abort Signal
-            if TAG_ABORT_SIGNAL.load(Ordering::SeqCst) {
-                // Unhook before destroying window
-                let mut state = SELECTION_STATE.lock().unwrap();
-                if !state.hook_handle.is_invalid() {
-                    let _ = UnhookWindowsHookEx(state.hook_handle);
-                    state.hook_handle = HHOOK::default();
+            if visible {
+                // Active Loop (Animation/Update) - Poll messages
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    if msg.message == WM_QUIT {
+                        visible = false;
+                        break;
+                    }
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
                 }
-                let _ = DestroyWindow(hwnd);
-                break;
+                if msg.message == WM_QUIT {
+                    break;
+                }
+            } else {
+                // Inactive Loop - Block until message (e.g., WM_APP_SHOW)
+                if GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                } else {
+                    break;
+                }
             }
 
-            // 3. Update Logic (Movement & Animation)
-            let mut pt = POINT::default();
-            let _ = GetCursorPos(&mut pt);
-            let target_x = pt.x - 30;
-            let target_y = pt.y - 60;
+            // Check Visibility State (updated by WndProc)
+            let is_actually_visible = IsWindowVisible(hwnd).as_bool();
 
-            let lbutton_down = (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0;
-
-            let mut should_spawn_thread = false;
-            let mut preset_idx_for_thread = 0;
-
-            let (is_selecting, current_alpha) = {
+            // On Transition
+            if is_actually_visible != visible {
+                visible = is_actually_visible;
+                // Hook Management
                 let mut state = SELECTION_STATE.lock().unwrap();
-
-                if !state.is_selecting && lbutton_down {
-                    state.is_selecting = true;
-                } else if state.is_selecting && !lbutton_down && !state.is_processing {
-                    state.is_processing = true;
-                    should_spawn_thread = true;
-                    preset_idx_for_thread = state.preset_idx;
-                }
-
-                if state.is_selecting {
-                    state.animation_offset -= 7.5;
-                } else {
-                    state.animation_offset += 2.5;
-                }
-
-                if state.animation_offset > 3600.0 {
-                    state.animation_offset -= 3600.0;
-                }
-                if state.animation_offset < -3600.0 {
-                    state.animation_offset += 3600.0;
-                }
-
-                if state.is_processing || crate::overlay::preset_wheel::is_wheel_active() {
-                    if state.current_alpha > 0 {
-                        state.current_alpha -= 50;
-                        if state.current_alpha < 0 {
-                            state.current_alpha = 0;
+                if visible {
+                    // Install Hook
+                    if state.hook_handle.is_invalid() {
+                        let hook = SetWindowsHookExW(
+                            WH_KEYBOARD_LL,
+                            Some(keyboard_hook_proc),
+                            Some(GetModuleHandleW(None).unwrap().into()),
+                            0,
+                        );
+                        if let Ok(h) = hook {
+                            state.hook_handle = h;
                         }
                     }
-                } else if state.current_alpha < 255 {
-                    state.current_alpha += 25;
-                    if state.current_alpha > 255 {
-                        state.current_alpha = 255;
+
+                    // Reset Logic
+                    last_sent_is_selecting = false;
+
+                    // Sync Theme (Realtime check on show)
+                    let new_is_dark = crate::overlay::is_dark_mode();
+                    if new_is_dark != current_is_dark {
+                        current_is_dark = new_is_dark;
+                        if let Some(wv) = state.webview.as_ref() {
+                            let _ =
+                                wv.evaluate_script(&format!("updateTheme({});", current_is_dark));
+                        }
+                    }
+
+                    // Reset State in JS
+                    if let Some(wv) = state.webview.as_ref() {
+                        let reset_js = format!("updateState(false, '{}')", initial_text);
+                        let _ = wv.evaluate_script(&reset_js);
+                    }
+                } else {
+                    // Uninstall Hook
+                    if !state.hook_handle.is_invalid() {
+                        let _ = UnhookWindowsHookEx(state.hook_handle);
+                        state.hook_handle = HHOOK::default();
+                    }
+                }
+            }
+
+            if visible {
+                // 1. Check Abort
+                if TAG_ABORT_SIGNAL.load(Ordering::SeqCst) {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                    continue;
+                }
+
+                // 2. Logic & Movement
+                // 2. Logic & Movement
+                let mut pt = POINT::default();
+                let _ = GetCursorPos(&mut pt);
+                let target_x = pt.x + OFFSET_X;
+                let target_y = pt.y + OFFSET_Y;
+
+                // Use MoveWindow for Webview host
+                let _ = MoveWindow(hwnd, target_x, target_y, 200, 120, false);
+
+                let lbutton_down = (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0;
+
+                let mut should_spawn_thread = false;
+                let mut preset_idx_for_thread = 0;
+
+                // Scope for State Lock
+                let update_js = {
+                    let mut state = SELECTION_STATE.lock().unwrap();
+
+                    if !state.is_selecting && lbutton_down {
+                        state.is_selecting = true;
+                    } else if state.is_selecting && !lbutton_down && !state.is_processing {
+                        state.is_processing = true;
+                        should_spawn_thread = true;
+                        preset_idx_for_thread = state.preset_idx;
+                    }
+
+                    if state.is_selecting != last_sent_is_selecting {
+                        last_sent_is_selecting = state.is_selecting;
+                        let new_text = if state.is_selecting {
+                            match lang.as_str() {
+                                "vi" => "Thả chuột để xử lý",
+                                "ko" => "처리를 위해 마우스를 놓으세요",
+                                _ => "Release to process",
+                            }
+                        } else {
+                            initial_text
+                        };
+                        Some(format!(
+                            "updateState({}, '{}')",
+                            state.is_selecting, new_text
+                        ))
+                    } else {
+                        None
+                    }
+                };
+
+                // Update WebView outside lock
+                if let Some(js) = update_js {
+                    if let Some(webview) = SELECTION_STATE.lock().unwrap().webview.as_ref() {
+                        let _ = webview.evaluate_script(&js);
                     }
                 }
 
-                (state.is_selecting, state.current_alpha as u8)
-            };
+                // Spawn Worker Thread
+                if should_spawn_thread {
+                    let hwnd_val = hwnd.0 as usize;
+                    std::thread::spawn(move || {
+                        let hwnd_copy = HWND(hwnd_val as *mut std::ffi::c_void);
 
-            // 4. Handle Thread Spawn
-            if should_spawn_thread {
-                let hwnd_val = hwnd.0 as usize;
-                std::thread::spawn(move || {
-                    let hwnd_copy = HWND(hwnd_val as *mut std::ffi::c_void);
-                    {
                         if TAG_ABORT_SIGNAL.load(Ordering::Relaxed) {
                             return;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
 
+                        // Clear Clipboard
                         if OpenClipboard(Some(HWND::default())).is_ok() {
                             let _ = EmptyClipboard();
                             let _ = CloseClipboard();
@@ -424,6 +549,7 @@ pub fn show_text_selection_tag(preset_idx: usize) {
                             SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
                         };
 
+                        // Ctrl + C chain
                         send_input_event(VK_CONTROL.0, KEYBD_EVENT_FLAGS(0));
                         std::thread::sleep(std::time::Duration::from_millis(20));
                         send_input_event(0x43, KEYBD_EVENT_FLAGS(0));
@@ -447,300 +573,326 @@ pub fn show_text_selection_tag(preset_idx: usize) {
                         if !clipboard_text.trim().is_empty()
                             && !TAG_ABORT_SIGNAL.load(Ordering::Relaxed)
                         {
+                            // HIDE FIRST
+                            let _ =
+                                PostMessageW(Some(hwnd_copy), WM_APP_HIDE, WPARAM(0), LPARAM(0));
                             process_selected_text(preset_idx_for_thread, clipboard_text);
-                            let _ = PostMessageW(Some(hwnd_copy), WM_CLOSE, WPARAM(0), LPARAM(0));
                         } else {
+                            // Reset state if failed or empty
                             let mut state = SELECTION_STATE.lock().unwrap();
                             state.is_selecting = false;
                             state.is_processing = false;
                         }
-                    }
-                });
+                    });
+                }
+
+                // 60FPS Cap for polling drag state
+                std::thread::sleep(std::time::Duration::from_millis(16));
             }
-
-            // 5. Render & Move
-            paint_tag_window(
-                hwnd,
-                200,
-                40,
-                current_alpha,
-                is_selecting,
-                target_x,
-                target_y,
-            );
-
-            // 6. Sync with DWM for smoothness
-            let _ = DwmFlush();
         }
 
-        // Cleanup cache on exit
+        // Cleanup
         {
             let mut state = SELECTION_STATE.lock().unwrap();
-
-            // Unhook
+            state.webview = None;
             if !state.hook_handle.is_invalid() {
                 let _ = UnhookWindowsHookEx(state.hook_handle);
                 state.hook_handle = HHOOK::default();
             }
-
-            if !state.cached_bitmap.is_invalid() {
-                let _ = DeleteObject(state.cached_bitmap.into());
-                state.cached_bitmap = HBITMAP::default();
-            }
-            if !state.cached_font.is_invalid() {
-                let _ = DeleteObject(state.cached_font.into());
-                state.cached_font = HFONT(std::ptr::null_mut());
-            }
-            state.cached_bits = std::ptr::null_mut();
-            state.hwnd = HWND::default();
         }
     }
 }
 
-unsafe extern "system" fn tag_wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    match msg {
-        WM_CLOSE => {
-            TAG_ABORT_SIGNAL.store(true, Ordering::SeqCst);
-            let _ = DestroyWindow(hwnd);
-            PostQuitMessage(0);
-            LRESULT(0)
+// Reuse helper functions like get_clipboard_text, process_selected_text
+unsafe fn get_clipboard_text() -> String {
+    let mut result = String::new();
+    if OpenClipboard(Some(HWND::default())).is_ok() {
+        if let Ok(h_data) = GetClipboardData(13u32) {
+            let h_global: HGLOBAL = std::mem::transmute(h_data);
+            let ptr = GlobalLock(h_global);
+            if !ptr.is_null() {
+                let size = GlobalSize(h_global);
+                let wide_slice = std::slice::from_raw_parts(ptr as *const u16, size / 2);
+                if let Some(end) = wide_slice.iter().position(|&c| c == 0) {
+                    result = String::from_utf16_lossy(&wide_slice[..end]);
+                }
+            }
+            let _ = GlobalUnlock(h_global);
         }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        let _ = CloseClipboard();
     }
+    result
 }
 
-unsafe fn paint_tag_window(
-    hwnd: HWND,
-    width: i32,
-    height: i32,
-    alpha: u8,
-    is_selecting: bool,
-    x: i32,
-    y: i32,
-) {
-    if alpha == 0 {
-        return;
-    }
-
-    let screen_dc = GetDC(None);
-    let mem_dc = CreateCompatibleDC(Some(screen_dc));
-
-    let mut state = SELECTION_STATE.lock().unwrap();
-    let animation_offset = state.animation_offset;
-
-    // Cached lang check
-    if state.cached_lang.is_none() {
-        let app = APP.lock().unwrap();
-        state.cached_lang = Some(app.config.ui_language.clone());
-    }
-
-    if state.cached_bitmap.is_invalid() {
-        let bmi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width,
-                biHeight: -height,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0 as u32,
-                ..Default::default()
-            },
-            ..Default::default()
+fn process_selected_text(preset_idx: usize, clipboard_text: String) {
+    unsafe {
+        let (is_master, _original_mode) = {
+            let app = APP.lock().unwrap();
+            let p = &app.config.presets[preset_idx];
+            (p.is_master, p.text_input_mode.clone())
         };
-        let mut p_bits: *mut core::ffi::c_void = std::ptr::null_mut();
-        if let Ok(bmp) =
-            CreateDIBSection(Some(screen_dc), &bmi, DIB_RGB_COLORS, &mut p_bits, None, 0)
-        {
-            state.cached_bitmap = bmp;
-            state.cached_bits = p_bits as *mut u32;
-        }
-    }
 
-    if state.cached_font.is_invalid() {
-        state.cached_font = CreateFontW(
-            22,
-            0,
-            0,
-            0,
-            FW_BOLD.0 as i32,
-            0,
-            0,
-            0,
-            FONT_CHARSET(DEFAULT_CHARSET.0 as u8),
-            FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS.0 as u8),
-            FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS.0 as u8),
-            FONT_QUALITY(CLEARTYPE_QUALITY.0 as u8),
-            std::mem::transmute((VARIABLE_PITCH.0 | FF_SWISS.0) as u32),
-            w!("Google Sans Flex"),
+        let final_preset_idx = if is_master {
+            let mut cursor_pos = POINT { x: 0, y: 0 };
+            let _ = GetCursorPos(&mut cursor_pos);
+            let selected =
+                crate::overlay::preset_wheel::show_preset_wheel("text", Some("select"), cursor_pos);
+            if let Some(idx) = selected {
+                idx
+            } else {
+                return;
+            }
+        } else {
+            preset_idx
+        };
+
+        let (config, mut preset, screen_w, screen_h) = {
+            let mut app = APP.lock().unwrap();
+            app.config.active_preset_idx = final_preset_idx;
+            (
+                app.config.clone(),
+                app.config.presets[final_preset_idx].clone(),
+                GetSystemMetrics(SM_CXSCREEN),
+                GetSystemMetrics(SM_CYSCREEN),
+            )
+        };
+
+        preset.text_input_mode = "select".to_string();
+
+        let center_rect = RECT {
+            left: (screen_w - 700) / 2,
+            top: (screen_h - 300) / 2,
+            right: (screen_w + 700) / 2,
+            bottom: (screen_h + 300) / 2,
+        };
+        let localized_name =
+            crate::gui::settings_ui::get_localized_preset_name(&preset.id, &config.ui_language);
+        let cancel_hotkey = preset
+            .hotkeys
+            .first()
+            .map(|h| h.name.clone())
+            .unwrap_or_default();
+
+        crate::overlay::process::start_text_processing(
+            clipboard_text,
+            center_rect,
+            config,
+            preset,
+            localized_name,
+            cancel_hotkey,
         );
     }
+}
 
-    let old_bitmap = SelectObject(mem_dc, state.cached_bitmap.into());
-
-    if !state.cached_bits.is_null() {
-        let pixels = std::slice::from_raw_parts_mut(state.cached_bits, (width * height) as usize);
-        let bx = width as f32 / 2.0;
-        let by = height as f32 / 2.0;
-        let time_rad = animation_offset.to_radians();
-
-        let inner_margin = 20.0;
-        let glow_base = if is_selecting { 8.0 } else { 5.0 };
-
-        for y in 0..height {
-            let py = y as f32 - by;
-            let is_y_interior = y > inner_margin as i32 && y < height - inner_margin as i32;
-
-            for x in 0..width {
-                let idx = (y * width + x) as usize;
-                let px = x as f32 - bx;
-
-                let is_x_interior = x > inner_margin as i32 && x < width - inner_margin as i32;
-                if is_y_interior && is_x_interior {
-                    pixels[idx] = 0xD9101010;
-                    continue;
-                }
-
-                let d =
-                    crate::overlay::paint_utils::sd_rounded_box(px, py, bx - 6.0, by - 6.0, 14.0);
-                let mut final_col = 0x000000;
-                let mut final_alpha = 0.0f32;
-                let aa_half = 0.75;
-
-                if d < -aa_half {
-                    final_alpha = 0.85;
-                    final_col = 0x00101010;
-                } else if d < aa_half {
-                    let t = (d + aa_half) / (aa_half * 2.0);
-                    let blend = t * t * (3.0 - 2.0 * t);
-                    let angle = py.atan2(px);
-                    let noise = if is_selecting {
-                        (angle * 10.0 - time_rad * 8.0).sin() * 0.5
-                    } else {
-                        (angle * 2.0 + time_rad * 3.0).sin() * 0.2
-                    };
-                    let glow_width = glow_base + (noise * 3.0);
-                    let glow_t = (d.max(0.0) / glow_width).clamp(0.0, 1.0);
-                    let glow_intensity = (1.0 - glow_t).powi(2);
-                    let hue = (angle.to_degrees() + animation_offset * 2.0).rem_euclid(360.0);
-                    let glow_rgb = crate::overlay::paint_utils::hsv_to_rgb(hue, 0.9, 1.0);
-                    let fill_alpha = 0.85 * (1.0 - blend);
-                    let glow_alpha = glow_intensity * blend;
-                    final_alpha = fill_alpha + glow_alpha;
-                    let glow_r = ((glow_rgb >> 16) & 0xFF) as f32 * blend;
-                    let glow_g = ((glow_rgb >> 8) & 0xFF) as f32 * blend;
-                    let glow_b = (glow_rgb & 0xFF) as f32 * blend;
-                    if final_alpha > 0.001 {
-                        let r =
-                            (glow_r / final_alpha + 0x10 as f32 * (1.0 - blend)).min(255.0) as u32;
-                        let g =
-                            (glow_g / final_alpha + 0x10 as f32 * (1.0 - blend)).min(255.0) as u32;
-                        let b =
-                            (glow_b / final_alpha + 0x10 as f32 * (1.0 - blend)).min(255.0) as u32;
-                        final_col = (r << 16) | (g << 8) | b;
-                    }
-                } else {
-                    let angle = py.atan2(px);
-                    let noise = if is_selecting {
-                        (angle * 10.0 - time_rad * 8.0).sin() * 0.5
-                    } else {
-                        (angle * 2.0 + time_rad * 3.0).sin() * 0.2
-                    };
-                    let glow_width = glow_base + (noise * 3.0);
-                    let t = (d / glow_width).clamp(0.0, 1.0);
-                    let glow_intensity = (1.0 - t).powi(2);
-                    if glow_intensity > 0.01 {
-                        let hue = (angle.to_degrees() + animation_offset * 2.0).rem_euclid(360.0);
-                        final_col = crate::overlay::paint_utils::hsv_to_rgb(hue, 0.9, 1.0);
-                        final_alpha = glow_intensity;
-                    }
-                }
-                let a = (final_alpha * 255.0) as u32;
-                let r = ((final_col >> 16) & 0xFF) * a / 255;
-                let g = ((final_col >> 8) & 0xFF) * a / 255;
-                let b = (final_col & 0xFF) * a / 255;
-                pixels[idx] = (a << 24) | (r << 16) | (g << 8) | b;
+unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code == HC_ACTION as i32 {
+        let kbd_struct = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+        if wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize {
+            if kbd_struct.vkCode == VK_ESCAPE.0 as u32 {
+                TAG_ABORT_SIGNAL.store(true, Ordering::SeqCst);
+                return LRESULT(1);
             }
         }
     }
+    CallNextHookEx(None, code, wparam, lparam)
+}
 
-    SetBkMode(mem_dc, TRANSPARENT);
-    SetTextColor(mem_dc, COLORREF(0x00FFFFFF));
-    let old_font = SelectObject(mem_dc, state.cached_font.into());
+// --- HTML CONTENT ---
+fn get_html(initial_text: &str) -> String {
+    let font_css = crate::overlay::html_components::font_manager::get_font_css();
 
-    let text = if is_selecting {
-        match state.cached_lang.as_ref().unwrap().as_str() {
-            "vi" => "Thả chuột để xử lý",
-            "ko" => "처리를 위해 마우스를 놓으세요",
-            _ => "Release to process",
-        }
-    } else {
-        match state.cached_lang.as_ref().unwrap().as_str() {
-            "vi" => "Bôi đen văn bản...",
-            "ko" => "텍스트 선택...",
-            _ => "Select text...",
-        }
-    };
-    let mut text_w = crate::overlay::utils::to_wstring(text);
-    let mut tr = RECT {
-        left: 0,
-        top: 0,
-        right: width,
-        bottom: height,
-    };
-    DrawTextW(
-        mem_dc,
-        &mut text_w,
-        &mut tr,
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-    );
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        {font_css}
+        :root {{
+            --bg-color: rgba(255, 255, 255, 0.95);
+            --text-color: #202124;
+            /* Aurora Gradient - Idle (Blue-Violet-Cyan) */
+            --g1: #0033cc;
+            --g2: #00ddff;
+            --g3: #8844ff;
+            /* Aurora Gradient - Active (Red-Gold-Purple DRAMATIC) */
+            --a1: #ff0055;
+            --a2: #ffdd00;
+            --a3: #aa00ff;
+        }}
+        [data-theme="dark"] {{
+            --bg-color: rgba(26, 26, 26, 0.95);
+            --text-color: #ffffff;
+            /* Aurora Gradient - Idle (Neon Synthwave) */
+            --g1: #2bd9fe;
+            --g2: #aa22ff;
+            --g3: #00fe9b;
+            /* Aurora Gradient - Active (Hyper Energy) */
+            --a1: #ff00cc;
+            --a2: #ccff00;
+            --a3: #ff2200;
+        }}
 
-    if !state.cached_bits.is_null() {
-        let _ = GdiFlush();
-        let pxs = std::slice::from_raw_parts_mut(state.cached_bits, (width * height) as usize);
-        for p in pxs.iter_mut() {
-            let val = *p;
-            let a = (val >> 24) & 0xFF;
-            let r = (val >> 16) & 0xFF;
-            let g = (val >> 8) & 0xFF;
-            let b = val & 0xFF;
-            let max_c = r.max(g).max(b);
-            if max_c > a {
-                *p = (max_c << 24) | (r << 16) | (g << 8) | b;
-            }
-        }
-    }
+        * {{
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            cursor: default;
+        }}
+        
+        body {{
+            background: transparent;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+            font-family: 'Google Sans Flex Rounded', 'Google Sans Flex', 'Segoe UI', system-ui, sans-serif;
+            font-weight: 500;
+        }}
+        
+        /* Clip the glow to the container shape to prevent "inside out" giant square */
+        .badge-container {{
+            position: relative;
+            padding: 2px; /* Border thickness */
+            border-radius: 999px; /* Pill shape */
+            background: var(--bg-color); /* Opaque track */
+            overflow: hidden; /* CRITICAL FIX: Clips the spinning gradient */
+            opacity: 0; /* Default invisible */
+            transform: translateY(10px);
+            /* Remove default animation, handled by classes */
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            transition: box-shadow 0.2s, transform 0.2s;
+        }}
 
-    let pt_src = POINT { x: 0, y: 0 };
-    // Update destination position with current mouse following coordinates
-    let pt_dst = POINT { x, y };
+        .badge-container.entering {{
+            animation: fadeIn 0.15s cubic-bezier(0.2, 0, 0, 1) forwards;
+        }}
+        
+        .badge-container.exiting {{
+            animation: fadeOut 0.15s cubic-bezier(0.2, 0, 0, 1) forwards;
+        }}
 
-    let size = SIZE {
-        cx: width,
-        cy: height,
-    };
-    let mut bl = BLENDFUNCTION::default();
-    bl.BlendOp = AC_SRC_OVER as u8;
-    bl.SourceConstantAlpha = alpha;
-    bl.AlphaFormat = AC_SRC_ALPHA as u8;
-    let _ = UpdateLayeredWindow(
-        hwnd,
-        None,
-        Some(&pt_dst),
-        Some(&size),
-        Some(mem_dc),
-        Some(&pt_src),
-        COLORREF(0),
-        Some(&bl),
-        ULW_ALPHA,
-    );
+        .badge-glow {{
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: conic-gradient(
+                from 0deg, 
+                var(--c1), 
+                var(--c2), 
+                var(--c3), 
+                var(--c2), 
+                var(--c1)
+            );
+            animation: spin 4s linear infinite; /* Slower, smoother flow */
+            opacity: 1;
+            z-index: 0;
+            filter: blur(2px); /* Soften the gradient blends */
+        }}
 
-    let _ = SelectObject(mem_dc, old_font.into());
-    let _ = SelectObject(mem_dc, old_bitmap.into());
-    let _ = DeleteDC(mem_dc);
-    ReleaseDC(None, screen_dc);
+        .badge-inner {{
+            position: relative;
+            background: var(--bg-color); /* Covers the center */
+            color: var(--text-color);
+            padding: 3px 10px;
+            border-radius: 999px; /* Match parent */
+            font-size: 12px;
+            white-space: nowrap;
+            z-index: 1; /* Sit above glow */
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-stretch: condensed;
+            letter-spacing: -0.2px;
+            box-shadow: 0 0 4px 1px var(--bg-color); /* Soft edge blending */
+        }}
+
+        @keyframes fadeIn {{
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+
+        @keyframes spin {{
+            from {{ transform: rotate(0deg); }}
+            to {{ transform: rotate(360deg); }}
+        }}
+        
+        @keyframes fadeOut {{
+            from {{ opacity: 1; transform: translateY(0); }}
+            to {{ opacity: 0; transform: translateY(-10px); }}
+        }}
+
+        /* State: Selecting (Active) */
+        body.selecting .badge-glow {{
+            --c1: var(--a1);
+            --c2: var(--a2);
+            --c3: var(--a3);
+            animation: spin 0.8s linear infinite; /* Faster spin for urgency */
+        }}
+        
+        body.selecting .badge-container {{
+            transform: scale(1.05);
+            /* Soft orange outer glow */
+            box-shadow: 0 0 15px rgba(255, 94, 0, 0.4), 0 4px 12px rgba(0,0,0,0.3);
+        }}
+        
+        /* State: Idle */
+        body:not(.selecting) .badge-glow {{
+            --c1: var(--g1);
+            --c2: var(--g2);
+            --c3: var(--g3);
+        }}
+
+    </style>
+</head>
+<body>
+    <div class="badge-container">
+        <div class="badge-glow"></div>
+        <div class="badge-inner">
+            <span id="text">{text}</span>
+        </div>
+    </div>
+
+    <script>
+        function playEntry() {{
+            const el = document.querySelector('.badge-container');
+            if(el) {{
+                el.classList.remove('exiting');
+                el.classList.add('entering');
+            }}
+        }}
+
+        function playExit() {{
+            const el = document.querySelector('.badge-container');
+            if(el) {{
+                el.classList.remove('entering');
+                el.classList.add('exiting');
+            }}
+        }}
+        
+        function updateState(isSelecting, newText) {{
+            if (isSelecting) {{
+                document.body.classList.add('selecting');
+            }} else {{
+                document.body.classList.remove('selecting');
+            }}
+            document.getElementById('text').innerText = newText;
+        }}
+
+        function updateTheme(isDark) {{
+            if (isDark) {{
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }} else {{
+                document.documentElement.setAttribute('data-theme', 'light');
+            }}
+        }}
+    </script>
+</body>
+</html>"#,
+        font_css = font_css,
+        text = initial_text
+    )
 }

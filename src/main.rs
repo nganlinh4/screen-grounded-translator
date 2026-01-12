@@ -302,6 +302,10 @@ fn main() -> eframe::Result<()> {
         wait_for_popup_close();
         overlay::auto_copy_badge::warmup();
 
+        // 3.75 Warmup text selection tag (native GDI)
+        wait_for_popup_close();
+        overlay::text_selection::warmup();
+
         // 4. Wait before next warmup to distribute CPU load
         std::thread::sleep(std::time::Duration::from_millis(2000));
 
@@ -733,10 +737,16 @@ unsafe extern "system" fn hotkey_proc(
                         } else {
                             // NEW: Try instant processing if text is already selected
                             std::thread::spawn(move || {
-                                // First, try to process any already-selected text
-                                if !overlay::text_selection::try_instant_process(preset_idx) {
-                                    // No pre-selected text - fall back to showing selection tag
-                                    overlay::show_text_selection_tag(preset_idx);
+                                // 1. Show Badge IMMEDIATELY (Decoupled)
+                                overlay::show_text_selection_tag(preset_idx);
+
+                                // 2. Try processing in background
+                                let success =
+                                    overlay::text_selection::try_instant_process(preset_idx);
+
+                                if success {
+                                    // If we successfully processed text, we don't need the badge anymore.
+                                    overlay::text_selection::cancel_selection();
                                 }
                             });
                         }
