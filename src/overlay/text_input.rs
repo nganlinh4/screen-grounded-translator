@@ -847,16 +847,9 @@ pub fn show(
     if hwnd_val != 0 {
         let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
         unsafe {
-            // TOGGLE LOGIC:
-            // If window is visible, hide it. Otherwise, show it.
-            if IsWindowVisible(hwnd).as_bool() {
-                // Currently visible -> Hide it
-                let _ = ShowWindow(hwnd, SW_HIDE);
-                // Also reset history when hiding via toggle to be safe
-                crate::overlay::input_history::reset_history_navigation();
-            } else {
-                let _ = PostMessageW(Some(hwnd), WM_APP_SHOW, WPARAM(0), LPARAM(0));
-            }
+            // ALWAYS show logic (Toggle logic handled by caller if needed)
+            // Fixes issue where dynamic prompt mode fails to appear if window state is desync
+            let _ = PostMessageW(Some(hwnd), WM_APP_SHOW, WPARAM(0), LPARAM(0));
         }
     }
 }
