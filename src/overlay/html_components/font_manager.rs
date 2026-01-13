@@ -12,8 +12,7 @@ use windows::Win32::Graphics::Gdi::AddFontMemResourceEx;
 use wry::WebViewBuilder;
 
 /// Google Sans Flex variable font - bundled at compile time (~5MB)
-static GOOGLE_SANS_FLEX_TTF: &[u8] =
-    include_bytes!("../../../assets/GoogleSansFlex-VariableFont_GRAD,ROND,opsz,slnt,wdth,wght.ttf");
+static GOOGLE_SANS_FLEX_TTF: &[u8] = crate::assets::GOOGLE_SANS_FLEX;
 
 static START_SERVER_ONCE: Once = Once::new();
 static PAGE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);

@@ -120,10 +120,8 @@ pub fn configure_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
     let gs_font_name = "google_sans_flex";
-    // Use large byte array include
-    let gs_data = include_bytes!(
-        "../../assets/GoogleSansFlex-VariableFont_GRAD,ROND,opsz,slnt,wdth,wght.ttf"
-    );
+    // Use large byte array from centralized assets
+    let gs_data = crate::assets::GOOGLE_SANS_FLEX;
     fonts.font_data.insert(
         gs_font_name.to_owned(),
         std::sync::Arc::new(egui::FontData::from_static(gs_data)),
