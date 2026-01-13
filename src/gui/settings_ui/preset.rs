@@ -285,28 +285,17 @@ pub fn render_preset_editor(
 
     ui.add_space(8.0);
 
-    // Determine visibility conditions
-    let has_any_auto_copy = preset.blocks.iter().any(|b| b.auto_copy);
+    // Determine visibility conditions: Auto Paste is visible if any NON-input_adapter block has auto_copy enabled
+    let has_any_auto_copy = preset.blocks.iter().any(|b| b.auto_copy && b.block_type != "input_adapter");
     
-    // Show auto-paste control whenever any block has auto_copy enabled AND controller UI is off
+    // Show auto-paste control whenever any applicable block has auto_copy enabled AND controller UI is off
     if has_any_auto_copy && !preset.show_controller_ui {
         ui.horizontal(|ui| {
             if ui.checkbox(&mut preset.auto_paste, text.auto_paste_label).clicked() { changed = true; }
             
-            // Auto Newline: visible when any block has auto_copy
-            // BUT hide it ONLY if the auto-copy block is an input_adapter (image input node).
-            // "image" block type is a processing node that outputs text, so newline is applicable.
-            let auto_copy_block = preset.blocks.iter().find(|b| b.auto_copy);
-            let is_input_node_only_copy = if let Some(block) = auto_copy_block {
-                 // Only hide for input_adapter (pure image copy, no text output)
-                 block.block_type == "input_adapter"
-            } else {
-                false
-            };
-
-            if !is_input_node_only_copy {
-                 if ui.checkbox(&mut preset.auto_paste_newline, text.auto_paste_newline_label).clicked() { changed = true; }
-            }
+            // Auto Newline: visible when any (non-input-adapter) block has auto_copy
+            // Since has_any_auto_copy already excludes input_adapter, we can show it directly
+            if ui.checkbox(&mut preset.auto_paste_newline, text.auto_paste_newline_label).clicked() { changed = true; }
         });
     } else if !has_any_auto_copy {
         // No auto_copy means auto_paste must be off
