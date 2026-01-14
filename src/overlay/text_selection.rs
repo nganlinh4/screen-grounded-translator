@@ -462,6 +462,15 @@ fn internal_create_tag_thread() {
                     continue;
                 }
 
+                // 1.5 Real-time Theme Sync (Check every frame while visible)
+                let new_is_dark = crate::overlay::is_dark_mode();
+                if new_is_dark != current_is_dark {
+                    current_is_dark = new_is_dark;
+                    if let Some(wv) = SELECTION_STATE.lock().unwrap().webview.as_ref() {
+                        let _ = wv.evaluate_script(&format!("updateTheme({});", current_is_dark));
+                    }
+                }
+
                 // 2. Logic & Movement
                 // 2. Logic & Movement
                 let mut pt = POINT::default();
@@ -948,6 +957,7 @@ fn get_html(initial_text: &str) -> String {
             if (isDark) {{
                 document.documentElement.setAttribute('data-theme', 'dark');
             }} else {{
+                document.documentElement.removeAttribute('data-theme');
             }}
         }}
     </script>
