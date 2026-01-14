@@ -66,7 +66,6 @@ pub fn run_translation_loop(
             break;
         }
 
-        // Check for language change
         if crate::overlay::realtime_webview::LANGUAGE_CHANGE.load(Ordering::SeqCst) {
             if let Ok(new_lang) = crate::overlay::realtime_webview::NEW_TARGET_LANGUAGE.lock() {
                 if !new_lang.is_empty() {
@@ -84,11 +83,7 @@ pub fn run_translation_loop(
                 .store(false, Ordering::SeqCst);
         }
 
-        // Check timeout-based commit (works for BOTH Gemini Live and Parakeet)
-        // This correctly waits for:
-        // 1. uncommitted_translation to be non-empty (AI has responded)
-        // 2. BOTH user AND AI to be silent
-        // For Parakeet: uses shorter timeout via should_force_commit_on_timeout()
+        // Timeout check
         {
             let should_force = { state.lock().unwrap().should_force_commit_on_timeout() };
             if should_force {
@@ -155,11 +150,13 @@ pub fn run_translation_loop(
                     if let Some(text) = translate_with_google_gtx(&chunk, &target_language) {
                         if let Ok(mut s) = state.lock() {
                             s.append_translation(&text);
+                            // Only commit if source was finished (delimiter present)
+                            if has_finished {
+                                s.commit_current_translation();
+                                s.commit_finished_sentences();
+                            }
                             let display = s.display_translation.clone();
                             update_translation_text(translation_hwnd, &display);
-                            if has_finished && s.commit_finished_sentences() {
-                                refresh_transcription_window();
-                            }
                         }
                     } else {
                         primary_failed = true;
@@ -254,11 +251,12 @@ pub fn run_translation_loop(
                                         }
                                     }
                                 }
-                                if has_finished && !full_translation.is_empty() {
+
+                                // Only commit if source was finished (delimiter present)
+                                if !full_translation.is_empty() && has_finished {
                                     if let Ok(mut s) = state.lock() {
-                                        if s.commit_finished_sentences() {
-                                            refresh_transcription_window();
-                                        }
+                                        s.commit_current_translation();
+                                        s.commit_finished_sentences();
                                     }
                                 }
                             }
@@ -342,11 +340,12 @@ fn handle_fallback_translation(
         if let Some(text) = translate_with_google_gtx(chunk, target_language) {
             if let Ok(mut s) = state.lock() {
                 s.append_translation(&text);
+                if has_finished {
+                    s.commit_current_translation();
+                    s.commit_finished_sentences();
+                }
                 let display = s.display_translation.clone();
                 update_translation_text(translation_hwnd, &display);
-                if has_finished && s.commit_finished_sentences() {
-                    refresh_transcription_window();
-                }
             }
         }
     } else {
@@ -433,11 +432,12 @@ fn handle_fallback_translation(
                         }
                     }
                 }
-                if has_finished && !full_t.is_empty() {
+
+                // Only commit if finished
+                if !full_t.is_empty() && has_finished {
                     if let Ok(mut s) = state.lock() {
-                        if s.commit_finished_sentences() {
-                            refresh_transcription_window();
-                        }
+                        s.commit_current_translation();
+                        s.commit_finished_sentences();
                     }
                 }
             }
