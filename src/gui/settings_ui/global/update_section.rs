@@ -2,8 +2,6 @@ use crate::gui::locale::LocaleText;
 use crate::updater::{UpdateStatus, Updater};
 use eframe::egui;
 
-#[allow(unexpected_cfgs)]
-
 pub fn render_update_section_content(
     ui: &mut egui::Ui,
     updater: &Option<Updater>,
@@ -13,14 +11,11 @@ pub fn render_update_section_content(
     match status {
         UpdateStatus::Idle => {
             ui.horizontal(|ui| {
-                let mut ver_string = format!(
+                let ver_string = format!(
                     "{} v{}",
                     text.current_version_label,
                     env!("CARGO_PKG_VERSION")
                 );
-                if cfg!(feature = "nopack") || cfg!(nopack) {
-                    ver_string.push_str(" (NoPack)");
-                }
                 ui.label(ver_string);
                 if ui.button(text.check_for_updates_btn).clicked() {
                     if let Some(u) = updater {

@@ -208,47 +208,17 @@ impl Updater {
                 }
             };
 
-            // Find appropriate asset based on current version (nopack or regular)
-            let is_nopack = cfg!(nopack);
+            // Find the .exe or .zip asset from release
             let asset = match release
                 .assets
                 .iter()
-                .find(|a| {
-                    let is_exe_zip = a.name.ends_with(".exe") || a.name.ends_with(".zip");
-                    if !is_exe_zip {
-                        return false;
-                    }
-
-                    if is_nopack {
-                        a.name.contains("nopack")
-                    } else {
-                        !a.name.contains("nopack")
-                    }
-                })
-                .or_else(|| {
-                    // Fallback: If strict match fails, try finding any exe/zip, but log warning internally?
-                    // Actually, for nopack users, we really want the nopack version.
-                    // But if the dev forgets to label it standard (non-nopack) correctly?
-                    // Usually standard doesn't have "nopack" in matching logic above.
-                    // If we are standard (not nopack), we accept anything that DOESNT have nopack.
-                    // If we are nopack, we MUST have nopack.
-
-                    if !is_nopack {
-                        // If we are standard, and we didn't find a non-nopack file (maybe only one file exists and it's named weirdly?)
-                        // Try finding any exe/zip if we are desperate? No, stick to logic.
-                        None
-                    } else {
-                        None
-                    }
-                }) {
+                .find(|a| a.name.ends_with(".exe") || a.name.ends_with(".zip"))
+            {
                 Some(a) => a,
                 None => {
-                    let msg = if is_nopack {
-                        "No 'nopack' .exe found in release assets"
-                    } else {
-                        "No standard .exe found in release assets"
-                    };
-                    let _ = tx.send(UpdateStatus::Error(msg.to_string()));
+                    let _ = tx.send(UpdateStatus::Error(
+                        "No .exe or .zip found in release assets".to_string(),
+                    ));
                     return;
                 }
             };
