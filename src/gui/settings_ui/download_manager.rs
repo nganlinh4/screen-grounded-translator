@@ -278,6 +278,11 @@ impl DownloadManager {
             let ytdlp_exe = bin_dir.join("yt-dlp.exe");
 
             let mut args = Vec::new();
+
+            // Force UTF-8 output to correctly capture filenames with non-ASCII characters (e.g. Korean)
+            args.push("--encoding".to_string());
+            args.push("utf-8".to_string());
+
             // Point to ffmpeg
             args.push("--ffmpeg-location".to_string());
             args.push(bin_dir.to_string_lossy().to_string());
@@ -354,29 +359,75 @@ impl DownloadManager {
                                         let substr = &l[..start]; // ... [download]  23.5
                                         if let Some(space) = substr.rfind(' ') {
                                             if let Ok(p) = substr[space + 1..].parse::<f32>() {
-                                                // Try to parse rest of info for friendly message
-                                                // 88.4% of 33.72MiB at 3.44MiB/s ETA 00:01
+                                                // Dynamic parsing of yt-dlp output
+                                                // Standard: [download]  23.5% of   10.55MiB at    5.20MiB/s ETA 00:01
                                                 let parts: Vec<&str> =
                                                     l.split_whitespace().collect();
-                                                // parts: ["[download]", "88.4%", "of", "33.72MiB", "at", "3.44MiB/s", "ETA", "00:01"]
 
-                                                let mut status_msg = l.clone();
-                                                // Basic heuristics to map to format string: "{}% of {}, at {}, ETA {}"
-                                                // We need: percent, total, speed, eta
-                                                // [download]  23.5% of   10.55MiB at    5.20MiB/s ETA 00:01
-                                                // parts: ["[download]", "23.5%", "of", "10.55MiB", "at", "5.20MiB/s", "ETA", "00:01"]
-                                                if parts.len() >= 8 {
-                                                    let percent = parts[1].trim_end_matches('%');
-                                                    let total = parts[3];
-                                                    let speed = parts[5];
-                                                    let eta = parts[7];
+                                                let mut p_val = None;
+                                                let mut t_val = None;
+                                                let mut s_val = None;
+                                                let mut e_val = None;
 
-                                                    // Replace placeholders
-                                                    status_msg = fmt_str
-                                                        .replacen("{}", percent, 1)
-                                                        .replacen("{}", total, 1)
-                                                        .replacen("{}", speed, 1)
-                                                        .replacen("{}", eta, 1);
+                                                for (i, part) in parts.iter().enumerate() {
+                                                    if part.contains("%") {
+                                                        p_val = Some(part.trim_end_matches('%'));
+                                                    } else if *part == "of" && i + 1 < parts.len() {
+                                                        let val = parts[i + 1];
+                                                        if val != "Unknown" && val != "N/A" {
+                                                            t_val = Some(val);
+                                                        }
+                                                    } else if *part == "at" && i + 1 < parts.len() {
+                                                        let val = parts[i + 1];
+                                                        if val != "Unknown" && val != "N/A" {
+                                                            s_val = Some(val);
+                                                        }
+                                                    } else if *part == "ETA" && i + 1 < parts.len()
+                                                    {
+                                                        let val = parts[i + 1];
+                                                        if val != "Unknown" && val != "N/A" {
+                                                            e_val = Some(val);
+                                                        }
+                                                    }
+                                                }
+
+                                                // Construct message based on format string and available data
+                                                // fmt_str: "{}% of {}, at {}, ETA {}" (Example)
+                                                // We treat it as 5 segments split by "{}"
+                                                let fmt_segments: Vec<&str> =
+                                                    fmt_str.split("{}").collect();
+                                                let mut status_msg = String::new();
+
+                                                if let Some(p_str) = p_val {
+                                                    if fmt_segments.len() >= 5 {
+                                                        status_msg.push_str(fmt_segments[0]);
+                                                        status_msg.push_str(p_str);
+
+                                                        if let Some(t) = t_val {
+                                                            status_msg.push_str(fmt_segments[1]);
+                                                            status_msg.push_str(t);
+                                                        } else {
+                                                            // Fallback unit if total is missing
+                                                            status_msg.push_str("%");
+                                                        }
+
+                                                        if let Some(s) = s_val {
+                                                            status_msg.push_str(fmt_segments[2]);
+                                                            status_msg.push_str(s);
+                                                        }
+
+                                                        if let Some(e) = e_val {
+                                                            status_msg.push_str(fmt_segments[3]);
+                                                            status_msg.push_str(e);
+                                                            status_msg.push_str(fmt_segments[4]);
+                                                        }
+                                                    } else {
+                                                        // Fallback if format string is weird
+                                                        status_msg = format!("{}%", p_str);
+                                                    }
+                                                } else {
+                                                    // Should not happen if we parsed p ok
+                                                    status_msg = l.clone();
                                                 }
 
                                                 if let Ok(mut s) = state_clone.lock() {

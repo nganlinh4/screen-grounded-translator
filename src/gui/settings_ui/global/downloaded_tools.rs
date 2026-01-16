@@ -25,6 +25,7 @@ pub fn render_downloaded_tools_modal(
             .collapsible(false)
             .resizable(false)
             .default_width(500.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.add_space(8.0);
 

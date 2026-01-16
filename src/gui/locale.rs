@@ -605,9 +605,9 @@ impl LocaleText {
                   tool_status_missing: "Chưa tải",
                   tool_action_download: "Tải về",
                   tool_action_delete: "Xoá",
-                  tool_desc_parakeet: "Mô hình AI để nhận diện giọng nói realtime.",
-                  tool_desc_ytdlp: "Công cụ tải video/audio nguồn mở mạnh mẽ.",
-                  tool_desc_ffmpeg: "Công cụ xử lý đa phương tiện cần thiết.",
+                  tool_desc_parakeet: "Dùng trong tính năng Dịch cabin và là mô hình \"Stream offline\" trong node Audio->Text",
+                  tool_desc_ytdlp: "Dùng trong tính năng Tải media",
+                  tool_desc_ffmpeg: "Dùng trong tính năng Tải media",
                   },
             "ko" => Self {
                  history_btn: "히스토리",
@@ -903,9 +903,9 @@ impl LocaleText {
                   tool_status_missing: "설치되지 않음",
                   tool_action_download: "다운로드",
                   tool_action_delete: "삭제",
-                  tool_desc_parakeet: "실시간 음성 인식을 위한 AI 모델.",
-                  tool_desc_ytdlp: "강력한 오픈 소스 비디오/오디오 다운로더.",
-                  tool_desc_ffmpeg: "필수 멀티미디어 처리 도구.",
+                  tool_desc_parakeet: "캐빈 번역 기능 및 Audio->Text 노드의 \"Stream offline\" 모델로 사용됩니다",
+                  tool_desc_ytdlp: "미디어 다운로드 기능에서 사용됨",
+                  tool_desc_ffmpeg: "미디어 다운로드 기능에서 사용됨",
                  // --- HELP ASSISTANT KO ---
                  help_assistant_btn: "SGT 사용법 물어보기...",
                  help_assistant_title: "SGT에 대해 물어보기",
@@ -1252,9 +1252,9 @@ impl LocaleText {
                    tool_status_missing: "Not installed",
                    tool_action_download: "Download",
                    tool_action_delete: "Delete",
-                   tool_desc_parakeet: "AI model for realtime speech recognition.",
-                   tool_desc_ytdlp: "Powerful open-source video/audio downloader.",
-                   tool_desc_ffmpeg: "Essential multimedia processing tool.",
+                   tool_desc_parakeet: "Used in Cabin Translation and as the \"Stream offline\" model in Audio->Text node",
+                   tool_desc_ytdlp: "Used in Media Download feature",
+                   tool_desc_ffmpeg: "Used in Media Download feature",
                   },
                 }
     }
