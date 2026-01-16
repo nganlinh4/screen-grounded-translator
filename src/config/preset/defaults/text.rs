@@ -67,7 +67,7 @@ pub fn create_text_presets() -> Vec<Preset> {
         PresetBuilder::new("preset_trans_retrans_select", "Trans+Retrans (Select)")
             .text_select()
             .blocks(vec![
-                BlockBuilder::text("cerebras_qwen3")
+                BlockBuilder::text("cerebras_zai_glm_4_7")
                     .prompt("Translate the following text to {language1}. Output ONLY the translation.")
                     .language("Korean")
                     .markdown_stream()

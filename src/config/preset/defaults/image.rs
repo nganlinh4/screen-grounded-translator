@@ -87,7 +87,7 @@ pub fn create_image_presets() -> Vec<Preset> {
                     .language("English")
                     .show_overlay(false)
                     .build(),
-                BlockBuilder::text("cerebras_qwen3")
+                BlockBuilder::text("cerebras_zai_glm_4_7")
                     .prompt("Translate to {language1}. Output ONLY the translation.")
                     .language("Korean")
                     .markdown_stream() // Đẹp+Str
