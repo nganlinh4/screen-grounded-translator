@@ -427,7 +427,48 @@ pub fn type_text_to_window(hwnd_target_opt: Option<HWND>, text: &str) {
         }
 
         // Send Chars
+        // NOTE: Notepad and some other legacy apps process synthetic input slowly.
+        // We use extended delays and special space handling to avoid dropped characters.
+        let mut prev_was_space = false;
         for c in text.chars() {
+            // If previous char was a space, add extra delay before next char
+            // This fixes Notepad dropping the first consonant after a space
+            if prev_was_space {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            prev_was_space = c == ' ';
+
+            // Use VK_SPACE for space characters (more reliable in Notepad)
+            if c == ' ' {
+                let input_down = INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VK_SPACE,
+                            wScan: 0,
+                            dwFlags: KEYBD_EVENT_FLAGS(0),
+                            ..Default::default()
+                        },
+                    },
+                };
+                let input_up = INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: VK_SPACE,
+                            wScan: 0,
+                            dwFlags: KEYEVENTF_KEYUP,
+                            ..Default::default()
+                        },
+                    },
+                };
+                SendInput(&[input_down], std::mem::size_of::<INPUT>() as i32);
+                std::thread::sleep(std::time::Duration::from_millis(8));
+                SendInput(&[input_up], std::mem::size_of::<INPUT>() as i32);
+                std::thread::sleep(std::time::Duration::from_millis(15));
+                continue;
+            }
+
             let mut buffer = [0u16; 2];
             let encoded = c.encode_utf16(&mut buffer);
 
@@ -455,8 +496,11 @@ pub fn type_text_to_window(hwnd_target_opt: Option<HWND>, text: &str) {
                         },
                     },
                 };
-                SendInput(&[input_down, input_up], std::mem::size_of::<INPUT>() as i32);
-                std::thread::sleep(std::time::Duration::from_millis(8));
+                // Send keydown and keyup separately with delay between for better app compatibility
+                SendInput(&[input_down], std::mem::size_of::<INPUT>() as i32);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                SendInput(&[input_up], std::mem::size_of::<INPUT>() as i32);
+                std::thread::sleep(std::time::Duration::from_millis(12));
             }
         }
     }
