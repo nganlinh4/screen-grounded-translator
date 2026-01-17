@@ -652,68 +652,79 @@ unsafe fn internal_create_pdj_loop() {
     // Brief delay to ensure window is fully initialized before creating WebView
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    let webview_result = PDJ_WEB_CONTEXT.with(|ctx| {
-        let mut ctx_ref = ctx.borrow_mut();
-        let mut builder = WebViewBuilder::new_with_web_context(ctx_ref.as_mut().unwrap())
-            .with_custom_protocol("promptdj".to_string(), move |_id, request| {
-                let path = request.uri().path();
-                let (content, mime) = if path == "/" || path == "/index.html" {
-                    (Cow::Borrowed(INDEX_HTML), "text/html")
-                } else if path.ends_with("index.js") {
-                    (Cow::Borrowed(ASSET_INDEX_JS), "application/javascript")
-                } else if path.ends_with("index.css") {
-                    (Cow::Borrowed(ASSET_INDEX_CSS), "text/css")
-                } else if path.ends_with("cubic.js") {
-                    (Cow::Borrowed(ASSET_CUBIC_JS), "application/javascript")
-                } else if path.ends_with("morph-fixed.js") {
-                    (Cow::Borrowed(ASSET_MORPH_JS), "application/javascript")
-                } else if path.ends_with("roundedPolygon.js") {
-                    (Cow::Borrowed(ASSET_ROUNDED_JS), "application/javascript")
-                } else if path.ends_with("utils.js") {
-                    (Cow::Borrowed(ASSET_UTILS_JS), "application/javascript")
-                } else {
-                    return wnd_http_response(
-                        404,
-                        "text/plain",
-                        Cow::Borrowed(b"Not Found".as_slice()),
-                    );
-                };
-                wnd_http_response(200, mime, content)
-            })
-            .with_initialization_script(&init_script)
-            .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                let body = msg.body().as_str();
-                if body == "drag_window" {
-                    let _ = ReleaseCapture();
-                    unsafe {
-                        let _ = SendMessageW(
-                            hwnd_ipc,
-                            WM_NCLBUTTONDOWN,
-                            Some(WPARAM(HTCAPTION as usize)),
-                            Some(LPARAM(0)),
+    let webview_result = {
+        // LOCK SCOPE: Serialized build to prevent resource contention
+        let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+        crate::log_info!("[PromptDJ] Acquired init lock. Building...");
+
+        let build_res = PDJ_WEB_CONTEXT.with(|ctx| {
+            let mut ctx_ref = ctx.borrow_mut();
+            let mut builder = WebViewBuilder::new_with_web_context(ctx_ref.as_mut().unwrap())
+                .with_custom_protocol("promptdj".to_string(), move |_id, request| {
+                    let path = request.uri().path();
+                    let (content, mime) = if path == "/" || path == "/index.html" {
+                        (Cow::Borrowed(INDEX_HTML), "text/html")
+                    } else if path.ends_with("index.js") {
+                        (Cow::Borrowed(ASSET_INDEX_JS), "application/javascript")
+                    } else if path.ends_with("index.css") {
+                        (Cow::Borrowed(ASSET_INDEX_CSS), "text/css")
+                    } else if path.ends_with("cubic.js") {
+                        (Cow::Borrowed(ASSET_CUBIC_JS), "application/javascript")
+                    } else if path.ends_with("morph-fixed.js") {
+                        (Cow::Borrowed(ASSET_MORPH_JS), "application/javascript")
+                    } else if path.ends_with("roundedPolygon.js") {
+                        (Cow::Borrowed(ASSET_ROUNDED_JS), "application/javascript")
+                    } else if path.ends_with("utils.js") {
+                        (Cow::Borrowed(ASSET_UTILS_JS), "application/javascript")
+                    } else {
+                        return wnd_http_response(
+                            404,
+                            "text/plain",
+                            Cow::Borrowed(b"Not Found".as_slice()),
                         );
-                    }
-                } else if body == "minimize_window" {
-                    unsafe {
-                        let _ = ShowWindow(hwnd_ipc, SW_MINIMIZE);
-                    }
-                } else if body == "close_window" {
-                    unsafe {
-                        let _ = ShowWindow(hwnd_ipc, SW_HIDE);
-                    }
-                } else if body.starts_with("set_volume:") {
-                    if let Ok(val) = body.trim_start_matches("set_volume:").parse::<f32>() {
+                    };
+                    wnd_http_response(200, mime, content)
+                })
+                .with_initialization_script(&init_script)
+                .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                    let body = msg.body().as_str();
+                    if body == "drag_window" {
+                        let _ = ReleaseCapture();
                         unsafe {
-                            let _ = set_app_volume(val);
+                            let _ = SendMessageW(
+                                hwnd_ipc,
+                                WM_NCLBUTTONDOWN,
+                                Some(WPARAM(HTCAPTION as usize)),
+                                Some(LPARAM(0)),
+                            );
+                        }
+                    } else if body == "minimize_window" {
+                        unsafe {
+                            let _ = ShowWindow(hwnd_ipc, SW_MINIMIZE);
+                        }
+                    } else if body == "close_window" {
+                        unsafe {
+                            let _ = ShowWindow(hwnd_ipc, SW_HIDE);
+                        }
+                    } else if body.starts_with("set_volume:") {
+                        if let Ok(val) = body.trim_start_matches("set_volume:").parse::<f32>() {
+                            unsafe {
+                                let _ = set_app_volume(val);
+                            }
                         }
                     }
-                }
-            })
-            .with_url("promptdj://localhost/index.html");
+                })
+                .with_url("promptdj://localhost/index.html");
 
-        builder = crate::overlay::html_components::font_manager::configure_webview(builder);
-        builder.build_as_child(&wrapper)
-    });
+            builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+            builder.build_as_child(&wrapper)
+        });
+        crate::log_info!(
+            "[PromptDJ] Build finished. Status: {}",
+            if build_res.is_ok() { "OK" } else { "ERR" }
+        );
+        build_res
+    };
 
     let webview = match webview_result {
         Ok(wv) => wv,

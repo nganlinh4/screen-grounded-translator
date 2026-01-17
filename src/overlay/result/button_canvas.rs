@@ -933,6 +933,7 @@ fn create_canvas_window() {
         // Initialize WebContext
         CANVAS_WEB_CONTEXT.with(|ctx| {
             if ctx.borrow().is_none() {
+                // Use separate data dir to avoid process-sharing hangs on low-quota systems
                 let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("canvas"));
                 *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
             }
@@ -941,38 +942,54 @@ fn create_canvas_window() {
         let html = generate_canvas_html();
         let wrapper = HwndWrapper(hwnd);
 
-        let webview = CANVAS_WEB_CONTEXT.with(|ctx| {
-            let mut ctx_ref = ctx.borrow_mut();
-            let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-                WebViewBuilder::new_with_web_context(web_ctx)
-            } else {
-                WebViewBuilder::new()
-            };
+        let webview = {
+            // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+            let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+            crate::log_info!("[ButtonCanvas] Acquired init lock. Building...");
 
-            let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+            let build_res = CANVAS_WEB_CONTEXT.with(|ctx| {
+                let mut ctx_ref = ctx.borrow_mut();
+                let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                    WebViewBuilder::new_with_web_context(web_ctx)
+                } else {
+                    WebViewBuilder::new()
+                };
 
-            // Store HTML in font server
-            let page_url =
-                crate::overlay::html_components::font_manager::store_html_page(html.clone())
-                    .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+                let builder =
+                    crate::overlay::html_components::font_manager::configure_webview(builder);
 
-            builder
-                .with_bounds(Rect {
-                    position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(0.0, 0.0)),
-                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                        screen_w as u32,
-                        (screen_h - 1) as u32,
-                    )),
-                })
-                .with_transparent(true)
-                .with_visible(false)
-                .with_focused(false)
-                .with_url(&page_url)
-                .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                    handle_ipc_message(msg.body());
-                })
-                .build_as_child(&wrapper)
-        });
+                // Store HTML in font server
+                let page_url =
+                    crate::overlay::html_components::font_manager::store_html_page(html.clone())
+                        .unwrap_or_else(|| {
+                            format!("data:text/html,{}", urlencoding::encode(&html))
+                        });
+
+                builder
+                    .with_bounds(Rect {
+                        position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(
+                            0.0, 0.0,
+                        )),
+                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                            screen_w as u32,
+                            (screen_h - 1) as u32,
+                        )),
+                    })
+                    .with_transparent(true)
+                    .with_visible(false)
+                    .with_focused(false)
+                    .with_url(&page_url)
+                    .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                        handle_ipc_message(msg.body());
+                    })
+                    .build_as_child(&wrapper)
+            });
+            crate::log_info!(
+                "[ButtonCanvas] Build finished. Releasing lock. Status: {}",
+                if build_res.is_ok() { "OK" } else { "ERR" }
+            );
+            build_res
+        };
 
         match webview {
             Ok(wv) => {

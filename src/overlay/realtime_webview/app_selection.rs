@@ -463,70 +463,93 @@ pub fn show_app_selection_popup() {
                     });
 
             let builder = wry::WebViewBuilder::new_with_web_context(&mut web_context);
-            let result = crate::overlay::html_components::font_manager::configure_webview(builder)
-                .with_bounds(wry::Rect {
-                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
-                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                        win_width as u32,
-                        win_height as u32,
-                    )),
-                })
-                .with_url(&page_url)
-                .with_transparent(true)
-                .with_ipc_handler(move |req| {
-                    let body = req.body();
-                    if body.starts_with("selectApp:") {
-                        let rest = &body[10..];
-                        if let Some((pid_str, name)) = rest.split_once(':') {
-                            if let Ok(pid) = pid_str.parse::<u32>() {
-                                // Store selected app
-                                SELECTED_APP_PID.store(pid, Ordering::SeqCst);
-                                if let Ok(mut app_name) = SELECTED_APP_NAME.lock() {
-                                    *app_name = name.to_string();
+            let result = {
+                // LOCK SCOPE: Serialized build to prevent resource contention
+                let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+                crate::log_info!("[AppSelection] Acquired init lock. Building...");
+
+                let build_res =
+                    crate::overlay::html_components::font_manager::configure_webview(builder)
+                        .with_bounds(wry::Rect {
+                            position: wry::dpi::Position::Physical(
+                                wry::dpi::PhysicalPosition::new(0, 0),
+                            ),
+                            size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                                win_width as u32,
+                                win_height as u32,
+                            )),
+                        })
+                        .with_url(&page_url)
+                        .with_transparent(true)
+                        .with_ipc_handler(move |req| {
+                            let body = req.body();
+                            if body.starts_with("selectApp:") {
+                                let rest = &body[10..];
+                                if let Some((pid_str, name)) = rest.split_once(':') {
+                                    if let Ok(pid) = pid_str.parse::<u32>() {
+                                        // Store selected app
+                                        SELECTED_APP_PID.store(pid, Ordering::SeqCst);
+                                        if let Ok(mut app_name) = SELECTED_APP_NAME.lock() {
+                                            *app_name = name.to_string();
+                                        }
+
+                                        // Set audio source to trigger restart (must set this for restart to work!)
+                                        if let Ok(mut new_source) = NEW_AUDIO_SOURCE.lock() {
+                                            *new_source = "device".to_string();
+                                        }
+                                        AUDIO_SOURCE_CHANGE.store(true, Ordering::SeqCst);
+
+                                        let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+                                        // Close native popup
+                                        let _ = ShowWindow(hwnd, SW_HIDE);
+                                        let _ = PostMessageW(
+                                            Some(hwnd),
+                                            WM_CLOSE,
+                                            WPARAM(0),
+                                            LPARAM(0),
+                                        );
+
+                                        // Close TTS Modal using shared flag (more robust)
+                                        CLOSE_TTS_MODAL_REQUEST.store(true, Ordering::SeqCst);
+
+                                        // Trigger updates on both windows to ensure the flag is checked immediately
+                                        let trans_hwnd =
+                                            std::ptr::addr_of!(TRANSLATION_HWND).read();
+                                        let real_hwnd = std::ptr::addr_of!(REALTIME_HWND).read();
+
+                                        if !trans_hwnd.is_invalid() {
+                                            let _ = PostMessageW(
+                                                Some(trans_hwnd),
+                                                crate::api::realtime_audio::WM_TRANSLATION_UPDATE,
+                                                WPARAM(0),
+                                                LPARAM(0),
+                                            );
+                                        }
+
+                                        if !real_hwnd.is_invalid() {
+                                            let _ = PostMessageW(
+                                                Some(real_hwnd),
+                                                crate::api::realtime_audio::WM_REALTIME_UPDATE,
+                                                WPARAM(0),
+                                                LPARAM(0),
+                                            );
+                                        }
+                                    } else {
+                                        eprintln!(
+                                            "App Selection: Failed to parse PID from '{}'",
+                                            pid_str
+                                        );
+                                    }
                                 }
-
-                                // Set audio source to trigger restart (must set this for restart to work!)
-                                if let Ok(mut new_source) = NEW_AUDIO_SOURCE.lock() {
-                                    *new_source = "device".to_string();
-                                }
-                                AUDIO_SOURCE_CHANGE.store(true, Ordering::SeqCst);
-
-                                let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-                                // Close native popup
-                                let _ = ShowWindow(hwnd, SW_HIDE);
-                                let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-
-                                // Close TTS Modal using shared flag (more robust)
-                                CLOSE_TTS_MODAL_REQUEST.store(true, Ordering::SeqCst);
-
-                                // Trigger updates on both windows to ensure the flag is checked immediately
-                                let trans_hwnd = std::ptr::addr_of!(TRANSLATION_HWND).read();
-                                let real_hwnd = std::ptr::addr_of!(REALTIME_HWND).read();
-
-                                if !trans_hwnd.is_invalid() {
-                                    let _ = PostMessageW(
-                                        Some(trans_hwnd),
-                                        crate::api::realtime_audio::WM_TRANSLATION_UPDATE,
-                                        WPARAM(0),
-                                        LPARAM(0),
-                                    );
-                                }
-
-                                if !real_hwnd.is_invalid() {
-                                    let _ = PostMessageW(
-                                        Some(real_hwnd),
-                                        crate::api::realtime_audio::WM_REALTIME_UPDATE,
-                                        WPARAM(0),
-                                        LPARAM(0),
-                                    );
-                                }
-                            } else {
-                                eprintln!("App Selection: Failed to parse PID from '{}'", pid_str);
                             }
-                        }
-                    }
-                })
-                .build_as_child(&HwndWrapper(hwnd));
+                        })
+                        .build_as_child(&HwndWrapper(hwnd));
+                crate::log_info!(
+                    "[AppSelection] Build finished. Status: {}",
+                    if build_res.is_ok() { "OK" } else { "ERR" }
+                );
+                build_res
+            };
 
             if result.is_err() {
                 eprintln!("Failed to create WebView for app selection");

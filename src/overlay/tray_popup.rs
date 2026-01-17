@@ -577,6 +577,7 @@ fn create_popup_window() {
         // Initialize shared WebContext if needed (uses same data dir as other modules)
         POPUP_WEB_CONTEXT.with(|ctx| {
             if ctx.borrow().is_none() {
+                // Use separate data dir to avoid process-sharing hangs on low-quota systems
                 let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("tray"));
                 *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
             }
@@ -590,7 +591,12 @@ fn create_popup_window() {
         std::thread::sleep(std::time::Duration::from_millis(250));
 
         for attempt in 1..=3 {
-                let res = POPUP_WEB_CONTEXT.with(|ctx| {
+            let res = {
+                // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+                let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+                crate::log_info!("[TrayPopup] (Attempt {}) Acquired init lock. Building...", attempt);
+                
+                let build_res = POPUP_WEB_CONTEXT.with(|ctx| {
                     let mut ctx_ref = ctx.borrow_mut();
                     let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
                         WebViewBuilder::new_with_web_context(web_ctx)
@@ -677,20 +683,22 @@ fn create_popup_window() {
                         })
                         .build(&wrapper)
                 });
+                build_res
+            };
+
+            crate::log_info!("[TrayPopup] (Attempt {}) Release lock. Result: {}", attempt, if res.is_ok() { "OK" } else { "ERR" });
     
-                match res {
-                    Ok(wv) => {
-                        final_webview = Some(wv);
-                        break;
-                    }
-                    Err(e) => {
-                        crate::log_info!("[TrayPopup] WebView init attempt {} failed: {:?}", attempt, e);
-                        if attempt < 3 {
-                            std::thread::sleep(std::time::Duration::from_millis(500));
-                        }
-                    }
+            match res {
+                Ok(wv) => {
+                    final_webview = Some(wv);
+                    break;
+                }
+                Err(e) => {
+                    crate::log_info!("[TrayPopup] WebView init attempt {} failed: {:?}", attempt, e);
+                    std::thread::sleep(std::time::Duration::from_millis(2000));
                 }
             }
+        }
 
         if let Some(wv) = final_webview {
             crate::log_info!("[TrayPopup] WebView initialization SUCCESSFUL");

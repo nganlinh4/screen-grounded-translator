@@ -71,426 +71,448 @@ pub fn create_realtime_webview(
         }
     });
 
-    let result = REALTIME_WEB_CONTEXT.with(|ctx| {
-        let mut ctx_ref = ctx.borrow_mut();
-        let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-            WebViewBuilder::new_with_web_context(web_ctx)
-        } else {
-            WebViewBuilder::new()
-        };
-        let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+    let result = {
+        // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+        let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+        crate::log_info!(
+            "[Realtime] Acquired init lock. Building for HWND: {:?}...",
+            hwnd
+        );
 
-        // Store HTML in font server and get URL for same-origin font loading
-        let page_url = crate::overlay::html_components::font_manager::store_html_page(html.clone())
-            .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+        let build_res = REALTIME_WEB_CONTEXT.with(|ctx| {
+            let mut ctx_ref = ctx.borrow_mut();
+            let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                WebViewBuilder::new_with_web_context(web_ctx)
+            } else {
+                WebViewBuilder::new()
+            };
+            let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
 
-        builder
-            .with_bounds(Rect {
-                position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
-                size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                    (rect.right - rect.left) as u32,
-                    (rect.bottom - rect.top) as u32,
-                )),
-            })
-            .with_url(&page_url)
-            .with_transparent(false)
-            .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                let body = msg.body();
-                if body == "startDrag" {
-                    // Initiate window drag directly
-                    unsafe {
-                        let _ = windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
-                        SendMessageW(
-                            hwnd_for_ipc,
-                            WM_NCLBUTTONDOWN,
-                            Some(WPARAM(HTCAPTION as usize)),
-                            Some(LPARAM(0)),
-                        );
-                    }
-                } else if body.starts_with("toggleMic:") {
-                    // Toggle transcription window visibility directly
-                    let visible = &body[10..] == "1";
-                    MIC_VISIBLE.store(visible, Ordering::SeqCst);
-                    unsafe {
-                        if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
-                            if visible {
-                                update_webview_theme(REALTIME_HWND);
+            // Store HTML in font server and get URL for same-origin font loading
+            let page_url =
+                crate::overlay::html_components::font_manager::store_html_page(html.clone())
+                    .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+
+            builder
+                .with_bounds(Rect {
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
+                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                        (rect.right - rect.left) as u32,
+                        (rect.bottom - rect.top) as u32,
+                    )),
+                })
+                .with_url(&page_url)
+                .with_transparent(false)
+                .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                    let body = msg.body();
+                    if body == "startDrag" {
+                        // Initiate window drag directly
+                        unsafe {
+                            let _ = windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
+                            SendMessageW(
+                                hwnd_for_ipc,
+                                WM_NCLBUTTONDOWN,
+                                Some(WPARAM(HTCAPTION as usize)),
+                                Some(LPARAM(0)),
+                            );
+                        }
+                    } else if body.starts_with("toggleMic:") {
+                        // Toggle transcription window visibility directly
+                        let visible = &body[10..] == "1";
+                        MIC_VISIBLE.store(visible, Ordering::SeqCst);
+                        unsafe {
+                            if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
+                                if visible {
+                                    update_webview_theme(REALTIME_HWND);
+                                }
+                                let _ = ShowWindow(
+                                    REALTIME_HWND,
+                                    if visible { SW_SHOW } else { SW_HIDE },
+                                );
                             }
+                            // Sync to other webview
+                            sync_visibility_to_webviews();
+
+                            // If both windows are now off, hide and reset state (but keep windows alive)
+                            if !MIC_VISIBLE.load(Ordering::SeqCst)
+                                && !TRANS_VISIBLE.load(Ordering::SeqCst)
+                            {
+                                REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                                crate::api::tts::TTS_MANAGER.stop();
+                                IS_ACTIVE = false;
+                            } else if visible {
+                                // Force update since we suppressed them while hidden
+                                let _ = PostMessageW(
+                                    Some(REALTIME_HWND),
+                                    WM_REALTIME_UPDATE,
+                                    WPARAM(0),
+                                    LPARAM(0),
+                                );
+                            }
+                        }
+                    } else if body.starts_with("toggleTrans:") {
+                        // Toggle translation window visibility directly
+                        let visible = &body[12..] == "1";
+                        TRANS_VISIBLE.store(visible, Ordering::SeqCst);
+
+                        // Stop TTS when translation window is hidden
+                        if !visible {
+                            crate::api::tts::TTS_MANAGER.stop();
+                        }
+
+                        unsafe {
+                            if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
+                                if visible {
+                                    update_webview_theme(TRANSLATION_HWND);
+                                }
+                                let _ = ShowWindow(
+                                    TRANSLATION_HWND,
+                                    if visible { SW_SHOW } else { SW_HIDE },
+                                );
+                            }
+                            // Sync to other webview
+                            sync_visibility_to_webviews();
+
+                            // If both windows are now off, hide and reset state (but keep windows alive)
+                            if !MIC_VISIBLE.load(Ordering::SeqCst)
+                                && !TRANS_VISIBLE.load(Ordering::SeqCst)
+                            {
+                                REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                                crate::api::tts::TTS_MANAGER.stop();
+                                IS_ACTIVE = false;
+                            } else if visible {
+                                // Force update since we suppressed them while hidden
+                                let _ = PostMessageW(
+                                    Some(TRANSLATION_HWND),
+                                    WM_TRANSLATION_UPDATE,
+                                    WPARAM(0),
+                                    LPARAM(0),
+                                );
+                            }
+                        }
+                    } else if body == "startGroupDrag" {
+                        // Start group drag - nothing special needed, just mark drag started
+                        // The actual movement is handled by groupDragMove
+                    } else if body.starts_with("groupDragMove:") {
+                        // Move both windows together by delta
+                        let coords = &body[14..];
+                        if let Some((dx_str, dy_str)) = coords.split_once(',') {
+                            if let (Ok(dx), Ok(dy)) = (dx_str.parse::<i32>(), dy_str.parse::<i32>())
+                            {
+                                unsafe {
+                                    // Move realtime window
+                                    if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
+                                        let mut rect = RECT::default();
+                                        let _ = GetWindowRect(REALTIME_HWND, &mut rect);
+                                        let _ = SetWindowPos(
+                                            REALTIME_HWND,
+                                            None,
+                                            rect.left + dx,
+                                            rect.top + dy,
+                                            0,
+                                            0,
+                                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                                        );
+                                    }
+
+                                    // Move translation window
+                                    if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
+                                        let mut rect = RECT::default();
+                                        let _ = GetWindowRect(TRANSLATION_HWND, &mut rect);
+                                        let _ = SetWindowPos(
+                                            TRANSLATION_HWND,
+                                            None,
+                                            rect.left + dx,
+                                            rect.top + dy,
+                                            0,
+                                            0,
+                                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    } else if body.starts_with("copyText:") {
+                        // Copy text to clipboard via UI thread
+                        let text = body[9..].to_string();
+                        let boxed = Box::new(text);
+                        let ptr = Box::into_raw(boxed);
+                        unsafe {
+                            let _ = PostMessageW(
+                                Some(hwnd_for_ipc),
+                                WM_COPY_TEXT,
+                                WPARAM(0),
+                                LPARAM(ptr as isize),
+                            );
+                        }
+                    } else if body == "close" {
+                        unsafe {
                             let _ =
-                                ShowWindow(REALTIME_HWND, if visible { SW_SHOW } else { SW_HIDE });
+                                PostMessageW(Some(hwnd_for_ipc), WM_CLOSE, WPARAM(0), LPARAM(0));
                         }
-                        // Sync to other webview
-                        sync_visibility_to_webviews();
+                    } else if body == "saveResize" {
+                        unsafe {
+                            let mut rect = RECT::default();
+                            let _ = GetWindowRect(hwnd_for_ipc, &mut rect);
+                            let w = rect.right - rect.left;
+                            let h = rect.bottom - rect.top;
 
-                        // If both windows are now off, hide and reset state (but keep windows alive)
-                        if !MIC_VISIBLE.load(Ordering::SeqCst)
-                            && !TRANS_VISIBLE.load(Ordering::SeqCst)
-                        {
-                            REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
-                            crate::api::tts::TTS_MANAGER.stop();
-                            IS_ACTIVE = false;
-                        } else if visible {
-                            // Force update since we suppressed them while hidden
-                            let _ = PostMessageW(
-                                Some(REALTIME_HWND),
-                                WM_REALTIME_UPDATE,
-                                WPARAM(0),
-                                LPARAM(0),
-                            );
-                        }
-                    }
-                } else if body.starts_with("toggleTrans:") {
-                    // Toggle translation window visibility directly
-                    let visible = &body[12..] == "1";
-                    TRANS_VISIBLE.store(visible, Ordering::SeqCst);
-
-                    // Stop TTS when translation window is hidden
-                    if !visible {
-                        crate::api::tts::TTS_MANAGER.stop();
-                    }
-
-                    unsafe {
-                        if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
-                            if visible {
-                                update_webview_theme(TRANSLATION_HWND);
+                            let mut app = APP.lock().unwrap();
+                            if hwnd_for_ipc == REALTIME_HWND {
+                                app.config.realtime_transcription_size = (w, h);
+                            } else {
+                                app.config.realtime_translation_size = (w, h);
                             }
-                            let _ = ShowWindow(
-                                TRANSLATION_HWND,
-                                if visible { SW_SHOW } else { SW_HIDE },
-                            );
+                            crate::config::save_config(&app.config);
                         }
-                        // Sync to other webview
-                        sync_visibility_to_webviews();
+                    } else if body.starts_with("fontSize:") {
+                        // Font size change - store for future use
+                        if let Ok(size) = body[9..].parse::<u32>() {
+                            let mut app = APP.lock().unwrap();
+                            app.config.realtime_font_size = size;
+                            crate::config::save_config(&app.config);
+                        }
+                    } else if body.starts_with("audioSource:") {
+                        // Audio source change
+                        let source = body[12..].to_string();
+                        if let Ok(mut new_source) = NEW_AUDIO_SOURCE.lock() {
+                            *new_source = source.clone();
+                        }
 
-                        // If both windows are now off, hide and reset state (but keep windows alive)
-                        if !MIC_VISIBLE.load(Ordering::SeqCst)
-                            && !TRANS_VISIBLE.load(Ordering::SeqCst)
-                        {
-                            REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
-                            crate::api::tts::TTS_MANAGER.stop();
-                            IS_ACTIVE = false;
-                        } else if visible {
-                            // Force update since we suppressed them while hidden
-                            let _ = PostMessageW(
-                                Some(TRANSLATION_HWND),
-                                WM_TRANSLATION_UPDATE,
-                                WPARAM(0),
-                                LPARAM(0),
-                            );
-                        }
-                    }
-                } else if body == "startGroupDrag" {
-                    // Start group drag - nothing special needed, just mark drag started
-                    // The actual movement is handled by groupDragMove
-                } else if body.starts_with("groupDragMove:") {
-                    // Move both windows together by delta
-                    let coords = &body[14..];
-                    if let Some((dx_str, dy_str)) = coords.split_once(',') {
-                        if let (Ok(dx), Ok(dy)) = (dx_str.parse::<i32>(), dy_str.parse::<i32>()) {
-                            unsafe {
-                                // Move realtime window
-                                if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
-                                    let mut rect = RECT::default();
-                                    let _ = GetWindowRect(REALTIME_HWND, &mut rect);
-                                    let _ = SetWindowPos(
-                                        REALTIME_HWND,
-                                        None,
-                                        rect.left + dx,
-                                        rect.top + dy,
-                                        0,
-                                        0,
-                                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                                    );
-                                }
-
-                                // Move translation window
-                                if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
-                                    let mut rect = RECT::default();
-                                    let _ = GetWindowRect(TRANSLATION_HWND, &mut rect);
-                                    let _ = SetWindowPos(
-                                        TRANSLATION_HWND,
-                                        None,
-                                        rect.left + dx,
-                                        rect.top + dy,
-                                        0,
-                                        0,
-                                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                } else if body.starts_with("copyText:") {
-                    // Copy text to clipboard via UI thread
-                    let text = body[9..].to_string();
-                    let boxed = Box::new(text);
-                    let ptr = Box::into_raw(boxed);
-                    unsafe {
-                        let _ = PostMessageW(
-                            Some(hwnd_for_ipc),
-                            WM_COPY_TEXT,
-                            WPARAM(0),
-                            LPARAM(ptr as isize),
-                        );
-                    }
-                } else if body == "close" {
-                    unsafe {
-                        let _ = PostMessageW(Some(hwnd_for_ipc), WM_CLOSE, WPARAM(0), LPARAM(0));
-                    }
-                } else if body == "saveResize" {
-                    unsafe {
-                        let mut rect = RECT::default();
-                        let _ = GetWindowRect(hwnd_for_ipc, &mut rect);
-                        let w = rect.right - rect.left;
-                        let h = rect.bottom - rect.top;
-
-                        let mut app = APP.lock().unwrap();
-                        if hwnd_for_ipc == REALTIME_HWND {
-                            app.config.realtime_transcription_size = (w, h);
-                        } else {
-                            app.config.realtime_translation_size = (w, h);
-                        }
-                        crate::config::save_config(&app.config);
-                    }
-                } else if body.starts_with("fontSize:") {
-                    // Font size change - store for future use
-                    if let Ok(size) = body[9..].parse::<u32>() {
-                        let mut app = APP.lock().unwrap();
-                        app.config.realtime_font_size = size;
-                        crate::config::save_config(&app.config);
-                    }
-                } else if body.starts_with("audioSource:") {
-                    // Audio source change
-                    let source = body[12..].to_string();
-                    if let Ok(mut new_source) = NEW_AUDIO_SOURCE.lock() {
-                        *new_source = source.clone();
-                    }
-
-                    if source == "mic" {
-                        // Clear app selection when switching to mic
-                        SELECTED_APP_PID.store(0, Ordering::SeqCst);
-                        if let Ok(mut name) = SELECTED_APP_NAME.lock() {
-                            name.clear();
-                        }
-                    } else if source == "device" {
-                        // Check if TTS is enabled - if so, show app selection popup
-                        let tts_enabled = REALTIME_TTS_ENABLED.load(Ordering::SeqCst);
-                        if tts_enabled {
-                            // Show app selection popup for user to choose which app to capture
-                            show_app_selection_popup();
-                        } else {
-                            // TTS is off, use normal device loopback (clear any app selection)
+                        if source == "mic" {
+                            // Clear app selection when switching to mic
                             SELECTED_APP_PID.store(0, Ordering::SeqCst);
                             if let Ok(mut name) = SELECTED_APP_NAME.lock() {
                                 name.clear();
                             }
+                        } else if source == "device" {
+                            // Check if TTS is enabled - if so, show app selection popup
+                            let tts_enabled = REALTIME_TTS_ENABLED.load(Ordering::SeqCst);
+                            if tts_enabled {
+                                // Show app selection popup for user to choose which app to capture
+                                show_app_selection_popup();
+                            } else {
+                                // TTS is off, use normal device loopback (clear any app selection)
+                                SELECTED_APP_PID.store(0, Ordering::SeqCst);
+                                if let Ok(mut name) = SELECTED_APP_NAME.lock() {
+                                    name.clear();
+                                }
+                            }
                         }
-                    }
 
-                    // Save to config
-                    {
-                        let mut app = APP.lock().unwrap();
-                        app.config.realtime_audio_source = source;
-                        crate::config::save_config(&app.config);
-                    }
-                    AUDIO_SOURCE_CHANGE.store(true, Ordering::SeqCst);
-                } else if body.starts_with("language:") {
-                    // Target language change - signal update
-                    let lang = body[9..].to_string();
-                    if let Ok(mut new_lang) = NEW_TARGET_LANGUAGE.lock() {
-                        *new_lang = lang.clone();
-                    }
+                        // Save to config
+                        {
+                            let mut app = APP.lock().unwrap();
+                            app.config.realtime_audio_source = source;
+                            crate::config::save_config(&app.config);
+                        }
+                        AUDIO_SOURCE_CHANGE.store(true, Ordering::SeqCst);
+                    } else if body.starts_with("language:") {
+                        // Target language change - signal update
+                        let lang = body[9..].to_string();
+                        if let Ok(mut new_lang) = NEW_TARGET_LANGUAGE.lock() {
+                            *new_lang = lang.clone();
+                        }
 
-                    // Save to config
-                    {
-                        let mut app = APP.lock().unwrap();
-                        app.config.realtime_target_language = lang;
-                        crate::config::save_config(&app.config);
-                    }
-                    LANGUAGE_CHANGE.store(true, Ordering::SeqCst);
-                } else if body.starts_with("translationModel:") {
-                    // Translation model change - signal update
-                    let model = body[17..].to_string();
-                    if let Ok(mut new_model) = NEW_TRANSLATION_MODEL.lock() {
-                        *new_model = model.clone();
-                    }
+                        // Save to config
+                        {
+                            let mut app = APP.lock().unwrap();
+                            app.config.realtime_target_language = lang;
+                            crate::config::save_config(&app.config);
+                        }
+                        LANGUAGE_CHANGE.store(true, Ordering::SeqCst);
+                    } else if body.starts_with("translationModel:") {
+                        // Translation model change - signal update
+                        let model = body[17..].to_string();
+                        if let Ok(mut new_model) = NEW_TRANSLATION_MODEL.lock() {
+                            *new_model = model.clone();
+                        }
 
-                    // Save to config
-                    {
-                        let mut app = APP.lock().unwrap();
-                        app.config.realtime_translation_model = model;
-                        crate::config::save_config(&app.config);
-                    }
-                    TRANSLATION_MODEL_CHANGE.store(true, Ordering::SeqCst);
-                } else if body.starts_with("transcriptionModel:") {
-                    // Transcription model change
-                    let model = body[19..].to_string();
-                    if let Ok(mut new_model) = NEW_TRANSCRIPTION_MODEL.lock() {
-                        *new_model = model.clone();
-                    }
-                    {
-                        let mut app = APP.lock().unwrap();
-                        app.config.realtime_transcription_model = model;
-                        crate::config::save_config(&app.config);
-                    }
-                    TRANSCRIPTION_MODEL_CHANGE.store(true, Ordering::SeqCst);
-                } else if body.starts_with("resize:") {
-                    // Resize window by delta
-                    let coords = &body[7..];
-                    if let Some((dx_str, dy_str)) = coords.split_once(',') {
-                        if let (Ok(dx), Ok(dy)) = (dx_str.parse::<i32>(), dy_str.parse::<i32>()) {
-                            unsafe {
-                                let mut rect = RECT::default();
-                                let _ = GetWindowRect(hwnd_for_ipc, &mut rect);
-                                let new_width = (rect.right - rect.left + dx).max(200);
-                                let new_height = (rect.bottom - rect.top + dy).max(100);
-                                let _ = SetWindowPos(
-                                    hwnd_for_ipc,
-                                    None,
-                                    rect.left,
-                                    rect.top,
-                                    new_width,
-                                    new_height,
-                                    SWP_NOZORDER | SWP_NOACTIVATE,
+                        // Save to config
+                        {
+                            let mut app = APP.lock().unwrap();
+                            app.config.realtime_translation_model = model;
+                            crate::config::save_config(&app.config);
+                        }
+                        TRANSLATION_MODEL_CHANGE.store(true, Ordering::SeqCst);
+                    } else if body.starts_with("transcriptionModel:") {
+                        // Transcription model change
+                        let model = body[19..].to_string();
+                        if let Ok(mut new_model) = NEW_TRANSCRIPTION_MODEL.lock() {
+                            *new_model = model.clone();
+                        }
+                        {
+                            let mut app = APP.lock().unwrap();
+                            app.config.realtime_transcription_model = model;
+                            crate::config::save_config(&app.config);
+                        }
+                        TRANSCRIPTION_MODEL_CHANGE.store(true, Ordering::SeqCst);
+                    } else if body.starts_with("resize:") {
+                        // Resize window by delta
+                        let coords = &body[7..];
+                        if let Some((dx_str, dy_str)) = coords.split_once(',') {
+                            if let (Ok(dx), Ok(dy)) = (dx_str.parse::<i32>(), dy_str.parse::<i32>())
+                            {
+                                unsafe {
+                                    let mut rect = RECT::default();
+                                    let _ = GetWindowRect(hwnd_for_ipc, &mut rect);
+                                    let new_width = (rect.right - rect.left + dx).max(200);
+                                    let new_height = (rect.bottom - rect.top + dy).max(100);
+                                    let _ = SetWindowPos(
+                                        hwnd_for_ipc,
+                                        None,
+                                        rect.left,
+                                        rect.top,
+                                        new_width,
+                                        new_height,
+                                        SWP_NOZORDER | SWP_NOACTIVATE,
+                                    );
+                                }
+                            }
+                        }
+                    } else if body.starts_with("toggleMic:") {
+                        // Toggle transcription window visibility
+                        let visible = &body[10..] == "1";
+                        MIC_VISIBLE.store(visible, Ordering::SeqCst);
+                        unsafe {
+                            if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
+                                let _ = ShowWindow(
+                                    REALTIME_HWND,
+                                    if visible { SW_SHOW } else { SW_HIDE },
+                                );
+                            }
+                            // Sync to other webview
+                            sync_visibility_to_webviews();
+
+                            // If both windows are now off, hide and reset state (but keep windows alive)
+                            if !MIC_VISIBLE.load(Ordering::SeqCst)
+                                && !TRANS_VISIBLE.load(Ordering::SeqCst)
+                            {
+                                REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                                crate::api::tts::TTS_MANAGER.stop();
+                                IS_ACTIVE = false;
+                            } else if visible {
+                                // Force update since we suppressed them while hidden
+                                let _ = PostMessageW(
+                                    Some(REALTIME_HWND),
+                                    WM_REALTIME_UPDATE,
+                                    WPARAM(0),
+                                    LPARAM(0),
                                 );
                             }
                         }
-                    }
-                } else if body.starts_with("toggleMic:") {
-                    // Toggle transcription window visibility
-                    let visible = &body[10..] == "1";
-                    MIC_VISIBLE.store(visible, Ordering::SeqCst);
-                    unsafe {
-                        if !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
-                            let _ =
-                                ShowWindow(REALTIME_HWND, if visible { SW_SHOW } else { SW_HIDE });
-                        }
-                        // Sync to other webview
-                        sync_visibility_to_webviews();
+                    } else if body.starts_with("toggleTrans:") {
+                        // Toggle translation window visibility
+                        let visible = &body[12..] == "1";
+                        TRANS_VISIBLE.store(visible, Ordering::SeqCst);
 
-                        // If both windows are now off, hide and reset state (but keep windows alive)
-                        if !MIC_VISIBLE.load(Ordering::SeqCst)
-                            && !TRANS_VISIBLE.load(Ordering::SeqCst)
-                        {
-                            REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                        // Stop TTS when translation window is hidden
+                        if !visible {
                             crate::api::tts::TTS_MANAGER.stop();
-                            IS_ACTIVE = false;
-                        } else if visible {
-                            // Force update since we suppressed them while hidden
-                            let _ = PostMessageW(
-                                Some(REALTIME_HWND),
-                                WM_REALTIME_UPDATE,
-                                WPARAM(0),
-                                LPARAM(0),
-                            );
                         }
-                    }
-                } else if body.starts_with("toggleTrans:") {
-                    // Toggle translation window visibility
-                    let visible = &body[12..] == "1";
-                    TRANS_VISIBLE.store(visible, Ordering::SeqCst);
 
-                    // Stop TTS when translation window is hidden
-                    if !visible {
-                        crate::api::tts::TTS_MANAGER.stop();
-                    }
+                        unsafe {
+                            if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
+                                let _ = ShowWindow(
+                                    TRANSLATION_HWND,
+                                    if visible { SW_SHOW } else { SW_HIDE },
+                                );
+                            }
+                            // Sync to other webview
+                            sync_visibility_to_webviews();
 
-                    unsafe {
-                        if !std::ptr::addr_of!(TRANSLATION_HWND).read().is_invalid() {
-                            let _ = ShowWindow(
-                                TRANSLATION_HWND,
-                                if visible { SW_SHOW } else { SW_HIDE },
-                            );
+                            // If both windows are now off, hide and reset state (but keep windows alive)
+                            if !MIC_VISIBLE.load(Ordering::SeqCst)
+                                && !TRANS_VISIBLE.load(Ordering::SeqCst)
+                            {
+                                REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                                crate::api::tts::TTS_MANAGER.stop();
+                                IS_ACTIVE = false;
+                            } else if visible {
+                                // Force update since we suppressed them while hidden
+                                let _ = PostMessageW(
+                                    Some(TRANSLATION_HWND),
+                                    WM_TRANSLATION_UPDATE,
+                                    WPARAM(0),
+                                    LPARAM(0),
+                                );
+                            }
                         }
-                        // Sync to other webview
-                        sync_visibility_to_webviews();
+                    } else if body.starts_with("ttsEnabled:") {
+                        // TTS toggle for realtime translations
+                        let enabled = &body[11..] == "1";
+                        REALTIME_TTS_ENABLED.store(enabled, Ordering::SeqCst);
 
-                        // If both windows are now off, hide and reset state (but keep windows alive)
-                        if !MIC_VISIBLE.load(Ordering::SeqCst)
-                            && !TRANS_VISIBLE.load(Ordering::SeqCst)
-                        {
-                            REALTIME_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                        // Reset spoken length when disabling so we start fresh next time
+                        if !enabled {
+                            // IMMEDIATELY stop TTS (cut off mid-sentence to prevent capture)
                             crate::api::tts::TTS_MANAGER.stop();
-                            IS_ACTIVE = false;
-                        } else if visible {
-                            // Force update since we suppressed them while hidden
-                            let _ = PostMessageW(
-                                Some(TRANSLATION_HWND),
-                                WM_TRANSLATION_UPDATE,
-                                WPARAM(0),
-                                LPARAM(0),
-                            );
-                        }
-                    }
-                } else if body.starts_with("ttsEnabled:") {
-                    // TTS toggle for realtime translations
-                    let enabled = &body[11..] == "1";
-                    REALTIME_TTS_ENABLED.store(enabled, Ordering::SeqCst);
 
-                    // Reset spoken length when disabling so we start fresh next time
-                    if !enabled {
-                        // IMMEDIATELY stop TTS (cut off mid-sentence to prevent capture)
-                        crate::api::tts::TTS_MANAGER.stop();
+                            // Close app selection popup if open
+                            let popup_hwnd_val = APP_SELECTION_HWND.load(Ordering::SeqCst);
+                            if popup_hwnd_val != 0 {
+                                let popup_hwnd = windows::Win32::Foundation::HWND(
+                                    popup_hwnd_val as *mut std::ffi::c_void,
+                                );
+                                let _ = unsafe {
+                                    windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                        Some(popup_hwnd),
+                                        windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+                                        windows::Win32::Foundation::WPARAM(0),
+                                        windows::Win32::Foundation::LPARAM(0),
+                                    )
+                                };
+                                APP_SELECTION_HWND.store(0, Ordering::SeqCst);
+                            }
 
-                        // Close app selection popup if open
-                        let popup_hwnd_val = APP_SELECTION_HWND.load(Ordering::SeqCst);
-                        if popup_hwnd_val != 0 {
-                            let popup_hwnd = windows::Win32::Foundation::HWND(
-                                popup_hwnd_val as *mut std::ffi::c_void,
-                            );
-                            let _ = unsafe {
-                                windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-                                    Some(popup_hwnd),
-                                    windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
-                                    windows::Win32::Foundation::WPARAM(0),
-                                    windows::Win32::Foundation::LPARAM(0),
-                                )
+                            LAST_SPOKEN_LENGTH.store(0, Ordering::SeqCst);
+                            // Clear any queued translations
+                            if let Ok(mut queue) = COMMITTED_TRANSLATION_QUEUE.lock() {
+                                queue.clear();
+                            }
+
+                            // Clear app selection (but do NOT restart audio capture -
+                            // that only happens when an app is explicitly selected)
+                            SELECTED_APP_PID.store(0, Ordering::SeqCst);
+                            if let Ok(mut name) = SELECTED_APP_NAME.lock() {
+                                name.clear();
+                            }
+                        } else {
+                            // TTS enabled - if in device mode, show app selection popup
+                            // Note: We DON'T change audio mode here - only when user selects an app
+                            let current_source = {
+                                let app = APP.lock().unwrap();
+                                app.config.realtime_audio_source.clone()
                             };
-                            APP_SELECTION_HWND.store(0, Ordering::SeqCst);
+                            if current_source == "device" {
+                                // Show app selection popup (no audio change yet - happens when app is selected)
+                                show_app_selection_popup();
+                            }
                         }
-
-                        LAST_SPOKEN_LENGTH.store(0, Ordering::SeqCst);
-                        // Clear any queued translations
-                        if let Ok(mut queue) = COMMITTED_TRANSLATION_QUEUE.lock() {
-                            queue.clear();
+                    } else if body.starts_with("ttsSpeed:") {
+                        // TTS playback speed adjustment (50-200, where 100 = 1.0x)
+                        if let Ok(speed) = body[9..].parse::<u32>() {
+                            REALTIME_TTS_SPEED.store(speed, Ordering::SeqCst);
+                            // Turn off auto-speed when user manually adjusts slider
+                            REALTIME_TTS_AUTO_SPEED.store(false, Ordering::SeqCst);
                         }
-
-                        // Clear app selection (but do NOT restart audio capture -
-                        // that only happens when an app is explicitly selected)
-                        SELECTED_APP_PID.store(0, Ordering::SeqCst);
-                        if let Ok(mut name) = SELECTED_APP_NAME.lock() {
-                            name.clear();
-                        }
-                    } else {
-                        // TTS enabled - if in device mode, show app selection popup
-                        // Note: We DON'T change audio mode here - only when user selects an app
-                        let current_source = {
-                            let app = APP.lock().unwrap();
-                            app.config.realtime_audio_source.clone()
-                        };
-                        if current_source == "device" {
-                            // Show app selection popup (no audio change yet - happens when app is selected)
-                            show_app_selection_popup();
-                        }
+                    } else if body.starts_with("ttsAutoSpeed:") {
+                        // TTS auto-speed toggle
+                        let enabled = &body[13..] == "1";
+                        REALTIME_TTS_AUTO_SPEED.store(enabled, Ordering::SeqCst);
+                    } else if body == "cancelDownload" {
+                        // Cancel Parakeet download and revert to Gemini
+                        crate::api::realtime_audio::cancel_download_and_revert_to_gemini();
                     }
-                } else if body.starts_with("ttsSpeed:") {
-                    // TTS playback speed adjustment (50-200, where 100 = 1.0x)
-                    if let Ok(speed) = body[9..].parse::<u32>() {
-                        REALTIME_TTS_SPEED.store(speed, Ordering::SeqCst);
-                        // Turn off auto-speed when user manually adjusts slider
-                        REALTIME_TTS_AUTO_SPEED.store(false, Ordering::SeqCst);
-                    }
-                } else if body.starts_with("ttsAutoSpeed:") {
-                    // TTS auto-speed toggle
-                    let enabled = &body[13..] == "1";
-                    REALTIME_TTS_AUTO_SPEED.store(enabled, Ordering::SeqCst);
-                } else if body == "cancelDownload" {
-                    // Cancel Parakeet download and revert to Gemini
-                    crate::api::realtime_audio::cancel_download_and_revert_to_gemini();
-                }
-            })
-            .build_as_child(&wrapper)
-    });
+                })
+                .build_as_child(&wrapper)
+        });
+        crate::log_info!(
+            "[Realtime] Build finished. Releasing lock. Status: {}",
+            if build_res.is_ok() { "OK" } else { "ERR" }
+        );
+        build_res
+    };
 
     if let Ok(webview) = result {
         crate::log_info!("[Realtime] WebView success for HWND: {:?}", hwnd);

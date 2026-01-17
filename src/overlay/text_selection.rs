@@ -346,12 +346,13 @@ fn internal_create_tag_thread() {
         // Use new get_html with CSS variables and updateTheme function
         let html_content = get_html(initial_text);
 
+        // Use separate data dir to avoid process-sharing hangs on low-quota systems
+        let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("selection"));
+
         // Initialize shared WebContext if needed
         crate::log_info!("[TextSelection] Initializing WebContext...");
         SELECTION_WEB_CONTEXT.with(|ctx| {
             if ctx.borrow().is_none() {
-                let shared_data_dir =
-                    crate::overlay::get_shared_webview_data_dir(Some("selection"));
                 *ctx.borrow_mut() = Some(wry::WebContext::new(Some(shared_data_dir)));
             }
         });
@@ -370,26 +371,41 @@ fn internal_create_tag_thread() {
 
         // Retry loop for stability (similar to text_input)
         for attempt in 1..=3 {
-            let res = SELECTION_WEB_CONTEXT.with(|ctx| {
-                let mut ctx_ref = ctx.borrow_mut();
-                let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-                    wry::WebViewBuilder::new_with_web_context(web_ctx)
-                } else {
-                    wry::WebViewBuilder::new()
-                };
+            let res = {
+                // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+                let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+                crate::log_info!(
+                    "[TextSelection] (Attempt {}) Acquired init lock. Building...",
+                    attempt
+                );
 
-                builder
-                    .with_bounds(wry::Rect {
-                        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
-                            0, 0,
-                        )),
-                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(200, 120)),
-                    })
-                    .with_url(&page_url)
-                    .with_transparent(true)
-                    .build_as_child(&HwndWrapper(hwnd))
-            });
-            crate::log_info!("[TextSelection] Attempting WebView creation...");
+                let build_res = SELECTION_WEB_CONTEXT.with(|ctx| {
+                    let mut ctx_ref = ctx.borrow_mut();
+                    let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                        wry::WebViewBuilder::new_with_web_context(web_ctx)
+                    } else {
+                        wry::WebViewBuilder::new()
+                    };
+
+                    builder
+                        .with_bounds(wry::Rect {
+                            position: wry::dpi::Position::Physical(
+                                wry::dpi::PhysicalPosition::new(0, 0),
+                            ),
+                            size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(200, 120)),
+                        })
+                        .with_url(&page_url)
+                        .with_transparent(true)
+                        .build_as_child(&HwndWrapper(hwnd))
+                });
+
+                crate::log_info!(
+                    "[TextSelection] (Attempt {}) Build finished. Releasing lock. Status: {}",
+                    attempt,
+                    if build_res.is_ok() { "OK" } else { "ERR" }
+                );
+                build_res
+            };
 
             match res {
                 Ok(wv) => {

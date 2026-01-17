@@ -286,69 +286,84 @@ fn internal_create_recording_window() {
         });
 
         let ipc_hwnd_val = hwnd.0 as usize;
-        let webview_res = RECORDING_WEB_CONTEXT.with(|ctx| {
-            let mut ctx_ref = ctx.borrow_mut();
-            let mut builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-                WebViewBuilder::new_with_web_context(web_ctx)
-            } else {
-                WebViewBuilder::new()
-            };
+        let webview_res = {
+            // LOCK SCOPE: Serialized build to prevent resource contention
+            let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+            crate::log_info!("[Recording] Acquired init lock. Building...");
 
-            builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+            let build_res = RECORDING_WEB_CONTEXT.with(|ctx| {
+                let mut ctx_ref = ctx.borrow_mut();
+                let mut builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                    WebViewBuilder::new_with_web_context(web_ctx)
+                } else {
+                    WebViewBuilder::new()
+                };
 
-            // Store HTML in font server and get URL for same-origin font loading
-            let page_url =
-                crate::overlay::html_components::font_manager::store_html_page(html.clone())
-                    .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+                builder = crate::overlay::html_components::font_manager::configure_webview(builder);
 
-            let (ui_width, ui_height) = get_ui_dimensions();
-            builder
-                .with_bounds(Rect {
-                    position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(0.0, 0.0)),
-                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                        ui_width as u32,
-                        ui_height as u32,
-                    )),
-                })
-                .with_transparent(true)
-                .with_background_color((0, 0, 0, 0)) // Fully transparent background
-                .with_url(&page_url)
-                .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                    let hwnd = HWND(ipc_hwnd_val as *mut std::ffi::c_void);
-                    let body = msg.body().as_str();
-                    match body {
-                        "pause_toggle" => {
-                            let paused = AUDIO_PAUSE_SIGNAL.load(Ordering::SeqCst);
-                            AUDIO_PAUSE_SIGNAL.store(!paused, Ordering::SeqCst);
-                        }
-                        "cancel" | "close" => {
-                            AUDIO_ABORT_SIGNAL.store(true, Ordering::SeqCst);
-                            AUDIO_STOP_SIGNAL.store(true, Ordering::SeqCst);
-                            let _ = PostMessageW(Some(hwnd), WM_APP_HIDE, WPARAM(0), LPARAM(0));
-                        }
-                        "ready" => {
-                            // Handshake: WebView is ready (from resetState), so now we can REAL_SHOW
-                            // Kill fallback timer 99
-                            let _ = KillTimer(Some(hwnd), 99);
-                            // Add a tiny delay to ensure paint catch-up
-                            if !CURRENT_RECORDING_HIDDEN.load(Ordering::SeqCst) {
-                                let _ = SetTimer(Some(hwnd), 2, 20, None);
+                // Store HTML in font server and get URL for same-origin font loading
+                let page_url =
+                    crate::overlay::html_components::font_manager::store_html_page(html.clone())
+                        .unwrap_or_else(|| {
+                            format!("data:text/html,{}", urlencoding::encode(&html))
+                        });
+
+                let (ui_width, ui_height) = get_ui_dimensions();
+                builder
+                    .with_bounds(Rect {
+                        position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(
+                            0.0, 0.0,
+                        )),
+                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                            ui_width as u32,
+                            ui_height as u32,
+                        )),
+                    })
+                    .with_transparent(true)
+                    .with_background_color((0, 0, 0, 0)) // Fully transparent background
+                    .with_url(&page_url)
+                    .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                        let hwnd = HWND(ipc_hwnd_val as *mut std::ffi::c_void);
+                        let body = msg.body().as_str();
+                        match body {
+                            "pause_toggle" => {
+                                let paused = AUDIO_PAUSE_SIGNAL.load(Ordering::SeqCst);
+                                AUDIO_PAUSE_SIGNAL.store(!paused, Ordering::SeqCst);
                             }
+                            "cancel" | "close" => {
+                                AUDIO_ABORT_SIGNAL.store(true, Ordering::SeqCst);
+                                AUDIO_STOP_SIGNAL.store(true, Ordering::SeqCst);
+                                let _ = PostMessageW(Some(hwnd), WM_APP_HIDE, WPARAM(0), LPARAM(0));
+                            }
+                            "ready" => {
+                                // Handshake: WebView is ready (from resetState), so now we can REAL_SHOW
+                                // Kill fallback timer 99
+                                let _ = KillTimer(Some(hwnd), 99);
+                                // Add a tiny delay to ensure paint catch-up
+                                if !CURRENT_RECORDING_HIDDEN.load(Ordering::SeqCst) {
+                                    let _ = SetTimer(Some(hwnd), 2, 20, None);
+                                }
+                            }
+                            "drag_window" => {
+                                let _ = ReleaseCapture();
+                                let _ = PostMessageW(
+                                    Some(hwnd),
+                                    WM_NCLBUTTONDOWN,
+                                    WPARAM(2 as usize), // HTCAPTION = 2
+                                    LPARAM(0 as isize),
+                                );
+                            }
+                            _ => {}
                         }
-                        "drag_window" => {
-                            let _ = ReleaseCapture();
-                            let _ = PostMessageW(
-                                Some(hwnd),
-                                WM_NCLBUTTONDOWN,
-                                WPARAM(2 as usize), // HTCAPTION = 2
-                                LPARAM(0 as isize),
-                            );
-                        }
-                        _ => {}
-                    }
-                })
-                .build(&wrapper)
-        });
+                    })
+                    .build(&wrapper)
+            });
+            crate::log_info!(
+                "[Recording] Build finished. Status: {}",
+                if build_res.is_ok() { "OK" } else { "ERR" }
+            );
+            build_res
+        };
 
         if let Ok(wv) = webview_res {
             crate::log_info!("[Recording] WebView success for HWND: {:?}", hwnd);

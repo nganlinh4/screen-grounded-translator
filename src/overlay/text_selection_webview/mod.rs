@@ -306,14 +306,26 @@ pub fn show_text_selection_tag(preset_idx: usize) {
         let page_url = format!("data:text/html,{}", urlencoding::encode(&html));
 
         let builder = wry::WebViewBuilder::new_with_web_context(&mut web_context);
-        let webview = builder
-            .with_bounds(wry::Rect {
-                position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
-                size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(200, 100)),
-            })
-            .with_url(&page_url) // Use data URL directly for simplicity in this ephemeral window
-            .with_transparent(true)
-            .build_as_child(&HwndWrapper(hwnd));
+        let webview = {
+            // LOCK SCOPE: Serialized build to prevent resource contention
+            let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+            crate::log_info!("[SelectionV2] Acquired init lock. Building...");
+
+            let build_res = builder
+                .with_bounds(wry::Rect {
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
+                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(200, 100)),
+                })
+                .with_url(&page_url) // Use data URL directly for simplicity in this ephemeral window
+                .with_transparent(true)
+                .build_as_child(&HwndWrapper(hwnd));
+
+            crate::log_info!(
+                "[SelectionV2] Build finished. Status: {}",
+                if build_res.is_ok() { "OK" } else { "ERR" }
+            );
+            build_res
+        };
 
         if let Ok(webview) = webview {
             SELECTION_STATE.lock().unwrap().webview = Some(webview);

@@ -542,8 +542,10 @@ fn internal_create_window_loop() {
 
         let wrapper = HwndWrapper(hwnd);
 
+        // Initialize shared WebContext if needed (uses same data dir as other modules)
         BADGE_WEB_CONTEXT.with(|ctx| {
             if ctx.borrow().is_none() {
+                // Use separate data dir to avoid process-sharing hangs on low-quota systems
                 let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("badge"));
                 *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
             }
@@ -553,44 +555,58 @@ fn internal_create_window_loop() {
         // Stagger start to avoid global WebView2 init lock contention
         std::thread::sleep(std::time::Duration::from_millis(50));
 
-        let webview = BADGE_WEB_CONTEXT.with(|ctx| {
-            let mut ctx_ref = ctx.borrow_mut();
-            let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-                WebViewBuilder::new_with_web_context(web_ctx)
-            } else {
-                WebViewBuilder::new()
-            };
+        let webview = {
+            // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+            let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+            crate::log_info!("[Badge] Acquired init lock. Building...");
 
-            let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+            let build_res = BADGE_WEB_CONTEXT.with(|ctx| {
+                let mut ctx_ref = ctx.borrow_mut();
+                let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                    WebViewBuilder::new_with_web_context(web_ctx)
+                } else {
+                    WebViewBuilder::new()
+                };
 
-            // Store HTML in font server and get URL for same-origin font loading
-            let badge_html = get_badge_html();
-            let page_url =
-                crate::overlay::html_components::font_manager::store_html_page(badge_html.clone())
-                    .unwrap_or_else(|| {
-                        format!("data:text/html,{}", urlencoding::encode(&badge_html))
-                    });
+                let builder =
+                    crate::overlay::html_components::font_manager::configure_webview(builder);
 
-            builder
-                .with_transparent(true)
-                .with_bounds(Rect {
-                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
-                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                        BADGE_WIDTH as u32,
-                        BADGE_HEIGHT as u32,
-                    )),
-                })
-                .with_url(&page_url)
-                .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                    let body = msg.body();
-                    if body == "finished" {
-                        let _ = ShowWindow(hwnd, SW_HIDE);
-                    } else if body.starts_with("error:") {
-                        crate::log_info!("[BadgeJS] {}", body);
-                    }
-                })
-                .build(&wrapper)
-        });
+                // Store HTML in font server and get URL for same-origin font loading
+                let badge_html = get_badge_html();
+                let page_url = crate::overlay::html_components::font_manager::store_html_page(
+                    badge_html.clone(),
+                )
+                .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&badge_html)));
+
+                builder
+                    .with_transparent(true)
+                    .with_bounds(Rect {
+                        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
+                            0, 0,
+                        )),
+                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                            BADGE_WIDTH as u32,
+                            BADGE_HEIGHT as u32,
+                        )),
+                    })
+                    .with_url(&page_url)
+                    .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                        let body = msg.body();
+                        if body == "finished" {
+                            let _ = ShowWindow(hwnd, SW_HIDE);
+                        } else if body.starts_with("error:") {
+                            crate::log_info!("[BadgeJS] {}", body);
+                        }
+                    })
+                    .build(&wrapper)
+            });
+
+            crate::log_info!(
+                "[Badge] Build phase finished. Releasing lock. Status: {}",
+                if build_res.is_ok() { "OK" } else { "ERR" }
+            );
+            build_res
+        };
 
         if let Ok(wv) = webview {
             crate::log_info!("[Badge] WebView initialization SUCCESSFUL");

@@ -341,58 +341,58 @@ fn internal_create_window_loop() {
             }
         });
 
-        let webview_res = WHEEL_WEB_CONTEXT.with(|ctx| {
-            let mut ctx_ref = ctx.borrow_mut();
-            let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-                WebViewBuilder::new_with_web_context(web_ctx)
-            } else {
-                WebViewBuilder::new()
-            };
-            let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+        let webview_res = {
+            // LOCK SCOPE: Serialized build to prevent resource contention
+            let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+            crate::log_info!("[PresetWheel] Acquired init lock. Building...");
 
-            let template_html = get_wheel_template(true); // Default dark for warmup
+            let build_res = WHEEL_WEB_CONTEXT.with(|ctx| {
+                let mut ctx_ref = ctx.borrow_mut();
+                let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                    WebViewBuilder::new_with_web_context(web_ctx)
+                } else {
+                    WebViewBuilder::new()
+                };
+                let builder =
+                    crate::overlay::html_components::font_manager::configure_webview(builder);
 
-            // Store HTML in font server and get URL for same-origin font loading
-            let page_url = crate::overlay::html_components::font_manager::store_html_page(
-                template_html.clone(),
-            )
-            .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&template_html)));
+                let template_html = get_wheel_template(true); // Default dark for warmup
 
-            builder
-                .with_transparent(true)
-                .with_background_color((0, 0, 0, 0))
-                .with_url(&page_url)
-                .with_bounds(Rect {
-                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
-                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                        WHEEL_WIDTH as u32,
-                        WHEEL_HEIGHT as u32,
-                    )),
-                })
-                .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                    let body = msg.body();
-                    if body == "ready_to_show" {
-                        let hwnd_val = WHEEL_HWND.load(Ordering::SeqCst);
-                        let wheel_hwnd = HWND(hwnd_val as *mut _);
-                        if !wheel_hwnd.is_invalid() {
-                            let _ = PostMessageW(
-                                Some(wheel_hwnd),
-                                WM_APP_REAL_SHOW,
-                                WPARAM(0),
-                                LPARAM(0),
-                            );
-                        }
-                    } else if body == "dismiss" {
-                        let hwnd_val = WHEEL_HWND.load(Ordering::SeqCst);
-                        let wheel_hwnd = HWND(hwnd_val as *mut _);
-                        if !wheel_hwnd.is_invalid() {
-                            let _ =
-                                PostMessageW(Some(wheel_hwnd), WM_APP_HIDE, WPARAM(0), LPARAM(0));
-                        }
-                        *SELECTED_PRESET.lock().unwrap() = None;
-                        WHEEL_RESULT.store(-2, Ordering::SeqCst);
-                    } else if let Some(idx_str) = body.strip_prefix("select:") {
-                        if let Ok(idx) = idx_str.parse::<usize>() {
+                // Store HTML in font server and get URL for same-origin font loading
+                let page_url = crate::overlay::html_components::font_manager::store_html_page(
+                    template_html.clone(),
+                )
+                .unwrap_or_else(|| {
+                    format!("data:text/html,{}", urlencoding::encode(&template_html))
+                });
+
+                builder
+                    .with_transparent(true)
+                    .with_background_color((0, 0, 0, 0))
+                    .with_url(&page_url)
+                    .with_bounds(Rect {
+                        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
+                            0, 0,
+                        )),
+                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                            WHEEL_WIDTH as u32,
+                            WHEEL_HEIGHT as u32,
+                        )),
+                    })
+                    .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                        let body = msg.body();
+                        if body == "ready_to_show" {
+                            let hwnd_val = WHEEL_HWND.load(Ordering::SeqCst);
+                            let wheel_hwnd = HWND(hwnd_val as *mut _);
+                            if !wheel_hwnd.is_invalid() {
+                                let _ = PostMessageW(
+                                    Some(wheel_hwnd),
+                                    WM_APP_REAL_SHOW,
+                                    WPARAM(0),
+                                    LPARAM(0),
+                                );
+                            }
+                        } else if body == "dismiss" {
                             let hwnd_val = WHEEL_HWND.load(Ordering::SeqCst);
                             let wheel_hwnd = HWND(hwnd_val as *mut _);
                             if !wheel_hwnd.is_invalid() {
@@ -403,13 +403,33 @@ fn internal_create_window_loop() {
                                     LPARAM(0),
                                 );
                             }
-                            *SELECTED_PRESET.lock().unwrap() = Some(idx);
-                            WHEEL_RESULT.store(idx as i32, Ordering::SeqCst);
+                            *SELECTED_PRESET.lock().unwrap() = None;
+                            WHEEL_RESULT.store(-2, Ordering::SeqCst);
+                        } else if let Some(idx_str) = body.strip_prefix("select:") {
+                            if let Ok(idx) = idx_str.parse::<usize>() {
+                                let hwnd_val = WHEEL_HWND.load(Ordering::SeqCst);
+                                let wheel_hwnd = HWND(hwnd_val as *mut _);
+                                if !wheel_hwnd.is_invalid() {
+                                    let _ = PostMessageW(
+                                        Some(wheel_hwnd),
+                                        WM_APP_HIDE,
+                                        WPARAM(0),
+                                        LPARAM(0),
+                                    );
+                                }
+                                *SELECTED_PRESET.lock().unwrap() = Some(idx);
+                                WHEEL_RESULT.store(idx as i32, Ordering::SeqCst);
+                            }
                         }
-                    }
-                })
-                .build(&wrapper)
-        });
+                    })
+                    .build(&wrapper)
+            });
+            crate::log_info!(
+                "[PresetWheel] Build finished. Status: {}",
+                if build_res.is_ok() { "OK" } else { "ERR" }
+            );
+            build_res
+        };
 
         if let Ok(wv) = webview_res {
             WHEEL_WEBVIEW.with(|cell| {

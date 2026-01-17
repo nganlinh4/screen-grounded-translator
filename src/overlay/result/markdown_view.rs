@@ -139,37 +139,48 @@ body {{ font-family: 'Google Sans Flex', sans-serif; }}
             crate::overlay::html_components::font_manager::store_html_page(warmup_html.clone())
                 .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&warmup_html)));
 
-        let result = SHARED_WEB_CONTEXT.with(|ctx| {
-            let mut ctx_ref = ctx.borrow_mut();
-            if let Some(web_ctx) = ctx_ref.as_mut() {
-                let builder = WebViewBuilder::new_with_web_context(web_ctx)
-                    .with_bounds(Rect {
-                        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
-                            0, 0,
-                        )),
-                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(50, 50)),
-                    })
-                    .with_url(&page_url)
-                    .with_transparent(true);
+        let result = {
+            // LOCK SCOPE: Serialized build to prevent resource contention
+            let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+            crate::log_info!("[MarkdownWarmup] Acquired init lock. Building...");
 
-                crate::overlay::html_components::font_manager::configure_webview(builder)
-                    .build_as_child(&wrapper)
-            } else {
-                // Fallback without context
-                let builder = WebViewBuilder::new()
-                    .with_bounds(Rect {
-                        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
-                            0, 0,
-                        )),
-                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(50, 50)),
-                    })
-                    .with_url(&page_url)
-                    .with_transparent(true);
+            let build_res = SHARED_WEB_CONTEXT.with(|ctx| {
+                let mut ctx_ref = ctx.borrow_mut();
+                if let Some(web_ctx) = ctx_ref.as_mut() {
+                    let builder = WebViewBuilder::new_with_web_context(web_ctx)
+                        .with_bounds(Rect {
+                            position: wry::dpi::Position::Physical(
+                                wry::dpi::PhysicalPosition::new(0, 0),
+                            ),
+                            size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(50, 50)),
+                        })
+                        .with_url(&page_url)
+                        .with_transparent(true);
 
-                crate::overlay::html_components::font_manager::configure_webview(builder)
-                    .build_as_child(&wrapper)
-            }
-        });
+                    crate::overlay::html_components::font_manager::configure_webview(builder)
+                        .build_as_child(&wrapper)
+                } else {
+                    // Fallback without context
+                    let builder = WebViewBuilder::new()
+                        .with_bounds(Rect {
+                            position: wry::dpi::Position::Physical(
+                                wry::dpi::PhysicalPosition::new(0, 0),
+                            ),
+                            size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(50, 50)),
+                        })
+                        .with_url(&page_url)
+                        .with_transparent(true);
+
+                    crate::overlay::html_components::font_manager::configure_webview(builder)
+                        .build_as_child(&wrapper)
+                }
+            });
+            crate::log_info!(
+                "[MarkdownWarmup] Build finished. Status: {}",
+                if build_res.is_ok() { "OK" } else { "ERR" }
+            );
+            build_res
+        };
 
         match result {
             Ok(webview) => {
@@ -1027,103 +1038,122 @@ pub fn create_markdown_webview_ex(
 
     builder = crate::overlay::html_components::font_manager::configure_webview(builder);
 
-    let result = builder
-        .with_navigation_handler(move |url: String| {
-            // Check if we should skip this navigation (triggered by history.back())
-            let should_skip = {
-                let mut skip_map = SKIP_NEXT_NAVIGATION.lock().unwrap();
-                if skip_map.get(&hwnd_key_for_nav).copied().unwrap_or(false) {
-                    skip_map.insert(hwnd_key_for_nav, false);
-                    true
-                } else {
-                    false
+    let result = {
+        // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+        let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+        crate::log_info!(
+            "[Markdown] Acquired init lock. Building for HWND: {:?}...",
+            parent_hwnd
+        );
+
+        let build_res = builder
+            .with_navigation_handler(move |url: String| {
+                // Check if we should skip this navigation (triggered by history.back())
+                let should_skip = {
+                    let mut skip_map = SKIP_NEXT_NAVIGATION.lock().unwrap();
+                    if skip_map.get(&hwnd_key_for_nav).copied().unwrap_or(false) {
+                        skip_map.insert(hwnd_key_for_nav, false);
+                        true
+                    } else {
+                        false
+                    }
+                };
+
+                if should_skip {
+                    // This navigation was from history.back(), don't increment depth
+                    return true;
                 }
-            };
 
-            if should_skip {
-                // This navigation was from history.back(), don't increment depth
-                return true;
-            }
+                // Detect when user navigates to an external URL (clicked a link)
+                // CRITICAL: Exclude wry internal URLs to prevent counting original content as browsing
+                let is_internal = url.contains("wry.localhost")
+                    || url.contains("localhost")
+                    || url.contains("127.0.0.1")
+                    || url.starts_with("data:")
+                    || url.starts_with("about:");
+                let is_external =
+                    (url.starts_with("http://") || url.starts_with("https://")) && !is_internal;
 
-            // Detect when user navigates to an external URL (clicked a link)
-            // CRITICAL: Exclude wry internal URLs to prevent counting original content as browsing
-            let is_internal = url.contains("wry.localhost")
-                || url.contains("localhost")
-                || url.contains("127.0.0.1")
-                || url.starts_with("data:")
-                || url.starts_with("about:");
-            let is_external =
-                (url.starts_with("http://") || url.starts_with("https://")) && !is_internal;
+                if is_external {
+                    // Update browsing state and increment depth counter
+                    if let Ok(mut states) = super::state::WINDOW_STATES.lock() {
+                        if let Some(state) = states.get_mut(&hwnd_key_for_nav) {
+                            state.is_browsing = true;
+                            state.navigation_depth += 1;
+                            // For a new navigation (not history back/forward), reset max depth to current depth
+                            state.max_navigation_depth = state.navigation_depth;
 
-            if is_external {
-                // Update browsing state and increment depth counter
-                if let Ok(mut states) = super::state::WINDOW_STATES.lock() {
-                    if let Some(state) = states.get_mut(&hwnd_key_for_nav) {
-                        state.is_browsing = true;
-                        state.navigation_depth += 1;
-                        // For a new navigation (not history back/forward), reset max depth to current depth
-                        state.max_navigation_depth = state.navigation_depth;
-
-                        if state.is_editing {
-                            state.is_editing = false;
-                            super::refine_input::hide_refine_input(HWND(
-                                hwnd_key_for_nav as *mut std::ffi::c_void,
-                            ));
+                            if state.is_editing {
+                                state.is_editing = false;
+                                super::refine_input::hide_refine_input(HWND(
+                                    hwnd_key_for_nav as *mut std::ffi::c_void,
+                                ));
+                            }
                         }
                     }
-                }
-                crate::overlay::result::button_canvas::update_window_position(HWND(
-                    hwnd_key_for_nav as *mut std::ffi::c_void,
-                ));
-            } else if is_internal {
-                // If we hit an internal URL, we are likely back at the start (or initial load)
-                // Force reset depth and browsing state to correct any drift
-                if let Ok(mut states) = super::state::WINDOW_STATES.lock() {
-                    if let Some(state) = states.get_mut(&hwnd_key_for_nav) {
-                        if state.is_browsing {
-                            // Only reset if we were browsing - this handles the "Back to Start" drift
-                            state.is_browsing = false;
-                            state.navigation_depth = 0;
-                            state.max_navigation_depth = 0;
-                            // Ensure repaint to hide buttons
-                            unsafe {
-                                let _ = windows::Win32::Graphics::Gdi::InvalidateRect(
-                                    Some(HWND(hwnd_key_for_nav as *mut std::ffi::c_void)),
-                                    None,
-                                    false,
+                    crate::overlay::result::button_canvas::update_window_position(HWND(
+                        hwnd_key_for_nav as *mut std::ffi::c_void,
+                    ));
+                } else if is_internal {
+                    // If we hit an internal URL, we are likely back at the start (or initial load)
+                    // Force reset depth and browsing state to correct any drift
+                    if let Ok(mut states) = super::state::WINDOW_STATES.lock() {
+                        if let Some(state) = states.get_mut(&hwnd_key_for_nav) {
+                            if state.is_browsing {
+                                // Only reset if we were browsing - this handles the "Back to Start" drift
+                                state.is_browsing = false;
+                                state.navigation_depth = 0;
+                                state.max_navigation_depth = 0;
+                                // Ensure repaint to hide buttons
+                                unsafe {
+                                    let _ = windows::Win32::Graphics::Gdi::InvalidateRect(
+                                        Some(HWND(hwnd_key_for_nav as *mut std::ffi::c_void)),
+                                        None,
+                                        false,
+                                    );
+                                }
+                                crate::overlay::result::button_canvas::update_window_position(
+                                    HWND(hwnd_key_for_nav as *mut std::ffi::c_void),
                                 );
                             }
-                            crate::overlay::result::button_canvas::update_window_position(HWND(
-                                hwnd_key_for_nav as *mut std::ffi::c_void,
-                            ));
                         }
                     }
                 }
-            }
 
-            // Allow all navigation
-            true
-        })
-        .with_ipc_handler(move |msg: wry::http::Request<String>| {
-            // Handle IPC messages from the WebView
-            let body = msg.body();
-            if body.starts_with("opacity:") {
-                if let Ok(opacity_percent) = body["opacity:".len()..].parse::<f32>() {
-                    // Opacity comes in as 0-100 from the slider
-                    let alpha = ((opacity_percent / 100.0) * 255.0) as u8;
-                    unsafe {
-                        use windows::Win32::Foundation::COLORREF;
-                        use windows::Win32::UI::WindowsAndMessaging::{
-                            SetLayeredWindowAttributes, LWA_ALPHA,
-                        };
-                        // Set the actual WINDOW opacity
-                        let _ =
-                            SetLayeredWindowAttributes(parent_hwnd, COLORREF(0), alpha, LWA_ALPHA);
+                // Allow all navigation
+                true
+            })
+            .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                // Handle IPC messages from the WebView
+                let body = msg.body();
+                if body.starts_with("opacity:") {
+                    if let Ok(opacity_percent) = body["opacity:".len()..].parse::<f32>() {
+                        // Opacity comes in as 0-100 from the slider
+                        let alpha = ((opacity_percent / 100.0) * 255.0) as u8;
+                        unsafe {
+                            use windows::Win32::Foundation::COLORREF;
+                            use windows::Win32::UI::WindowsAndMessaging::{
+                                SetLayeredWindowAttributes, LWA_ALPHA,
+                            };
+                            // Set the actual WINDOW opacity
+                            let _ = SetLayeredWindowAttributes(
+                                parent_hwnd,
+                                COLORREF(0),
+                                alpha,
+                                LWA_ALPHA,
+                            );
+                        }
                     }
                 }
-            }
-        })
-        .build_as_child(&wrapper);
+            })
+            .build_as_child(&wrapper);
+
+        crate::log_info!(
+            "[Markdown] Build finished. Releasing lock. Status: {}",
+            if build_res.is_ok() { "OK" } else { "ERR" }
+        );
+        build_res
+    };
 
     match result {
         Ok(webview) => {

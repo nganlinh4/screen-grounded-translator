@@ -1026,120 +1026,141 @@ unsafe fn init_webview(hwnd: HWND, w: i32, h: i32) -> std::result::Result<(), ()
     // Initialize shared WebContext if needed
     TEXT_INPUT_WEB_CONTEXT.with(|ctx| {
         if ctx.borrow().is_none() {
+            // Use separate data dir to avoid process-sharing hangs on low-quota systems
             let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("text_input"));
             *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
         }
     });
 
-    let result = TEXT_INPUT_WEB_CONTEXT.with(|ctx| {
-        let mut ctx_ref = ctx.borrow_mut();
-        let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-            WebViewBuilder::new_with_web_context(web_ctx)
-        } else {
-            WebViewBuilder::new()
-        };
-        let builder = builder.with_transparent(true);
-        let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+    crate::log_info!("[TextInput] Starting WebView build phase...");
 
-        // Store HTML in font server and get URL for same-origin font loading
-        let page_url = crate::overlay::html_components::font_manager::store_html_page(html.clone())
-            .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+    let result = {
+        // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+        let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+        crate::log_info!("[TextInput] Acquired init lock. Building...");
 
-        builder
-            .with_bounds(Rect {
-                position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
-                    webview_x, webview_y,
-                )),
-                size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                    webview_w as u32,
-                    webview_h as u32,
-                )),
-            })
-            .with_url(&page_url)
-            .with_transparent(true)
-            .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                let body = msg.body();
-                if body.starts_with("submit:") {
-                    let text = body.strip_prefix("submit:").unwrap_or("").to_string();
-                    if !text.trim().is_empty() {
-                        // Save to history before submitting
-                        crate::overlay::input_history::add_to_history(&text);
-                        *SUBMITTED_TEXT.lock().unwrap() = Some(text);
+        let build_res = TEXT_INPUT_WEB_CONTEXT.with(|ctx| {
+            let mut ctx_ref = ctx.borrow_mut();
+            let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                WebViewBuilder::new_with_web_context(web_ctx)
+            } else {
+                WebViewBuilder::new()
+            };
+            let builder = builder.with_transparent(true);
+            let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+            crate::log_info!("[TextInput] Builder configured. Preparing build...");
+
+            let page_url =
+                crate::overlay::html_components::font_manager::store_html_page(html.clone())
+                    .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+
+            crate::log_info!("[TextInput] URL prepared. Invoking build...");
+
+            builder
+                // Store HTML in font server and get URL for same-origin font loading
+                .with_bounds(Rect {
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
+                        webview_x, webview_y,
+                    )),
+                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                        webview_w as u32,
+                        webview_h as u32,
+                    )),
+                })
+                .with_url(&page_url)
+                .with_transparent(true)
+                .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                    let body = msg.body();
+                    if body.starts_with("submit:") {
+                        let text = body.strip_prefix("submit:").unwrap_or("").to_string();
+                        if !text.trim().is_empty() {
+                            // Save to history before submitting
+                            crate::overlay::input_history::add_to_history(&text);
+                            *SUBMITTED_TEXT.lock().unwrap() = Some(text);
+                            *SHOULD_CLOSE.lock().unwrap() = true;
+                        }
+                    } else if body == "cancel" {
+                        crate::overlay::input_history::reset_history_navigation();
                         *SHOULD_CLOSE.lock().unwrap() = true;
-                    }
-                } else if body == "cancel" {
-                    crate::overlay::input_history::reset_history_navigation();
-                    *SHOULD_CLOSE.lock().unwrap() = true;
-                } else if body.starts_with("history_up:") {
-                    let current = body.strip_prefix("history_up:").unwrap_or("");
-                    if let Some(text) = crate::overlay::input_history::navigate_history_up(current)
-                    {
-                        *PENDING_TEXT.lock().unwrap() = Some(format!("__REPLACE_ALL__{}", text));
-                        let hwnd_val = INPUT_HWND.load(Ordering::SeqCst);
-                        if hwnd_val != 0 {
-                            unsafe {
-                                let _ = PostMessageW(
-                                    Some(HWND(hwnd_val as *mut std::ffi::c_void)),
-                                    WM_APP_SET_TEXT,
-                                    WPARAM(0),
-                                    LPARAM(0),
-                                );
+                    } else if body.starts_with("history_up:") {
+                        let current = body.strip_prefix("history_up:").unwrap_or("");
+                        if let Some(text) =
+                            crate::overlay::input_history::navigate_history_up(current)
+                        {
+                            *PENDING_TEXT.lock().unwrap() =
+                                Some(format!("__REPLACE_ALL__{}", text));
+                            let hwnd_val = INPUT_HWND.load(Ordering::SeqCst);
+                            if hwnd_val != 0 {
+                                unsafe {
+                                    let _ = PostMessageW(
+                                        Some(HWND(hwnd_val as *mut std::ffi::c_void)),
+                                        WM_APP_SET_TEXT,
+                                        WPARAM(0),
+                                        LPARAM(0),
+                                    );
+                                }
                             }
                         }
-                    }
-                } else if body.starts_with("history_down:") {
-                    let current = body.strip_prefix("history_down:").unwrap_or("");
-                    if let Some(text) =
-                        crate::overlay::input_history::navigate_history_down(current)
-                    {
-                        *PENDING_TEXT.lock().unwrap() = Some(format!("__REPLACE_ALL__{}", text));
-                        let hwnd_val = INPUT_HWND.load(Ordering::SeqCst);
-                        if hwnd_val != 0 {
-                            unsafe {
-                                let _ = PostMessageW(
-                                    Some(HWND(hwnd_val as *mut std::ffi::c_void)),
-                                    WM_APP_SET_TEXT,
-                                    WPARAM(0),
-                                    LPARAM(0),
-                                );
+                    } else if body.starts_with("history_down:") {
+                        let current = body.strip_prefix("history_down:").unwrap_or("");
+                        if let Some(text) =
+                            crate::overlay::input_history::navigate_history_down(current)
+                        {
+                            *PENDING_TEXT.lock().unwrap() =
+                                Some(format!("__REPLACE_ALL__{}", text));
+                            let hwnd_val = INPUT_HWND.load(Ordering::SeqCst);
+                            if hwnd_val != 0 {
+                                unsafe {
+                                    let _ = PostMessageW(
+                                        Some(HWND(hwnd_val as *mut std::ffi::c_void)),
+                                        WM_APP_SET_TEXT,
+                                        WPARAM(0),
+                                        LPARAM(0),
+                                    );
+                                }
                             }
                         }
-                    }
-                } else if body == "mic" {
-                    // Trigger transcription preset
-                    let transcribe_idx = {
-                        let app = crate::APP.lock().unwrap();
-                        app.config
-                            .presets
-                            .iter()
-                            .position(|p| p.id == "preset_transcribe")
-                    };
+                    } else if body == "mic" {
+                        // Trigger transcription preset
+                        let transcribe_idx = {
+                            let app = crate::APP.lock().unwrap();
+                            app.config
+                                .presets
+                                .iter()
+                                .position(|p| p.id == "preset_transcribe")
+                        };
 
-                    if let Some(preset_idx) = transcribe_idx {
-                        std::thread::spawn(move || {
-                            crate::overlay::recording::show_recording_overlay(preset_idx);
-                        });
-                    }
-                } else if body == "drag_window" {
-                    let hwnd_val = INPUT_HWND.load(Ordering::SeqCst);
-                    if hwnd_val != 0 {
-                        unsafe {
-                            let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-                            let _ = ReleaseCapture();
-                            let _ = SendMessageW(
-                                hwnd,
-                                WM_NCLBUTTONDOWN,
-                                Some(WPARAM(HTCAPTION as usize)),
-                                Some(LPARAM(0)),
-                            );
+                        if let Some(preset_idx) = transcribe_idx {
+                            std::thread::spawn(move || {
+                                crate::overlay::recording::show_recording_overlay(preset_idx);
+                            });
                         }
+                    } else if body == "drag_window" {
+                        let hwnd_val = INPUT_HWND.load(Ordering::SeqCst);
+                        if hwnd_val != 0 {
+                            unsafe {
+                                let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+                                let _ = ReleaseCapture();
+                                let _ = SendMessageW(
+                                    hwnd,
+                                    WM_NCLBUTTONDOWN,
+                                    Some(WPARAM(HTCAPTION as usize)),
+                                    Some(LPARAM(0)),
+                                );
+                            }
+                        }
+                    } else if body == "close_window" {
+                        cancel_input();
                     }
-                } else if body == "close_window" {
-                    cancel_input();
-                }
-            })
-            .build_as_child(&wrapper)
-    });
+                })
+                .build_as_child(&wrapper)
+        });
+        crate::log_info!(
+            "[TextInput] Build phase finished. Releasing lock. Status: {}",
+            if build_res.is_ok() { "OK" } else { "ERR" }
+        );
+        build_res
+    };
 
     if let Ok(webview) = result {
         println!("[TextInput] WebView initialization SUCCESSFUL");

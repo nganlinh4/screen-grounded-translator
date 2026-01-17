@@ -479,98 +479,119 @@ pub fn show_refine_input(parent_hwnd: HWND, placeholder: &str) -> bool {
         });
 
         let parent_key_for_ipc = parent_key;
-        let result = REFINE_WEB_CONTEXT.with(|ctx| {
-            let mut ctx_ref = ctx.borrow_mut();
-            let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-                WebViewBuilder::new_with_web_context(web_ctx)
-            } else {
-                WebViewBuilder::new()
-            };
-            let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+        let result = {
+            // LOCK SCOPE: Serialized build to prevent resource contention
+            let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+            crate::log_info!(
+                "[RefineInput] Acquired init lock. Building for Parent HWND: {:?}...",
+                parent_hwnd
+            );
 
-            // Store HTML in font server and get URL for same-origin font loading
-            let page_url =
-                crate::overlay::html_components::font_manager::store_html_page(html.clone())
-                    .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+            let build_res = REFINE_WEB_CONTEXT.with(|ctx| {
+                let mut ctx_ref = ctx.borrow_mut();
+                let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                    WebViewBuilder::new_with_web_context(web_ctx)
+                } else {
+                    WebViewBuilder::new()
+                };
+                let builder =
+                    crate::overlay::html_components::font_manager::configure_webview(builder);
 
-            builder
-                .with_bounds(Rect {
-                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
-                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                        width as u32,
-                        input_height as u32,
-                    )),
-                })
-                .with_url(&page_url)
-                .with_transparent(false)
-                .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                    let body = msg.body();
-                    let mut states = REFINE_STATES.lock().unwrap();
-                    if let Some(state) = states.get_mut(&parent_key_for_ipc) {
-                        if body.starts_with("submit:") {
-                            let text = body.strip_prefix("submit:").unwrap_or("").to_string();
-                            // Save to history before submitting
-                            crate::overlay::input_history::add_to_history(&text);
-                            state.text = text;
-                            state.submitted = true;
-                        } else if body == "cancel" {
-                            crate::overlay::input_history::reset_history_navigation();
-                            state.cancelled = true;
-                        } else if body.starts_with("history_up:") {
-                            let current = body.strip_prefix("history_up:").unwrap_or("");
-                            if let Some(text) =
-                                crate::overlay::input_history::navigate_history_up(current)
-                            {
-                                // Get the child window handle for posting message
-                                let child_hwnd = state.hwnd;
-                                drop(states); // Release lock before posting
-                                *PENDING_HISTORY_TEXT.lock().unwrap() =
-                                    Some((parent_key_for_ipc, text));
-                                let _ = PostMessageW(
-                                    Some(child_hwnd),
-                                    WM_APP_HISTORY_SET,
-                                    WPARAM(0),
-                                    LPARAM(0),
-                                );
-                                return;
-                            }
-                        } else if body.starts_with("history_down:") {
-                            let current = body.strip_prefix("history_down:").unwrap_or("");
-                            if let Some(text) =
-                                crate::overlay::input_history::navigate_history_down(current)
-                            {
-                                let child_hwnd = state.hwnd;
-                                drop(states);
-                                *PENDING_HISTORY_TEXT.lock().unwrap() =
-                                    Some((parent_key_for_ipc, text));
-                                let _ = PostMessageW(
-                                    Some(child_hwnd),
-                                    WM_APP_HISTORY_SET,
-                                    WPARAM(0),
-                                    LPARAM(0),
-                                );
-                                return;
-                            }
-                        } else if body == "mic" {
-                            // Trigger transcription preset
-                            let transcribe_idx = {
-                                let app = crate::APP.lock().unwrap();
-                                app.config
-                                    .presets
-                                    .iter()
-                                    .position(|p| p.id == "preset_transcribe")
-                            };
+                // Store HTML in font server and get URL for same-origin font loading
+                let page_url =
+                    crate::overlay::html_components::font_manager::store_html_page(html.clone())
+                        .unwrap_or_else(|| {
+                            format!("data:text/html,{}", urlencoding::encode(&html))
+                        });
 
-                            if let Some(preset_idx) = transcribe_idx {
-                                std::thread::spawn(move || {
-                                    crate::overlay::recording::show_recording_overlay(preset_idx);
-                                });
+                builder
+                    .with_bounds(Rect {
+                        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
+                            0, 0,
+                        )),
+                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                            width as u32,
+                            input_height as u32,
+                        )),
+                    })
+                    .with_url(&page_url)
+                    .with_transparent(false)
+                    .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                        let body = msg.body();
+                        let mut states = REFINE_STATES.lock().unwrap();
+                        if let Some(state) = states.get_mut(&parent_key_for_ipc) {
+                            if body.starts_with("submit:") {
+                                let text = body.strip_prefix("submit:").unwrap_or("").to_string();
+                                // Save to history before submitting
+                                crate::overlay::input_history::add_to_history(&text);
+                                state.text = text;
+                                state.submitted = true;
+                            } else if body == "cancel" {
+                                crate::overlay::input_history::reset_history_navigation();
+                                state.cancelled = true;
+                            } else if body.starts_with("history_up:") {
+                                let current = body.strip_prefix("history_up:").unwrap_or("");
+                                if let Some(text) =
+                                    crate::overlay::input_history::navigate_history_up(current)
+                                {
+                                    // Get the child window handle for posting message
+                                    let child_hwnd = state.hwnd;
+                                    drop(states); // Release lock before posting
+                                    *PENDING_HISTORY_TEXT.lock().unwrap() =
+                                        Some((parent_key_for_ipc, text));
+                                    let _ = PostMessageW(
+                                        Some(child_hwnd),
+                                        WM_APP_HISTORY_SET,
+                                        WPARAM(0),
+                                        LPARAM(0),
+                                    );
+                                    return;
+                                }
+                            } else if body.starts_with("history_down:") {
+                                let current = body.strip_prefix("history_down:").unwrap_or("");
+                                if let Some(text) =
+                                    crate::overlay::input_history::navigate_history_down(current)
+                                {
+                                    let child_hwnd = state.hwnd;
+                                    drop(states);
+                                    *PENDING_HISTORY_TEXT.lock().unwrap() =
+                                        Some((parent_key_for_ipc, text));
+                                    let _ = PostMessageW(
+                                        Some(child_hwnd),
+                                        WM_APP_HISTORY_SET,
+                                        WPARAM(0),
+                                        LPARAM(0),
+                                    );
+                                    return;
+                                }
+                            } else if body == "mic" {
+                                // Trigger transcription preset
+                                let transcribe_idx = {
+                                    let app = crate::APP.lock().unwrap();
+                                    app.config
+                                        .presets
+                                        .iter()
+                                        .position(|p| p.id == "preset_transcribe")
+                                };
+
+                                if let Some(preset_idx) = transcribe_idx {
+                                    std::thread::spawn(move || {
+                                        crate::overlay::recording::show_recording_overlay(
+                                            preset_idx,
+                                        );
+                                    });
+                                }
                             }
                         }
-                    }
-                })
-                .build_as_child(&wrapper)
-        });
+                    })
+                    .build_as_child(&wrapper)
+            });
+            crate::log_info!(
+                "[RefineInput] Build finished. Status: {}",
+                if build_res.is_ok() { "OK" } else { "ERR" }
+            );
+            build_res
+        };
 
         match result {
             Ok(webview) => {

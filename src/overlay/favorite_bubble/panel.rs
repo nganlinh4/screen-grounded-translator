@@ -431,91 +431,107 @@ fn create_panel_webview(panel_hwnd: HWND) {
         }
     });
 
-    let result = PANEL_WEB_CONTEXT.with(|ctx| {
-        let mut ctx_ref = ctx.borrow_mut();
-        let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-            WebViewBuilder::new_with_web_context(web_ctx)
-        } else {
-            WebViewBuilder::new()
-        };
-        let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
+    let result = {
+        // LOCK SCOPE: Serialized build to prevent resource contention
+        let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+        crate::log_info!(
+            "[BubblePanel] Acquired init lock. Building for HWND: {:?}...",
+            panel_hwnd
+        );
 
-        // Store HTML in font server and get URL for same-origin font loading
-        let page_url = crate::overlay::html_components::font_manager::store_html_page(html.clone())
-            .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+        let build_res = PANEL_WEB_CONTEXT.with(|ctx| {
+            let mut ctx_ref = ctx.borrow_mut();
+            let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+                WebViewBuilder::new_with_web_context(web_ctx)
+            } else {
+                WebViewBuilder::new()
+            };
+            let builder = crate::overlay::html_components::font_manager::configure_webview(builder);
 
-        builder
-            .with_bounds(Rect {
-                position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
-                size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                    (rect.right - rect.left) as u32,
-                    (rect.bottom - rect.top) as u32,
-                )),
-            })
-            .with_url(&page_url)
-            .with_transparent(true)
-            .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                let body = msg.body();
+            // Store HTML in font server and get URL for same-origin font loading
+            let page_url =
+                crate::overlay::html_components::font_manager::store_html_page(html.clone())
+                    .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
 
-                if body == "drag" {
-                    unsafe {
-                        use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
-                        let _ = ReleaseCapture();
-                        SendMessageW(
-                            panel_hwnd,
-                            WM_NCLBUTTONDOWN,
-                            Some(WPARAM(HTCAPTION as usize)),
-                            Some(LPARAM(0)),
-                        );
-                    }
-                } else if body == "close" {
-                    close_panel();
-                } else if body == "close_now" {
-                    close_panel_internal();
-                } else if body.starts_with("trigger:") {
-                    if let Ok(idx) = body[8..].parse::<usize>() {
-                        // trigger() in JS starts the close animation and will send close_now when done.
-                        // We must set IS_EXPANDED to false so close_panel_internal (called by close_now)
-                        // actually hides the window. We DON'T call close_panel_internal here to allow animation.
-                        IS_EXPANDED.store(false, Ordering::SeqCst);
-                        trigger_preset(idx);
-                    }
-                } else if body.starts_with("trigger_only:") {
-                    // Keep Open mode: trigger preset without closing panel
-                    if let Ok(idx) = body[13..].parse::<usize>() {
-                        trigger_preset(idx);
-                    }
-                } else if body.starts_with("set_keep_open:") {
-                    if let Ok(val) = body[14..].parse::<u32>() {
-                        if let Ok(mut app) = APP.lock() {
-                            app.config.favorites_keep_open = val == 1;
-                            crate::config::save_config(&app.config);
+            builder
+                .with_bounds(Rect {
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
+                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                        (rect.right - rect.left) as u32,
+                        (rect.bottom - rect.top) as u32,
+                    )),
+                })
+                .with_url(&page_url)
+                .with_transparent(true)
+                .with_ipc_handler(move |msg: wry::http::Request<String>| {
+                    let body = msg.body();
+
+                    if body == "drag" {
+                        unsafe {
+                            use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+                            let _ = ReleaseCapture();
+                            SendMessageW(
+                                panel_hwnd,
+                                WM_NCLBUTTONDOWN,
+                                Some(WPARAM(HTCAPTION as usize)),
+                                Some(LPARAM(0)),
+                            );
                         }
+                    } else if body == "close" {
+                        close_panel();
+                    } else if body == "close_now" {
+                        close_panel_internal();
+                    } else if body.starts_with("trigger:") {
+                        if let Ok(idx) = body[8..].parse::<usize>() {
+                            // trigger() in JS starts the close animation and will send close_now when done.
+                            // We must set IS_EXPANDED to false so close_panel_internal (called by close_now)
+                            // actually hides the window. We DON'T call close_panel_internal here to allow animation.
+                            IS_EXPANDED.store(false, Ordering::SeqCst);
+                            trigger_preset(idx);
+                        }
+                    } else if body.starts_with("trigger_only:") {
+                        // Keep Open mode: trigger preset without closing panel
+                        if let Ok(idx) = body[13..].parse::<usize>() {
+                            trigger_preset(idx);
+                        }
+                    } else if body.starts_with("set_keep_open:") {
+                        if let Ok(val) = body[14..].parse::<u32>() {
+                            if let Ok(mut app) = APP.lock() {
+                                app.config.favorites_keep_open = val == 1;
+                                crate::config::save_config(&app.config);
+                            }
+                        }
+                    } else if body.starts_with("resize:") {
+                        if let Ok(h) = body[7..].parse::<i32>() {
+                            resize_panel_height(h);
+                        }
+                    } else if body == "increase_size" {
+                        if let Ok(mut app) = APP.lock() {
+                            let new_size = (app.config.favorite_bubble_size + 8).min(80);
+                            app.config.favorite_bubble_size = new_size;
+                            crate::config::save_config(&app.config);
+                            BUBBLE_SIZE.store(new_size as i32, Ordering::SeqCst);
+                        }
+                        update_favorites_panel();
+                    } else if body == "decrease_size" {
+                        if let Ok(mut app) = APP.lock() {
+                            let new_size =
+                                (app.config.favorite_bubble_size.saturating_sub(8)).max(24);
+                            app.config.favorite_bubble_size = new_size;
+                            crate::config::save_config(&app.config);
+                            BUBBLE_SIZE.store(new_size as i32, Ordering::SeqCst);
+                        }
+                        update_favorites_panel();
                     }
-                } else if body.starts_with("resize:") {
-                    if let Ok(h) = body[7..].parse::<i32>() {
-                        resize_panel_height(h);
-                    }
-                } else if body == "increase_size" {
-                    if let Ok(mut app) = APP.lock() {
-                        let new_size = (app.config.favorite_bubble_size + 8).min(80);
-                        app.config.favorite_bubble_size = new_size;
-                        crate::config::save_config(&app.config);
-                        BUBBLE_SIZE.store(new_size as i32, Ordering::SeqCst);
-                    }
-                    update_favorites_panel();
-                } else if body == "decrease_size" {
-                    if let Ok(mut app) = APP.lock() {
-                        let new_size = (app.config.favorite_bubble_size.saturating_sub(8)).max(24);
-                        app.config.favorite_bubble_size = new_size;
-                        crate::config::save_config(&app.config);
-                        BUBBLE_SIZE.store(new_size as i32, Ordering::SeqCst);
-                    }
-                    update_favorites_panel();
-                }
-            })
-            .build_as_child(&wrapper)
-    });
+                })
+                .build_as_child(&wrapper)
+        });
+        crate::log_info!(
+            "[BubblePanel] Build finished. Status: {}",
+            if build_res.is_ok() { "OK" } else { "ERR" }
+        );
+        build_res
+    };
 
     if let Ok(webview) = result {
         crate::log_info!("[BubblePanel] WebView success for HWND: {:?}", panel_hwnd);

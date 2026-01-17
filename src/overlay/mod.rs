@@ -26,6 +26,11 @@ pub use recording::{
 pub use selection::{is_selection_overlay_active_and_dismiss, show_selection_overlay};
 pub use text_selection::show_text_selection_tag;
 // Use the new WebView2-based realtime overlay
+lazy_static::lazy_static! {
+    /// Mutex to ensure only one WebView is being initialized at a time globally.
+    /// This prevents deadlocks and resource exhaustion during startup warmup loops.
+    pub static ref GLOBAL_WEBVIEW_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+}
 
 // pub use crate::api::realtime_audio::show_realtime_overlay; // REMOVED - Incorrect path
 pub use realtime_webview::{

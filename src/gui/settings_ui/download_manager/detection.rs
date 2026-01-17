@@ -8,9 +8,9 @@ pub fn detect_installed_browsers() -> Vec<CookieBrowser> {
     let mut found_set = HashSet::new();
     found_set.insert(CookieBrowser::None);
 
-    let mut add_if_new = |browser: CookieBrowser,
-                          f_list: &mut Vec<CookieBrowser>,
-                          f_set: &mut HashSet<CookieBrowser>| {
+    let add_if_new = |browser: CookieBrowser,
+                      f_list: &mut Vec<CookieBrowser>,
+                      f_set: &mut HashSet<CookieBrowser>| {
         if !f_set.contains(&browser) {
             f_set.insert(browser.clone());
             f_list.push(browser);

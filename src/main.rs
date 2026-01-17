@@ -313,7 +313,7 @@ fn main() -> eframe::Result<()> {
         overlay::preset_wheel::warmup();
 
         // 2. Wait for splash screen / main box to appear and settle
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        std::thread::sleep(std::time::Duration::from_millis(3000));
 
         // 3. Warmup text input window first (more likely to be used quickly)
         wait_for_popup_close();
@@ -328,7 +328,7 @@ fn main() -> eframe::Result<()> {
         overlay::text_selection::warmup();
 
         // 4. Wait before next warmup to distribute CPU load
-        std::thread::sleep(std::time::Duration::from_millis(2000));
+        std::thread::sleep(std::time::Duration::from_millis(5000));
 
         // 5. Warmup markdown WebView
         wait_for_popup_close();
@@ -343,7 +343,7 @@ fn main() -> eframe::Result<()> {
         overlay::prompt_dj::warmup();
 
         // 7. Wait before realtime warmup to allow PromptDJ WebView to finish
-        std::thread::sleep(std::time::Duration::from_millis(2000));
+        std::thread::sleep(std::time::Duration::from_millis(5000));
 
         // 8. Warmup Live Translate (Realtime Overlay)
         wait_for_popup_close();
