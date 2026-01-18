@@ -1,6 +1,8 @@
 use crate::gui::locale::LocaleText;
 use crate::updater::{UpdateStatus, Updater};
 use eframe::egui;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 pub fn render_update_section_content(
     ui: &mut egui::Ui,
@@ -119,9 +121,12 @@ pub fn render_update_section_content(
                                 println!("Writing batch file to: {:?}", bat_path);
                                 if let Ok(_) = std::fs::write(&bat_path, batch_content) {
                                     // Spawn the batch file hidden via cmd /C
-                                    let status = std::process::Command::new("cmd")
-                                        .args(["/C", &bat_path.to_string_lossy()])
-                                        .spawn();
+                                    let mut cmd = std::process::Command::new("cmd");
+                                    cmd.args(["/C", &bat_path.to_string_lossy()]);
+                                    #[cfg(windows)]
+                                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+                                    let status = cmd.spawn();
 
                                     match status {
                                         Ok(_) => std::process::exit(0),

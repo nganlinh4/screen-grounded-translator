@@ -1,11 +1,20 @@
-use std::env;
 use std::fs;
+use std::path::PathBuf;
+use windows::core::w;
+use windows::Win32::System::LibraryLoader::SetDllDirectoryW;
 
-/// Unpacks embedded DLLs to the current executable directory if they are missing.
-/// This allows the application to run on systems without the VC++ Redistributable installed.
+/// Unpacks embedded DLLs to the local app data directory if they are missing.
+/// This avoids cluttering the folder where the EXE is located.
 pub fn unpack_dlls() {
+    // Determine the path to %LOCALAPPDATA%/screen-goated-toolbox/bin
+    let mut bin_dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    bin_dir.push("screen-goated-toolbox");
+    bin_dir.push("bin");
+
+    // Ensure the directory exists
+    let _ = fs::create_dir_all(&bin_dir);
+
     // We embed the DLLs using include_bytes!
-    // These are placed in src/embed_dlls/ by the build process or manually.
     let dlls: &[(&str, &[u8])] = &[
         (
             "vcruntime140.dll",
@@ -23,14 +32,29 @@ pub fn unpack_dlls() {
         ("DirectML.dll", include_bytes!("embed_dlls/DirectML.dll")),
     ];
 
-    let exe_path = env::current_exe().unwrap_or_default();
-    let exe_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
-
     for (name, bytes) in dlls {
-        let path = exe_dir.join(name);
+        let path = bin_dir.join(name);
         // Only write if missing to avoid unnecessary disk IO
         if !path.exists() {
             let _ = fs::write(&path, bytes);
         }
     }
+
+    // Tell Windows to look in our private bin directory for DLLs (for the current process)
+    unsafe {
+        let path_wide: Vec<u16> = bin_dir
+            .to_string_lossy()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let _ = SetDllDirectoryW(windows::core::PCWSTR(path_wide.as_ptr()));
+    }
+
+    // Add to PATH so child processes (like WebView2 helpers) can also find them
+    if let Ok(current_path) = std::env::var("PATH") {
+        let new_path = format!("{};{}", bin_dir.to_string_lossy(), current_path);
+        std::env::set_var("PATH", new_path);
+    }
+
+    crate::log_info!("[Unpacker] DLLs verified/unpacked to {:?}", bin_dir);
 }

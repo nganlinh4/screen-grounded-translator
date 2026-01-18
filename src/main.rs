@@ -129,6 +129,48 @@ fn enable_dark_mode_for_app() {
     }
 }
 
+/// Cleanup temporary files left by the application (e.g. restart scripts, partial downloads)
+fn cleanup_temporary_files() {
+    // 1. Clean up restart scripts in %TEMP%
+    let temp_dir = std::env::temp_dir();
+    if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("sgt_restart_") && name_str.ends_with(".bat") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    // 2. Clean up partial downloads in the app's bin directory
+    let bin_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("screen-goated-toolbox")
+        .join("bin");
+
+    if bin_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&bin_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |ext| ext == "tmp") {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+
+    // 3. Clean up any update-related files in current directory
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let temp_download = exe_dir.join("temp_download");
+            if temp_download.exists() {
+                let _ = std::fs::remove_file(temp_download);
+            }
+        }
+    }
+}
+
 mod unpack_dlls;
 
 fn main() -> eframe::Result<()> {
@@ -142,6 +184,10 @@ fn main() -> eframe::Result<()> {
     // --- UNPACK DLLS ---
     // Extract embedded CRT and DirectML DLLs so the app is truly portable
     unpack_dlls::unpack_dlls();
+
+    // --- CLEANUP TEMP FILES ---
+    // Remove leftover restart scripts or partial downloads
+    cleanup_temporary_files();
 
     // --- INIT COM ---
     // Essential for Tray Icon and Shell interactions, especially in Admin/Task Scheduler context.

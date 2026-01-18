@@ -1,5 +1,7 @@
 use super::types::CookieBrowser;
 use std::collections::HashSet;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -55,9 +57,12 @@ pub fn detect_installed_browsers() -> Vec<CookieBrowser> {
     }
 
     // 2. Scan StartMenuInternet (Existing Logic - Good for defaults)
-    let output = Command::new("reg")
-        .args(&["query", "HKLM\\SOFTWARE\\Clients\\StartMenuInternet"])
-        .output();
+    let mut cmd = Command::new("reg");
+    cmd.args(&["query", "HKLM\\SOFTWARE\\Clients\\StartMenuInternet"]);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+
+    let output = cmd.output();
 
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -176,9 +181,12 @@ fn check_registry_key(root: &str, exe_name: &str) -> bool {
         root, exe_name
     );
     // We just check if the key exists by querying the default value
-    let output = Command::new("reg")
-        .args(&["query", &key, "/ve"]) // /ve queries "Default" matches
-        .output();
+    let mut cmd = Command::new("reg");
+    cmd.args(&["query", &key, "/ve"]); // /ve queries "Default" matches
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+
+    let output = cmd.output();
 
     match output {
         Ok(o) => o.status.success(),

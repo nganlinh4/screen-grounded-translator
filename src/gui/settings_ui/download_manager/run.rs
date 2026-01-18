@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use super::DownloadManager;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 impl DownloadManager {
     pub fn check_status(&self) {
@@ -87,9 +89,6 @@ impl DownloadManager {
             }
             if check_ytdlp {
                 let ytdlp_path = bin.join("yt-dlp.exe");
-                #[cfg(target_os = "windows")]
-                use std::os::windows::process::CommandExt;
-
                 let output = std::process::Command::new(&ytdlp_path)
                     .arg("--version")
                     .creation_flags(0x08000000) // CREATE_NO_WINDOW
@@ -158,9 +157,6 @@ impl DownloadManager {
             }
             if check_ffmpeg {
                 let ffmpeg_path = bin.join("ffmpeg.exe");
-                #[cfg(target_os = "windows")]
-                use std::os::windows::process::CommandExt;
-
                 let output = std::process::Command::new(&ffmpeg_path)
                     .arg("-version")
                     .creation_flags(0x08000000)
@@ -247,9 +243,12 @@ impl DownloadManager {
 
     pub fn change_download_folder(&mut self) {
         // PowerShell hack to open folder picker
-        let output = std::process::Command::new("powershell")
-            .args(&["-Command", "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.ShowDialog() | Out-Null; $f.SelectedPath"])
-            .output();
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.args(&["-Command", "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.ShowDialog() | Out-Null; $f.SelectedPath"]);
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
+
+        let output = cmd.output();
 
         if let Ok(out) = output {
             if let Ok(path) = String::from_utf8(out.stdout) {
@@ -631,8 +630,6 @@ impl DownloadManager {
 
             args.push(url);
 
-            #[cfg(target_os = "windows")]
-            use std::os::windows::process::CommandExt;
             use std::process::{Command, Stdio};
 
             let mut cmd = Command::new(ytdlp_exe);
