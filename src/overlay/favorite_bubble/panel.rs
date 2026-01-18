@@ -41,7 +41,7 @@ pub fn show_panel(bubble_hwnd: HWND) {
     }
 
     // Ensure window AND webview exist (webview creation is deferred to here to avoid focus steal)
-    ensure_panel_created(bubble_hwnd, true);
+    let just_created = ensure_panel_created(bubble_hwnd, true);
 
     let panel_val = PANEL_HWND.load(Ordering::SeqCst);
     if panel_val == 0 {
@@ -56,7 +56,23 @@ pub fn show_panel(bubble_hwnd: HWND) {
         // will see that we are now EXPANDED and ignore the hide command.
         IS_EXPANDED.store(true, Ordering::SeqCst);
 
-        if let Ok(app) = APP.lock() {
+        if just_created {
+            // If just created, it might take a moment for WebView2 to be ready for scripts.
+            // We show it immediately, but trigger a refresh after a small delay to ensure content & animations.
+            let _ = ShowWindow(panel_hwnd, SW_SHOWNOACTIVATE);
+
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                let panel_val = PANEL_HWND.load(Ordering::SeqCst);
+                if panel_val != 0 {
+                    let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
+                    unsafe {
+                        let _ =
+                            PostMessageW(Some(panel_hwnd), WM_REFRESH_PANEL, WPARAM(0), LPARAM(0));
+                    }
+                }
+            });
+        } else if let Ok(app) = APP.lock() {
             let is_dark = match app.config.theme_mode {
                 crate::config::ThemeMode::Dark => true,
                 crate::config::ThemeMode::Light => false,
@@ -90,7 +106,8 @@ pub fn update_favorites_panel() {
 
 /// Ensure the panel window exists.
 /// If `with_webview` is true, also create the WebView2 (deferred to avoid focus stealing during warmup).
-pub fn ensure_panel_created(bubble_hwnd: HWND, with_webview: bool) {
+pub fn ensure_panel_created(bubble_hwnd: HWND, with_webview: bool) -> bool {
+    let mut created = false;
     let panel_exists = PANEL_HWND.load(Ordering::SeqCst) != 0;
 
     if !panel_exists {
@@ -105,9 +122,11 @@ pub fn ensure_panel_created(bubble_hwnd: HWND, with_webview: bool) {
             if panel_val != 0 {
                 let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
                 create_panel_webview(panel_hwnd);
+                created = true;
             }
         }
     }
+    created
 }
 
 // Triggers the animation-based close
@@ -426,7 +445,7 @@ fn create_panel_webview(panel_hwnd: HWND) {
 
     PANEL_WEB_CONTEXT.with(|ctx| {
         if ctx.borrow().is_none() {
-            let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("bubble"));
+            let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
             *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
         }
     });

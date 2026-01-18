@@ -70,20 +70,35 @@ impl raw_window_handle::HasWindowHandle for HwndWrapper {
     }
 }
 
-/// Warmup the button canvas - creates hidden fullscreen transparent window
-pub fn warmup() {
-    if IS_WARMED_UP.load(Ordering::SeqCst) || CANVAS_HWND.load(Ordering::SeqCst) != 0 {
-        return;
-    }
+static IS_INITIALIZING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-    std::thread::spawn(|| {
-        create_canvas_window();
-    });
-}
+/// Warmup removed as per user request
+pub fn warmup() {}
 
 /// Register a markdown window for button overlay
 pub fn register_markdown_window(hwnd: HWND) {
     let hwnd_key = hwnd.0 as isize;
+
+    // Initialize on-demand if not warmed up
+    if !IS_WARMED_UP.load(Ordering::SeqCst) && CANVAS_HWND.load(Ordering::SeqCst) == 0 {
+        if !IS_INITIALIZING.swap(true, Ordering::SeqCst) {
+            std::thread::spawn(|| {
+                create_canvas_window();
+            });
+        }
+
+        // Polling thread to auto-show once ready
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if IS_WARMED_UP.load(Ordering::SeqCst) && CANVAS_HWND.load(Ordering::SeqCst) != 0 {
+                    update_canvas();
+                    show_canvas();
+                    return;
+                }
+            }
+        });
+    }
 
     // Get window rect
     let rect = unsafe {
@@ -933,8 +948,8 @@ fn create_canvas_window() {
         // Initialize WebContext
         CANVAS_WEB_CONTEXT.with(|ctx| {
             if ctx.borrow().is_none() {
-                // Use separate data dir to avoid process-sharing hangs on low-quota systems
-                let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("canvas"));
+                // Consolidate all minor overlays to 'common' to share one browser process and keep RAM at ~80MB
+                let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
                 *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
             }
         });
@@ -1020,6 +1035,7 @@ fn create_canvas_window() {
 
         // Cleanup
         IS_WARMED_UP.store(false, Ordering::SeqCst);
+        IS_INITIALIZING.store(false, Ordering::SeqCst);
         CANVAS_HWND.store(0, Ordering::SeqCst);
         CANVAS_WEBVIEW.with(|cell| {
             *cell.borrow_mut() = None;

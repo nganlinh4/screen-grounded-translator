@@ -1033,8 +1033,8 @@ unsafe fn init_webview(hwnd: HWND, w: i32, h: i32) -> std::result::Result<(), ()
     // Initialize shared WebContext if needed
     TEXT_INPUT_WEB_CONTEXT.with(|ctx| {
         if ctx.borrow().is_none() {
-            // Use separate data dir to avoid process-sharing hangs on low-quota systems
-            let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("text_input"));
+            // Consolidate all minor overlays to 'common' to share one browser process and keep RAM at ~80MB
+            let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
             *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
         }
     });

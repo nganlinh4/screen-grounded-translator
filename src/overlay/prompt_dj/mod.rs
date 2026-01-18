@@ -28,6 +28,7 @@ use crate::win_types::SendHwnd;
 static REGISTER_PDJ_CLASS: Once = Once::new();
 static mut PDJ_HWND: SendHwnd = SendHwnd(HWND(std::ptr::null_mut()));
 static mut IS_WARMED_UP: bool = false;
+static mut IS_INITIALIZING: bool = false;
 const WM_APP_SHOW: u32 = WM_USER + 101;
 const WM_APP_UPDATE_SETTINGS: u32 = WM_USER + 102;
 
@@ -325,53 +326,44 @@ fn wnd_http_response(
         })
 }
 
-pub fn warmup() {
-    std::thread::spawn(|| unsafe {
-        internal_create_pdj_loop();
-    });
-}
+pub fn warmup() {}
 
 pub fn show_prompt_dj() {
     unsafe {
-        // Check if warmed up
+        // Initialize on-demand if not warmed up
         if !IS_WARMED_UP {
-            // Trigger warmup for recovery
-            warmup();
+            if !IS_INITIALIZING {
+                IS_INITIALIZING = true;
+                std::thread::spawn(|| unsafe {
+                    internal_create_pdj_loop();
+                });
+            }
 
-            // Show localized message that feature is not ready yet
-            let ui_lang = crate::APP.lock().unwrap().config.ui_language.clone();
-            let locale = crate::gui::locale::LocaleText::get(&ui_lang);
-            crate::overlay::auto_copy_badge::show_notification(locale.prompt_dj_loading);
-
-            // Spawn a thread to wait for warmup and then show
-            std::thread::spawn(move || {
-                for _ in 0..50 {
+            // Polling thread to auto-show once ready
+            std::thread::spawn(|| {
+                // Poll for 10 seconds (100 * 100ms)
+                for _ in 0..100 {
                     std::thread::sleep(std::time::Duration::from_millis(100));
-                    // Check if warmed up (requires unsafe access to static mut, or atomic)
-                    // Since IS_WARMED_UP is static mut, this is unsafe.
-                    // However, we are in unsafe block in show_prompt_dj, but we can't move unsafe execution into thread easily without raw pointer or ensuring safety.
-                    // Actually IS_WARMED_UP is static mut bool. Accessing it from another thread is data race.
-                    // But we used AtomicBool in other places. Prompt DJ uses static mut.
-                    // We should probably rely on checking HWND validity instead or just try blindly?
-                    // Or better, checking if PDJ_HWND is valid?
-                    // PDJ_HWND is static SendHwnd.
-
-                    // SAFETY: Accessing static mut PDJ_HWND and IS_WARMED_UP (lexically inside unsafe block)
-                    let hwnd_wrapper = std::ptr::addr_of!(PDJ_HWND).read();
-                    let is_warmed = IS_WARMED_UP;
-                    if !hwnd_wrapper.is_invalid() && is_warmed {
-                        let _ =
-                            PostMessageW(Some(hwnd_wrapper.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
-                        return;
+                    unsafe {
+                        let hwnd_wrapper = std::ptr::addr_of!(PDJ_HWND).read();
+                        if IS_WARMED_UP && !hwnd_wrapper.is_invalid() {
+                            let _ = PostMessageW(
+                                Some(hwnd_wrapper.0),
+                                WM_APP_SHOW,
+                                WPARAM(0),
+                                LPARAM(0),
+                            );
+                            return;
+                        }
                     }
                 }
             });
-
             return;
         }
 
-        if !std::ptr::addr_of!(PDJ_HWND).read().is_invalid() {
-            let _ = PostMessageW(Some(PDJ_HWND.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
+        let hwnd_wrapper = std::ptr::addr_of!(PDJ_HWND).read();
+        if !hwnd_wrapper.is_invalid() {
+            let _ = PostMessageW(Some(hwnd_wrapper.0), WM_APP_SHOW, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -644,7 +636,7 @@ unsafe fn internal_create_pdj_loop() {
 
     PDJ_WEB_CONTEXT.with(|ctx| {
         if ctx.borrow().is_none() {
-            let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("prompt_dj"));
+            let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
             *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
         }
     });
@@ -773,4 +765,6 @@ unsafe fn internal_create_pdj_loop() {
         *wv.borrow_mut() = None;
     });
     PDJ_HWND = SendHwnd::default();
+    IS_WARMED_UP = false;
+    IS_INITIALIZING = false;
 }

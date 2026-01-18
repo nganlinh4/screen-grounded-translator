@@ -577,8 +577,8 @@ fn create_popup_window() {
         // Initialize shared WebContext if needed (uses same data dir as other modules)
         POPUP_WEB_CONTEXT.with(|ctx| {
             if ctx.borrow().is_none() {
-                // Use separate data dir to avoid process-sharing hangs on low-quota systems
-                let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("tray"));
+                // Consolidate all minor overlays to 'common' to share one browser process and keep RAM at ~80MB
+                let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
                 *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
             }
         });

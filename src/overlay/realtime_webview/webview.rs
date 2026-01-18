@@ -66,7 +66,7 @@ pub fn create_realtime_webview(
 
     REALTIME_WEB_CONTEXT.with(|ctx| {
         if ctx.borrow().is_none() {
-            let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("realtime"));
+            let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
             *ctx.borrow_mut() = Some(wry::WebContext::new(Some(shared_data_dir)));
         }
     });

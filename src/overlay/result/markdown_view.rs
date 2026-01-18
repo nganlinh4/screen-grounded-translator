@@ -21,17 +21,11 @@ lazy_static::lazy_static! {
     static ref SKIP_NEXT_NAVIGATION: Mutex<HashMap<isize, bool>> = Mutex::new(HashMap::new());
 }
 
-// Global hidden window handle for WebView warmup
-static mut WARMUP_HWND: HWND = HWND(std::ptr::null_mut());
-static REGISTER_WARMUP_CLASS: Once = Once::new();
-
 // Thread-local storage for WebViews since they're not Send
 thread_local! {
-    static WEBVIEWS: std::cell::RefCell<HashMap<isize, wry::WebView>> = std::cell::RefCell::new(HashMap::new());
-    // Hidden warmup WebView
-    static WARMUP_WEBVIEW: std::cell::RefCell<Option<wry::WebView>> = std::cell::RefCell::new(None);
+    static WEBVIEWS: std::cell::RefCell<std::collections::HashMap<isize, wry::WebView>> = std::cell::RefCell::new(std::collections::HashMap::new());
     // Shared WebContext for all WebViews on this thread - reduces RAM by sharing browser processes
-    static SHARED_WEB_CONTEXT: std::cell::RefCell<Option<WebContext>> = std::cell::RefCell::new(None);
+    static SHARED_WEB_CONTEXT: std::cell::RefCell<Option<wry::WebContext>> = std::cell::RefCell::new(None);
 }
 
 /// Wrapper for HWND to implement HasWindowHandle
@@ -53,167 +47,9 @@ impl HasWindowHandle for HwndWrapper {
     }
 }
 
-/// Warmup markdown WebView - call from main.rs at app startup
-/// This pre-initializes WebView2 infrastructure from the main thread context
-pub fn warmup() {
-    std::thread::spawn(|| {
-        warmup_internal();
-    });
-}
-
-fn warmup_internal() {
-    unsafe {
-        let instance = GetModuleHandleW(None).unwrap();
-        let class_name = w!("SGT_MarkdownWarmup");
-
-        REGISTER_WARMUP_CLASS.call_once(|| {
-            let mut wc = WNDCLASSW::default();
-            wc.lpfnWndProc = Some(warmup_wnd_proc);
-            wc.hInstance = instance.into();
-            wc.lpszClassName = class_name;
-            wc.style = CS_HREDRAW | CS_VREDRAW;
-            wc.hbrBackground = HBRUSH(std::ptr::null_mut());
-            let _ = RegisterClassW(&wc);
-        });
-
-        // Create a small hidden window with WS_EX_NOACTIVATE to prevent focus stealing
-        let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
-            class_name,
-            w!("MarkdownWarmup"),
-            WS_POPUP,
-            0,
-            0,
-            100,
-            100,
-            None,
-            None,
-            Some(instance.into()),
-            None,
-        )
-        .unwrap_or_default();
-
-        WARMUP_HWND = hwnd;
-
-        // Make it transparent (invisible)
-        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
-
-        // Initialize shared WebContext for this thread
-        let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("result"));
-        SHARED_WEB_CONTEXT.with(|ctx| {
-            if ctx.borrow().is_none() {
-                *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
-            }
-        });
-
-        // Create a WebView to warm up WebView2 infrastructure using shared context
-        // Include font CSS AND render text in those fonts to force browser to download them
-        let is_dark = crate::overlay::is_dark_mode();
-        let theme_css = get_theme_css(is_dark);
-        let warmup_html = format!(
-            r#"<html>
-<head>
-<style>
-{}
-{}
-body {{ font-family: 'Google Sans Flex', sans-serif; }}
-.icons {{ font-family: 'Material Symbols Rounded'; font-size: 24px; }}
-</style>
-</head>
-<body>
-    <span style="font-weight: 100">Thin</span>
-    <span style="font-weight: 300">Light</span>
-    <span style="font-weight: 400">Regular</span>
-    <span style="font-weight: 500">Medium</span>
-    <span style="font-weight: 700">Bold</span>
-    <span class="icons">pause stop mic</span>
-</body>
-</html>"#,
-            theme_css,
-            crate::overlay::html_components::font_manager::get_font_css()
-        );
-        let wrapper = HwndWrapper(hwnd);
-
-        // Store HTML in font server and get URL for same-origin font loading
-        let page_url =
-            crate::overlay::html_components::font_manager::store_html_page(warmup_html.clone())
-                .unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&warmup_html)));
-
-        let result = {
-            // LOCK SCOPE: Serialized build to prevent resource contention
-            let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
-            crate::log_info!("[MarkdownWarmup] Acquired init lock. Building...");
-
-            let build_res = SHARED_WEB_CONTEXT.with(|ctx| {
-                let mut ctx_ref = ctx.borrow_mut();
-                if let Some(web_ctx) = ctx_ref.as_mut() {
-                    let builder = WebViewBuilder::new_with_web_context(web_ctx)
-                        .with_bounds(Rect {
-                            position: wry::dpi::Position::Physical(
-                                wry::dpi::PhysicalPosition::new(0, 0),
-                            ),
-                            size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(50, 50)),
-                        })
-                        .with_url(&page_url)
-                        .with_transparent(true);
-
-                    crate::overlay::html_components::font_manager::configure_webview(builder)
-                        .build_as_child(&wrapper)
-                } else {
-                    // Fallback without context
-                    let builder = WebViewBuilder::new()
-                        .with_bounds(Rect {
-                            position: wry::dpi::Position::Physical(
-                                wry::dpi::PhysicalPosition::new(0, 0),
-                            ),
-                            size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(50, 50)),
-                        })
-                        .with_url(&page_url)
-                        .with_transparent(true);
-
-                    crate::overlay::html_components::font_manager::configure_webview(builder)
-                        .build_as_child(&wrapper)
-                }
-            });
-            crate::log_info!(
-                "[MarkdownWarmup] Build finished. Status: {}",
-                if build_res.is_ok() { "OK" } else { "ERR" }
-            );
-            build_res
-        };
-
-        match result {
-            Ok(webview) => {
-                WARMUP_WEBVIEW.with(|wv| {
-                    *wv.borrow_mut() = Some(webview);
-                });
-                // Mark as ready
-                if let Ok(mut ready) = WEBVIEW_READY.lock() {
-                    *ready = true;
-                }
-            }
-            Err(_) => {
-                // Warmup failed - WebView2 may not work
-            }
-        }
-
-        // Message loop to keep the warmup thread alive
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).into() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-}
-
-unsafe extern "system" fn warmup_wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    DefWindowProcW(hwnd, msg, wparam, lparam)
-}
+/// Warmup removed as per user request
+#[allow(dead_code)]
+pub fn warmup() {}
 
 /// Get font CSS for markdown view (uses locally cached fonts)
 fn get_font_style() -> String {
@@ -888,30 +724,6 @@ pub fn markdown_to_html(
 /// Create a WebView child window for markdown rendering
 /// Must be called from the main thread!
 pub fn create_markdown_webview(parent_hwnd: HWND, markdown_text: &str, is_hovered: bool) -> bool {
-    // Check if warmed up
-    let is_ready = WEBVIEW_READY.lock().map(|g| *g).unwrap_or(false);
-    if !is_ready {
-        // Trigger warmup for recovery
-        warmup();
-
-        // Show localized message that feature is not ready yet
-        let ui_lang = crate::APP.lock().unwrap().config.ui_language.clone();
-        let locale = crate::gui::locale::LocaleText::get(&ui_lang);
-        crate::overlay::auto_copy_badge::show_notification(locale.markdown_view_loading);
-
-        // Wait up to 5 seconds
-        for _ in 0..50 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            if WEBVIEW_READY.lock().map(|g| *g).unwrap_or(false) {
-                break;
-            }
-        }
-
-        if !WEBVIEW_READY.lock().map(|g| *g).unwrap_or(false) {
-            return false;
-        }
-    }
-
     let hwnd_key = parent_hwnd.0 as isize;
     let (is_refining, preset_prompt, input_text) = {
         let states = super::state::WINDOW_STATES.lock().unwrap();
@@ -985,12 +797,6 @@ pub fn create_markdown_webview_ex(
     // Use Physical coordinates since GetClientRect returns physical pixels
     let hwnd_key_for_nav = hwnd_key;
 
-    // Use shared WebContext to match working realtime_webview behavior
-    // This ensures we share the same browser process/cache/state
-
-    let data_dir = crate::overlay::get_shared_webview_data_dir(Some("result"));
-    let mut web_context = WebContext::new(Some(data_dir));
-
     // html_content is already a full HTML document from markdown_to_html
     let full_html = html_content;
 
@@ -1014,40 +820,43 @@ pub fn create_markdown_webview_ex(
         {
             page_url = url;
         } else {
-            page_url = "data:text/html,<html>Error</html>".to_string();
+            page_url = format!("data:text/html,{}", urlencoding::encode(&error_html));
         }
     }
 
-    let mut builder = WebViewBuilder::new_with_web_context(&mut web_context)
-        .with_bounds(Rect {
-            position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
-                margin_x as i32,
-                margin_y as i32,
-            )),
-            size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                content_width as u32,
-                content_height as u32,
-            )),
-        })
-        .with_url(&page_url)
-        .with_transparent(true)
-        .with_ipc_handler(move |msg: wry::http::Request<String>| {
-            let body = msg.body();
-            handle_markdown_ipc(parent_hwnd, body);
-        });
-
-    builder = crate::overlay::html_components::font_manager::configure_webview(builder);
-
+    // Use SHARED_WEB_CONTEXT instead of creating a new one every time to keep RAM at 80MB
     let result = {
-        // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+        // LOCK SCOPE: Serialized build to prevent resource contention
         let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
         crate::log_info!(
             "[Markdown] Acquired init lock. Building for HWND: {:?}...",
             parent_hwnd
         );
 
-        let build_res = builder
-            .with_navigation_handler(move |url: String| {
+        let build_res = SHARED_WEB_CONTEXT.with(|ctx| {
+            let mut ctx_ref = ctx.borrow_mut();
+
+            // Initialization check
+            if ctx_ref.is_none() {
+                let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
+                *ctx_ref = Some(wry::WebContext::new(Some(shared_data_dir)));
+            }
+
+            let mut builder = WebViewBuilder::new_with_web_context(ctx_ref.as_mut().unwrap())
+                .with_bounds(Rect {
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
+                        margin_x as i32,
+                        margin_y as i32,
+                    )),
+                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
+                        content_width as u32,
+                        content_height as u32,
+                    )),
+                })
+                .with_url(&page_url)
+                .with_transparent(true);
+
+            builder = builder.with_navigation_handler(move |url: String| {
                 // Check if we should skip this navigation (triggered by history.back())
                 let should_skip = {
                     let mut skip_map = SKIP_NEXT_NAVIGATION.lock().unwrap();
@@ -1122,10 +931,15 @@ pub fn create_markdown_webview_ex(
 
                 // Allow all navigation
                 true
-            })
-            .with_ipc_handler(move |msg: wry::http::Request<String>| {
+            });
+
+            builder = builder.with_ipc_handler(move |msg: wry::http::Request<String>| {
                 // Handle IPC messages from the WebView
                 let body = msg.body();
+
+                // Root IPC handler (general markdown actions)
+                handle_markdown_ipc(parent_hwnd, body);
+
                 if body.starts_with("opacity:") {
                     if let Ok(opacity_percent) = body["opacity:".len()..].parse::<f32>() {
                         // Opacity comes in as 0-100 from the slider
@@ -1145,8 +959,11 @@ pub fn create_markdown_webview_ex(
                         }
                     }
                 }
-            })
-            .build_as_child(&wrapper);
+            });
+
+            crate::overlay::html_components::font_manager::configure_webview(builder)
+                .build_as_child(&wrapper)
+        });
 
         crate::log_info!(
             "[Markdown] Build finished. Releasing lock. Status: {}",

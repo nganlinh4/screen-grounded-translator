@@ -333,27 +333,8 @@ fn main() -> eframe::Result<()> {
         wait_for_popup_close();
         overlay::text_selection::warmup();
 
-        // 4. Wait before next warmup to distribute CPU load
+        // 7. Wait before realtime warmup (Wait duration preserved for safety)
         std::thread::sleep(std::time::Duration::from_millis(5000));
-
-        // 5. Warmup markdown WebView
-        wait_for_popup_close();
-        overlay::result::markdown_view::warmup();
-
-        // 5.5 Warmup button canvas for floating markdown buttons
-        wait_for_popup_close();
-        overlay::result::button_canvas::warmup();
-
-        // 6. Warmup PromptDJ (Chill Corner)
-        wait_for_popup_close();
-        overlay::prompt_dj::warmup();
-
-        // 7. Wait before realtime warmup to allow PromptDJ WebView to finish
-        std::thread::sleep(std::time::Duration::from_millis(5000));
-
-        // 8. Warmup Live Translate (Realtime Overlay)
-        wait_for_popup_close();
-        overlay::realtime_webview::warmup();
 
         // 9. Warmup Recording Overlay
         wait_for_popup_close();

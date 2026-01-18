@@ -68,6 +68,7 @@ pub static mut REALTIME_HWND: HWND = HWND(std::ptr::null_mut());
 pub static mut TRANSLATION_HWND: HWND = HWND(std::ptr::null_mut());
 pub static mut IS_ACTIVE: bool = false;
 pub static mut IS_WARMED_UP: bool = false;
+pub static mut IS_INITIALIZING: bool = false;
 
 pub static REGISTER_REALTIME_CLASS: Once = Once::new();
 pub static REGISTER_TRANSLATION_CLASS: Once = Once::new();

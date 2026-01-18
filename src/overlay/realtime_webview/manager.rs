@@ -49,20 +49,37 @@ pub fn stop_realtime_overlay() {
     }
 }
 
-pub fn warmup() {
-    std::thread::spawn(|| unsafe {
-        internal_create_realtime_loop();
-    });
-}
+pub fn warmup() {}
 
 pub fn show_realtime_overlay(preset_idx: usize) {
     unsafe {
-        // Check if warmed up
+        // Initialize on-demand if not warmed up
         if !IS_WARMED_UP {
-            // Show localized message that feature is not ready yet
-            let ui_lang = crate::APP.lock().unwrap().config.ui_language.clone();
-            let locale = crate::gui::locale::LocaleText::get(&ui_lang);
-            crate::overlay::auto_copy_badge::show_notification(locale.live_translate_loading);
+            if !IS_INITIALIZING {
+                IS_INITIALIZING = true;
+                std::thread::spawn(move || unsafe {
+                    internal_create_realtime_loop();
+                });
+            }
+
+            // Polling thread to auto-show once ready
+            std::thread::spawn(move || {
+                // Poll for 10 seconds (100 * 100ms)
+                for _ in 0..100 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    unsafe {
+                        if IS_WARMED_UP && !std::ptr::addr_of!(REALTIME_HWND).read().is_invalid() {
+                            let _ = PostMessageW(
+                                Some(REALTIME_HWND),
+                                WM_APP_REALTIME_START,
+                                WPARAM(preset_idx),
+                                LPARAM(0),
+                            );
+                            return;
+                        }
+                    }
+                }
+            });
             return;
         }
 
@@ -194,6 +211,8 @@ unsafe fn internal_create_realtime_loop() {
     destroy_realtime_webview(REALTIME_HWND);
     destroy_realtime_webview(TRANSLATION_HWND);
     IS_ACTIVE = false;
+    IS_WARMED_UP = false;
+    IS_INITIALIZING = false;
     REALTIME_HWND = HWND::default();
     TRANSLATION_HWND = HWND::default();
     let _ = CoUninitialize();

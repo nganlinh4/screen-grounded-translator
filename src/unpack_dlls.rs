@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
 
 /// Unpacks embedded DLLs to the current executable directory if they are missing.
 /// This allows the application to run on systems without the VC++ Redistributable installed.

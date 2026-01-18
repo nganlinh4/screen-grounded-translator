@@ -346,8 +346,8 @@ fn internal_create_tag_thread() {
         // Use new get_html with CSS variables and updateTheme function
         let html_content = get_html(initial_text);
 
-        // Use separate data dir to avoid process-sharing hangs on low-quota systems
-        let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("selection"));
+        // Consolidate all minor overlays to 'common' to share one browser process and keep RAM at ~80MB
+        let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
 
         // Initialize shared WebContext if needed
         crate::log_info!("[TextSelection] Initializing WebContext...");

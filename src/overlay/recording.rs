@@ -279,8 +279,7 @@ fn internal_create_recording_window() {
 
         RECORDING_WEB_CONTEXT.with(|ctx| {
             if ctx.borrow().is_none() {
-                let shared_data_dir =
-                    crate::overlay::get_shared_webview_data_dir(Some("recording"));
+                let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
                 *ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
             }
         });
