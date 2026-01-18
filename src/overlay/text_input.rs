@@ -886,7 +886,14 @@ fn internal_create_window_loop() {
         };
         // Width scaling: matches 800px physical at 1.25 scale (Laptop preferred),
         // but creates ~580px physical at 1.0 scale (PC preferred, narrower than 640).
-        let win_w = ((880.0 * scale) - 300.0).round() as i32;
+        let mut win_w = ((880.0 * scale) - 300.0).round() as i32;
+
+        // User requested smaller width for 1920x1080 laptops (usually scale > 1.0)
+        // Current formula gives 800px at 1.25 scale, which is too wide.
+        // We reduce it by 15% to ~680px for this specific case.
+        if screen_w == 1920 && scale > 1.1 {
+            win_w = (win_w as f64 * 0.85).round() as i32;
+        }
         let win_h = (253.0 * scale).round() as i32;
 
         crate::log_info!(
