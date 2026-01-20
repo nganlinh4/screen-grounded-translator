@@ -6512,67 +6512,6 @@ pub struct QueuedLiveRequest {
 include_bytes!("../assets/GoogleSansFlex-VariableFont_GRAD,ROND,opsz,slnt,wdth,wght.ttf");
 </file>
 
-<file path="src/config/config.rs">
-fn default_true() -> bool {
-⋮----
-fn default_history_limit() -> usize {
-⋮----
-fn default_graphics_mode() -> String {
-"standard".to_string()
-⋮----
-fn default_tts_voice() -> String {
-"Aoede".to_string()
-⋮----
-fn default_tts_speed() -> String {
-"Fast".to_string()
-⋮----
-fn default_tts_method() -> TtsMethod {
-⋮----
-fn default_edge_tts_settings() -> EdgeTtsSettings {
-⋮----
-fn default_realtime_translation_model() -> String {
-"cerebras-oss".to_string()
-⋮----
-fn default_realtime_font_size() -> u32 {
-⋮----
-fn default_realtime_window_size() -> (i32, i32) {
-⋮----
-fn default_realtime_transcription_model() -> String {
-"gemini".to_string()
-⋮----
-fn default_realtime_target_language() -> String {
-"Vietnamese".to_string()
-⋮----
-fn default_ollama_base_url() -> String {
-"http://localhost:11434".to_string()
-⋮----
-pub struct Config {
-⋮----
-impl Default for Config {
-fn default() -> Self {
-⋮----
-presets: get_default_presets(),
-⋮----
-ui_language: get_system_ui_language(),
-⋮----
-graphics_mode: "standard".to_string(),
-⋮----
-ollama_base_url: "http://localhost:11434".to_string(),
-⋮----
-realtime_translation_model: "cerebras-oss".to_string(),
-realtime_transcription_model: "gemini".to_string(),
-⋮----
-realtime_audio_source: "device".to_string(),
-realtime_target_language: "Vietnamese".to_string(),
-⋮----
-tts_voice: "Aoede".to_string(),
-tts_speed: "Fast".to_string(),
-⋮----
-tts_language_conditions: default_tts_language_conditions(),
-⋮----
-fn default_bubble_size() -> u32 {
-</file>
-
 <file path="src/config/preset/defaults/audio.rs">
 use crate::config::preset::Preset;
 ⋮----
@@ -7847,310 +7786,6 @@ LPARAM(0),
 WM_DESTROY => LRESULT(0),
 </file>
 
-<file path="src/overlay/selection.rs">
-use super::process::start_processing_pipeline;
-⋮----
-use std::sync::Arc;
-⋮----
-type MagInitializeFn = unsafe extern "system" fn() -> BOOL;
-type MagUninitializeFn = unsafe extern "system" fn() -> BOOL;
-type MagSetFullscreenTransformFn = unsafe extern "system" fn(f32, i32, i32) -> BOOL;
-static mut MAG_DLL: HMODULE = HMODULE(std::ptr::null_mut());
-⋮----
-static mut SELECTION_OVERLAY_HWND: SendHwnd = SendHwnd(HWND(std::ptr::null_mut()));
-⋮----
-static mut SELECTION_HOOK: HHOOK = HHOOK(std::ptr::null_mut());
-static mut CACHED_BITMAP: SendHbitmap = SendHbitmap(HBITMAP(std::ptr::null_mut()));
-⋮----
-unsafe fn load_magnification_api() -> bool {
-let mag_dll = std::ptr::addr_of!(MAG_DLL).read();
-if !mag_dll.is_invalid() {
-⋮----
-let dll_name = w!("Magnification.dll");
-let dll = LoadLibraryW(dll_name);
-⋮----
-if let Some(init) = GetProcAddress(h, s!("MagInitialize")) {
-MAG_INITIALIZE = Some(std::mem::transmute(init));
-⋮----
-if let Some(uninit) = GetProcAddress(h, s!("MagUninitialize")) {
-MAG_UNINITIALIZE = Some(std::mem::transmute(uninit));
-⋮----
-if let Some(transform) = GetProcAddress(h, s!("MagSetFullscreenTransform")) {
-MAG_SET_FULLSCREEN_TRANSFORM = Some(std::mem::transmute(transform));
-⋮----
-let init_ptr = std::ptr::addr_of!(MAG_INITIALIZE).read();
-let trans_ptr = std::ptr::addr_of!(MAG_SET_FULLSCREEN_TRANSFORM).read();
-return init_ptr.is_some() && trans_ptr.is_some();
-⋮----
-unsafe fn extract_crop_from_hbitmap(
-⋮----
-let hdc_screen = GetDC(None);
-let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
-let old_obj = SelectObject(hdc_mem, capture.hbitmap.into());
-let w = (crop_rect.right - crop_rect.left).abs();
-let h = (crop_rect.bottom - crop_rect.top).abs();
-⋮----
-let mut buffer: Vec<u8> = vec![0; (w * h * 4) as usize];
-let hdc_temp = CreateCompatibleDC(Some(hdc_screen));
-let hbm_temp = CreateCompatibleBitmap(hdc_screen, w, h);
-SelectObject(hdc_temp, hbm_temp.into());
-let v_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-let v_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-⋮----
-let _ = BitBlt(hdc_temp, 0, 0, w, h, Some(hdc_mem), src_x, src_y, SRCCOPY).ok();
-GetDIBits(
-⋮----
-Some(buffer.as_mut_ptr() as *mut _),
-⋮----
-for chunk in buffer.chunks_exact_mut(4) {
-chunk.swap(0, 2);
-⋮----
-let _ = DeleteObject(hbm_temp.into());
-let _ = DeleteDC(hdc_temp);
-SelectObject(hdc_mem, old_obj);
-let _ = DeleteDC(hdc_mem);
-ReleaseDC(None, hdc_screen);
-image::ImageBuffer::from_raw(w as u32, h as u32, buffer).unwrap()
-⋮----
-pub fn is_selection_overlay_active_and_dismiss() -> bool {
-⋮----
-.read()
-.is_invalid()
-⋮----
-let _ = PostMessageW(
-Some(SELECTION_OVERLAY_HWND.0),
-⋮----
-WPARAM(0),
-LPARAM(0),
-⋮----
-pub fn show_selection_overlay(preset_idx: usize) {
-⋮----
-SELECTION_ABORT_SIGNAL.store(false, Ordering::SeqCst);
-let instance = GetModuleHandleW(None).unwrap();
-let class_name = w!("SnippingOverlay");
-⋮----
-if !GetClassInfoW(Some(instance.into()), class_name, &mut wc).is_ok() {
-wc.lpfnWndProc = Some(selection_wnd_proc);
-wc.hInstance = instance.into();
-wc.hCursor = LoadCursorW(None, IDC_CROSS).unwrap();
-⋮----
-wc.hbrBackground = CreateSolidBrush(COLORREF(0x00000000));
-RegisterClassW(&wc);
-⋮----
-let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-let hwnd = CreateWindowExW(
-⋮----
-w!("Snipping"),
-⋮----
-Some(instance.into()),
-⋮----
-.unwrap_or_default();
-SELECTION_OVERLAY_HWND = SendHwnd(hwnd);
-let hook = SetWindowsHookExW(
-⋮----
-Some(selection_hook_proc),
-Some(GetModuleHandleW(None).unwrap().into()),
-⋮----
-sync_layered_window_contents(hwnd);
-let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-let _ = SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
-⋮----
-while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-let _ = TranslateMessage(&msg);
-let _ = DispatchMessageW(&msg);
-⋮----
-if SELECTION_ABORT_SIGNAL.load(Ordering::SeqCst) {
-let _ = SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
-⋮----
-let _ = WaitMessage();
-⋮----
-let hook = std::ptr::addr_of!(SELECTION_HOOK).read();
-if !hook.is_invalid() {
-let _ = UnhookWindowsHookEx(hook);
-SELECTION_HOOK = HHOOK(std::ptr::null_mut());
-⋮----
-unsafe extern "system" fn selection_hook_proc(
-⋮----
-SELECTION_ABORT_SIGNAL.store(true, Ordering::SeqCst);
-let hwnd = std::ptr::addr_of!(SELECTION_OVERLAY_HWND).read().0;
-if !hwnd.is_invalid() {
-let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
-⋮----
-return LRESULT(1);
-⋮----
-CallNextHookEx(None, code, wparam, lparam)
-⋮----
-unsafe extern "system" fn selection_wnd_proc(
-⋮----
-let _ = GetCursorPos(std::ptr::addr_of_mut!(START_POS));
-⋮----
-SetCapture(hwnd);
-⋮----
-LRESULT(0)
-⋮----
-let _ = GetCursorPos(std::ptr::addr_of_mut!(LAST_PAN_POS));
-⋮----
-let _ = SetTimer(Some(hwnd), ZOOM_TIMER_ID, 16, None);
-⋮----
-let _ = ReleaseCapture();
-⋮----
-let _ = GetCursorPos(std::ptr::addr_of_mut!(CURR_POS));
-⋮----
-let _ = GetCursorPos(&mut curr_pan);
-⋮----
-let _ = GetCursorPos(&mut cursor);
-⋮----
-ZOOM_LEVEL = (ZOOM_LEVEL + ZOOM_STEP).min(MAX_ZOOM);
-⋮----
-ZOOM_LEVEL = (ZOOM_LEVEL - ZOOM_STEP).max(MIN_ZOOM);
-⋮----
-if load_magnification_api() {
-⋮----
-if init_fn().as_bool() {
-⋮----
-left: START_POS.x.min(CURR_POS.x),
-top: START_POS.y.min(CURR_POS.y),
-right: START_POS.x.max(CURR_POS.x),
-bottom: START_POS.y.max(CURR_POS.y),
-⋮----
-let width = (rect.right - rect.left).abs();
-let height = (rect.bottom - rect.top).abs();
-⋮----
-let _ = GetCursorPos(&mut pt);
-let guard = APP.lock().unwrap();
-⋮----
-let old_bmp = SelectObject(hdc_mem, capture.hbitmap.into());
-let sx = GetSystemMetrics(SM_XVIRTUALSCREEN);
-let sy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-⋮----
-let color = GetPixel(hdc_mem, local_x, local_y);
-SelectObject(hdc_mem, old_bmp);
-⋮----
-let _ = ReleaseDC(None, hdc_screen);
-⋮----
-let hex_color = format!("#{:02X}{:02X}{:02X}", r, g, b);
-⋮----
-let _ = transform_fn(1.0, 0, 0);
-⋮----
-return LRESULT(0);
-⋮----
-.get(CURRENT_PRESET_IDX)
-.map(|p| p.is_master)
-.unwrap_or(false)
-⋮----
-let _ = GetCursorPos(&mut cursor_pos);
-ZOOM_ALPHA_OVERRIDE = Some(60);
-⋮----
-Some(idx)
-⋮----
-SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
-⋮----
-Some(CURRENT_PRESET_IDX)
-⋮----
-let mut guard = APP.lock().unwrap();
-⋮----
-.as_ref()
-.expect("Screenshot handle missing");
-let config_clone = guard.config.clone();
-let preset_clone = guard.config.presets[preset_idx].clone();
-let img = extract_crop_from_hbitmap(capture, rect);
-⋮----
-start_processing_pipeline(cropped_img, rect, config, preset);
-⋮----
-if diff_zoom.abs() > 0.001 {
-⋮----
-if dx.abs() > 0.1 || dy.abs() > 0.1 {
-⋮----
-let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-⋮----
-.max(screen_x as f32)
-.min((screen_x + screen_w) as f32 - view_w);
-⋮----
-.max(screen_y as f32)
-.min((screen_y + screen_h) as f32 - view_h);
-let _ = transform_fn(RENDER_ZOOM, off_x as i32, off_y as i32);
-⋮----
-let _ = KillTimer(Some(hwnd), ZOOM_TIMER_ID);
-⋮----
-let _ = KillTimer(Some(hwnd), FADE_TIMER_ID);
-let _ = DestroyWindow(hwnd);
-PostQuitMessage(0);
-⋮----
-.min(TARGET_OPACITY as u16)
-⋮----
-let _ = BeginPaint(hwnd, &mut ps);
-⋮----
-let _ = EndPaint(hwnd, &mut ps);
-⋮----
-WM_ERASEBKGND => LRESULT(1),
-⋮----
-let _ = uninit_fn();
-⋮----
-if !std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() {
-let _ = DeleteObject(CACHED_BITMAP.0.into());
-⋮----
-DefWindowProcW(hwnd, msg, wparam, lparam)
-⋮----
-_ => DefWindowProcW(hwnd, msg, wparam, lparam),
-⋮----
-unsafe fn sync_layered_window_contents(hwnd: HWND) {
-let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-⋮----
-if std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid()
-⋮----
-let hbm = CreateDIBSection(Some(hdc_screen), &bmi, DIB_RGB_COLORS, &mut bits, None, 0);
-⋮----
-CACHED_BITMAP = SendHbitmap(h);
-⋮----
-let mem_dc = CreateCompatibleDC(Some(hdc_screen));
-let old_bmp = SelectObject(mem_dc, CACHED_BITMAP.0.into());
-⋮----
-zoom_alpha.min(CURRENT_ALPHA)
-⋮----
-pixels_u32.fill(bg_val);
-⋮----
-let w = (r.right - r.left).abs();
-let h = (r.bottom - r.top).abs();
-⋮----
-let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF));
-let old_pen = SelectObject(mem_dc, pen.into());
-let null_brush = GetStockObject(NULL_BRUSH);
-let old_brush = SelectObject(mem_dc, null_brush);
-let _ = RoundRect(mem_dc, r.left, r.top, r.right, r.bottom, 12, 12);
-SelectObject(mem_dc, old_brush);
-SelectObject(mem_dc, old_pen);
-let _ = DeleteObject(pen.into());
-let b_left = (r.left - 5).max(0);
-let b_top = (r.top - 5).max(0);
-let b_right = (r.right + 5).min(width);
-let b_bottom = (r.bottom + 5).min(height);
-⋮----
-if row_start < pixels_u32.len() && row_end <= pixels_u32.len() {
-⋮----
-x: GetSystemMetrics(SM_XVIRTUALSCREEN),
-y: GetSystemMetrics(SM_YVIRTUALSCREEN),
-⋮----
-let _ = UpdateLayeredWindow(
-⋮----
-Some(hdc_screen),
-Some(&screen_pos),
-Some(&wnd_size),
-Some(mem_dc),
-Some(&src_pos),
-COLORREF(0),
-Some(&blend),
-⋮----
-SelectObject(mem_dc, old_bmp);
-let _ = DeleteDC(mem_dc);
-</file>
-
 <file path="src/overlay/text_selection_webview/html.rs">
 pub fn get_html(is_dark: bool, initial_text: &str) -> String {
 ⋮----
@@ -8774,6 +8409,67 @@ if !full_text.is_empty() {
 return Some(full_text);
 </file>
 
+<file path="src/config/config.rs">
+fn default_true() -> bool {
+⋮----
+fn default_history_limit() -> usize {
+⋮----
+fn default_graphics_mode() -> String {
+"standard".to_string()
+⋮----
+fn default_tts_voice() -> String {
+"Aoede".to_string()
+⋮----
+fn default_tts_speed() -> String {
+"Fast".to_string()
+⋮----
+fn default_tts_method() -> TtsMethod {
+⋮----
+fn default_edge_tts_settings() -> EdgeTtsSettings {
+⋮----
+fn default_realtime_translation_model() -> String {
+"cerebras-oss".to_string()
+⋮----
+fn default_realtime_font_size() -> u32 {
+⋮----
+fn default_realtime_window_size() -> (i32, i32) {
+⋮----
+fn default_realtime_transcription_model() -> String {
+"gemini".to_string()
+⋮----
+fn default_realtime_target_language() -> String {
+"Vietnamese".to_string()
+⋮----
+fn default_ollama_base_url() -> String {
+"http://localhost:11434".to_string()
+⋮----
+pub struct Config {
+⋮----
+impl Default for Config {
+fn default() -> Self {
+⋮----
+presets: get_default_presets(),
+⋮----
+ui_language: get_system_ui_language(),
+⋮----
+graphics_mode: "standard".to_string(),
+⋮----
+ollama_base_url: "http://localhost:11434".to_string(),
+⋮----
+realtime_translation_model: "cerebras-oss".to_string(),
+realtime_transcription_model: "gemini".to_string(),
+⋮----
+realtime_audio_source: "device".to_string(),
+realtime_target_language: "Vietnamese".to_string(),
+⋮----
+tts_voice: "Aoede".to_string(),
+tts_speed: "Fast".to_string(),
+⋮----
+tts_language_conditions: default_tts_language_conditions(),
+⋮----
+fn default_bubble_size() -> u32 {
+</file>
+
 <file path="src/gui/app/logic.rs">
 use crate::gui::app::utils::simple_rand;
 ⋮----
@@ -9333,164 +9029,6 @@ if node.id() != current_node_uuid {
 node.set_auto_copy(false);
 </file>
 
-<file path="src/gui/utils.rs">
-use eframe::egui;
-⋮----
-use std::os::windows::process::CommandExt;
-use std::process::Command;
-use windows::core::w;
-⋮----
-use windows_core::BOOL;
-struct MonitorEnumContext {
-⋮----
-unsafe extern "system" fn monitor_enum_proc(
-⋮----
-if GetMonitorInfoW(hmonitor, &mut mi as *mut _ as *mut _).as_bool() {
-⋮----
-let trimmed_name = device_name.trim_matches(char::from(0)).to_string();
-context.monitors.push(trimmed_name);
-⋮----
-pub fn get_monitor_names() -> Vec<String> {
-⋮----
-let _ = EnumDisplayMonitors(
-⋮----
-Some(monitor_enum_proc),
-LPARAM(&mut ctx as *mut _ as isize),
-⋮----
-pub fn copy_to_clipboard_text(text: &str) {
-⋮----
-pub fn is_running_as_admin() -> bool {
-⋮----
-if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut h_token).is_ok() {
-⋮----
-if GetTokenInformation(
-⋮----
-Some(&mut elevation as *mut _ as *mut std::ffi::c_void),
-⋮----
-.is_ok()
-⋮----
-pub fn is_system_in_dark_mode() -> bool {
-⋮----
-use winreg::RegKey;
-⋮----
-hkcu.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
-⋮----
-pub fn configure_fonts(ctx: &egui::Context) {
-⋮----
-fonts.font_data.insert(
-gs_font_name.to_owned(),
-⋮----
-let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
-let font_dir = std::path::Path::new(&windir).join("Fonts");
-let viet_font_path = font_dir.join("segoeui.ttf");
-let viet_fallback_path = font_dir.join("arial.ttf");
-let viet_data = std::fs::read(&viet_font_path).or_else(|_| std::fs::read(&viet_fallback_path));
-⋮----
-let korean_font_path = font_dir.join("malgun.ttf");
-⋮----
-viet_font_name.to_owned(),
-⋮----
-if let Some(vec) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-vec.insert(0, viet_font_name.to_owned());
-⋮----
-if let Some(vec) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-⋮----
-korean_font_name.to_owned(),
-⋮----
-let idx = if vec.contains(&viet_font_name.to_string()) {
-⋮----
-vec.insert(idx, korean_font_name.to_owned());
-⋮----
-vec.insert(0, gs_font_name.to_owned());
-⋮----
-ctx.set_fonts(fonts);
-⋮----
-pub fn set_admin_startup(enable: bool) -> bool {
-⋮----
-let exe_str = match exe_path.to_str() {
-⋮----
-if exe_str.is_empty() {
-⋮----
-cmd.args(&[
-⋮----
-&format!("\"{}\"", exe_str),
-⋮----
-cmd.creation_flags(0x08000000);
-let output = cmd.output();
-⋮----
-Ok(o) => o.status.success(),
-⋮----
-cmd.args(&["/delete", "/tn", TASK_NAME, "/f"]);
-⋮----
-pub fn is_admin_startup_enabled() -> bool {
-⋮----
-cmd.args(&["/query", "/tn", TASK_NAME]);
-⋮----
-pub fn is_admin_startup_pointing_to_current_exe() -> bool {
-⋮----
-cmd.args(&["/query", "/tn", TASK_NAME, "/xml"]);
-⋮----
-if let Ok(output) = cmd.output() {
-if output.status.success() {
-⋮----
-return xml_content.to_lowercase().contains(&exe_str.to_lowercase());
-⋮----
-fn rgba_to_bgra(data: &[u8]) -> Vec<u8> {
-let mut bgra = data.to_vec();
-for chunk in bgra.chunks_exact_mut(4) {
-chunk.swap(0, 2);
-⋮----
-unsafe fn create_hicon_from_bytes(bytes: &[u8], target_w: i32, target_h: i32) -> Option<HANDLE> {
-let img = image::load_from_memory(bytes).ok()?;
-let resized = img.resize_exact(
-⋮----
-let rgba = resized.to_rgba8();
-let bgra_data = rgba_to_bgra(rgba.as_raw());
-⋮----
-let mask_bits = vec![0u8; mask_len];
-let hicon_result = CreateIcon(
-⋮----
-mask_bits.as_ptr(),
-bgra_data.as_ptr(),
-⋮----
-if hicon.is_invalid() {
-⋮----
-Some(std::mem::transmute::<_, HANDLE>(hicon))
-⋮----
-pub fn set_window_icon(hwnd: HWND, is_dark_mode: bool) {
-⋮----
-include_bytes!("../../assets/app-icon-small.png")
-⋮----
-include_bytes!("../../assets/app-icon-small-light.png")
-⋮----
-if !hwnd.is_invalid() {
-let small_w = GetSystemMetrics(SM_CXSMICON);
-let small_h = GetSystemMetrics(SM_CYSMICON);
-let big_w = GetSystemMetrics(SM_CXICON);
-let big_h = GetSystemMetrics(SM_CYICON);
-if let Some(hicon_small) = create_hicon_from_bytes(icon_bytes, small_w, small_h) {
-⋮----
-Some(hwnd),
-⋮----
-WPARAM(ICON_SMALL as usize),
-LPARAM(hicon_small.0 as isize),
-⋮----
-if let Some(hicon_big) = create_hicon_from_bytes(icon_bytes, big_w, big_h) {
-⋮----
-WPARAM(ICON_BIG as usize),
-LPARAM(hicon_big.0 as isize),
-⋮----
-pub fn update_window_icon_native(is_dark_mode: bool) {
-⋮----
-let class_name = w!("eframe");
-let title_name = w!("Screen Goated Toolbox (SGT by nganlinh4)");
-let mut hwnd = FindWindowW(class_name, title_name).unwrap_or_default();
-if hwnd.is_invalid() {
-hwnd = FindWindowW(None, title_name).unwrap_or_default();
-⋮----
-set_window_icon(hwnd, is_dark_mode);
-</file>
-
 <file path="src/model_config.rs">
 pub enum ModelType {
 ⋮----
@@ -9977,6 +9515,311 @@ pub unsafe fn handle_download_click(hwnd: HWND) -> LRESULT {
 .unwrap_or_default()
 ⋮----
 if !text.is_empty() {
+</file>
+
+<file path="src/overlay/selection.rs">
+use super::process::start_processing_pipeline;
+⋮----
+use std::sync::Arc;
+⋮----
+type MagInitializeFn = unsafe extern "system" fn() -> BOOL;
+type MagUninitializeFn = unsafe extern "system" fn() -> BOOL;
+type MagSetFullscreenTransformFn = unsafe extern "system" fn(f32, i32, i32) -> BOOL;
+static mut MAG_DLL: HMODULE = HMODULE(std::ptr::null_mut());
+⋮----
+static mut SELECTION_OVERLAY_HWND: SendHwnd = SendHwnd(HWND(std::ptr::null_mut()));
+⋮----
+static mut SELECTION_HOOK: HHOOK = HHOOK(std::ptr::null_mut());
+static mut CACHED_BITMAP: SendHbitmap = SendHbitmap(HBITMAP(std::ptr::null_mut()));
+⋮----
+unsafe fn load_magnification_api() -> bool {
+let mag_dll = std::ptr::addr_of!(MAG_DLL).read();
+if !mag_dll.is_invalid() {
+⋮----
+let dll_name = w!("Magnification.dll");
+let dll = LoadLibraryW(dll_name);
+⋮----
+if let Some(init) = GetProcAddress(h, s!("MagInitialize")) {
+MAG_INITIALIZE = Some(std::mem::transmute(init));
+⋮----
+if let Some(uninit) = GetProcAddress(h, s!("MagUninitialize")) {
+MAG_UNINITIALIZE = Some(std::mem::transmute(uninit));
+⋮----
+if let Some(transform) = GetProcAddress(h, s!("MagSetFullscreenTransform")) {
+MAG_SET_FULLSCREEN_TRANSFORM = Some(std::mem::transmute(transform));
+⋮----
+let init_ptr = std::ptr::addr_of!(MAG_INITIALIZE).read();
+let trans_ptr = std::ptr::addr_of!(MAG_SET_FULLSCREEN_TRANSFORM).read();
+return init_ptr.is_some() && trans_ptr.is_some();
+⋮----
+unsafe fn extract_crop_from_hbitmap(
+⋮----
+let hdc_screen = GetDC(None);
+let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
+let old_obj = SelectObject(hdc_mem, capture.hbitmap.into());
+let w = (crop_rect.right - crop_rect.left).abs();
+let h = (crop_rect.bottom - crop_rect.top).abs();
+⋮----
+let mut buffer: Vec<u8> = vec![0; (w * h * 4) as usize];
+let hdc_temp = CreateCompatibleDC(Some(hdc_screen));
+let hbm_temp = CreateCompatibleBitmap(hdc_screen, w, h);
+SelectObject(hdc_temp, hbm_temp.into());
+let v_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+let v_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+⋮----
+let _ = BitBlt(hdc_temp, 0, 0, w, h, Some(hdc_mem), src_x, src_y, SRCCOPY).ok();
+GetDIBits(
+⋮----
+Some(buffer.as_mut_ptr() as *mut _),
+⋮----
+for chunk in buffer.chunks_exact_mut(4) {
+chunk.swap(0, 2);
+⋮----
+let _ = DeleteObject(hbm_temp.into());
+let _ = DeleteDC(hdc_temp);
+SelectObject(hdc_mem, old_obj);
+let _ = DeleteDC(hdc_mem);
+ReleaseDC(None, hdc_screen);
+image::ImageBuffer::from_raw(w as u32, h as u32, buffer).unwrap()
+⋮----
+pub fn is_selection_overlay_active_and_dismiss() -> bool {
+⋮----
+.read()
+.is_invalid()
+⋮----
+let _ = PostMessageW(
+Some(SELECTION_OVERLAY_HWND.0),
+⋮----
+WPARAM(0),
+LPARAM(0),
+⋮----
+pub fn show_selection_overlay(preset_idx: usize) {
+⋮----
+SELECTION_ABORT_SIGNAL.store(false, Ordering::SeqCst);
+let instance = GetModuleHandleW(None).unwrap();
+let class_name = w!("SnippingOverlay");
+⋮----
+if !GetClassInfoW(Some(instance.into()), class_name, &mut wc).is_ok() {
+wc.lpfnWndProc = Some(selection_wnd_proc);
+wc.hInstance = instance.into();
+wc.hCursor = LoadCursorW(None, IDC_CROSS).unwrap();
+⋮----
+wc.hbrBackground = CreateSolidBrush(COLORREF(0x00000000));
+RegisterClassW(&wc);
+⋮----
+let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+let hwnd = CreateWindowExW(
+⋮----
+w!("Snipping"),
+⋮----
+Some(instance.into()),
+⋮----
+.unwrap_or_default();
+SELECTION_OVERLAY_HWND = SendHwnd(hwnd);
+let hook = SetWindowsHookExW(
+⋮----
+Some(selection_hook_proc),
+Some(GetModuleHandleW(None).unwrap().into()),
+⋮----
+sync_layered_window_contents(hwnd);
+let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+let _ = SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
+⋮----
+while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+let _ = TranslateMessage(&msg);
+let _ = DispatchMessageW(&msg);
+⋮----
+if SELECTION_ABORT_SIGNAL.load(Ordering::SeqCst) {
+let _ = SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
+⋮----
+let _ = WaitMessage();
+⋮----
+let hook = std::ptr::addr_of!(SELECTION_HOOK).read();
+if !hook.is_invalid() {
+let _ = UnhookWindowsHookEx(hook);
+SELECTION_HOOK = HHOOK(std::ptr::null_mut());
+⋮----
+unsafe extern "system" fn selection_hook_proc(
+⋮----
+SELECTION_ABORT_SIGNAL.store(true, Ordering::SeqCst);
+let hwnd = std::ptr::addr_of!(SELECTION_OVERLAY_HWND).read().0;
+if !hwnd.is_invalid() {
+let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
+⋮----
+return LRESULT(1);
+⋮----
+CallNextHookEx(None, code, wparam, lparam)
+⋮----
+unsafe extern "system" fn selection_wnd_proc(
+⋮----
+let _ = GetCursorPos(std::ptr::addr_of_mut!(START_POS));
+⋮----
+SetCapture(hwnd);
+⋮----
+LRESULT(0)
+⋮----
+let _ = GetCursorPos(std::ptr::addr_of_mut!(LAST_PAN_POS));
+⋮----
+let _ = SetTimer(Some(hwnd), ZOOM_TIMER_ID, 16, None);
+⋮----
+let _ = ReleaseCapture();
+⋮----
+let _ = GetCursorPos(std::ptr::addr_of_mut!(CURR_POS));
+⋮----
+let _ = GetCursorPos(&mut curr_pan);
+⋮----
+let _ = GetCursorPos(&mut cursor);
+⋮----
+ZOOM_LEVEL = (ZOOM_LEVEL + ZOOM_STEP).min(MAX_ZOOM);
+⋮----
+ZOOM_LEVEL = (ZOOM_LEVEL - ZOOM_STEP).max(MIN_ZOOM);
+⋮----
+if load_magnification_api() {
+⋮----
+if init_fn().as_bool() {
+⋮----
+left: START_POS.x.min(CURR_POS.x),
+top: START_POS.y.min(CURR_POS.y),
+right: START_POS.x.max(CURR_POS.x),
+bottom: START_POS.y.max(CURR_POS.y),
+⋮----
+let width = (rect.right - rect.left).abs();
+let height = (rect.bottom - rect.top).abs();
+⋮----
+let _ = GetCursorPos(&mut pt);
+⋮----
+let guard = APP.lock().unwrap();
+⋮----
+let old_bmp = SelectObject(hdc_mem, capture.hbitmap.into());
+let sx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+let sy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+⋮----
+let color = GetPixel(hdc_mem, local_x, local_y);
+SelectObject(hdc_mem, old_bmp);
+⋮----
+let _ = ReleaseDC(None, hdc_screen);
+⋮----
+Some(format!("#{:02X}{:02X}{:02X}", r, g, b))
+⋮----
+let _ = transform_fn(1.0, 0, 0);
+⋮----
+return LRESULT(0);
+⋮----
+.get(CURRENT_PRESET_IDX)
+.map(|p| p.is_master)
+.unwrap_or(false)
+⋮----
+let _ = GetCursorPos(&mut cursor_pos);
+ZOOM_ALPHA_OVERRIDE = Some(60);
+⋮----
+Some(idx)
+⋮----
+SetTimer(Some(hwnd), FADE_TIMER_ID, 16, None);
+⋮----
+Some(CURRENT_PRESET_IDX)
+⋮----
+let mut guard = APP.lock().unwrap();
+⋮----
+.as_ref()
+.expect("Screenshot handle missing");
+let config_clone = guard.config.clone();
+let preset_clone = guard.config.presets[preset_idx].clone();
+let img = extract_crop_from_hbitmap(capture, rect);
+⋮----
+start_processing_pipeline(cropped_img, rect, config, preset);
+⋮----
+if diff_zoom.abs() > 0.001 {
+⋮----
+if dx.abs() > 0.1 || dy.abs() > 0.1 {
+⋮----
+let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+⋮----
+.max(screen_x as f32)
+.min((screen_x + screen_w) as f32 - view_w);
+⋮----
+.max(screen_y as f32)
+.min((screen_y + screen_h) as f32 - view_h);
+let _ = transform_fn(RENDER_ZOOM, off_x as i32, off_y as i32);
+⋮----
+let _ = KillTimer(Some(hwnd), ZOOM_TIMER_ID);
+⋮----
+let _ = KillTimer(Some(hwnd), FADE_TIMER_ID);
+let _ = DestroyWindow(hwnd);
+PostQuitMessage(0);
+⋮----
+.min(TARGET_OPACITY as u16)
+⋮----
+let _ = BeginPaint(hwnd, &mut ps);
+⋮----
+let _ = EndPaint(hwnd, &mut ps);
+⋮----
+WM_ERASEBKGND => LRESULT(1),
+⋮----
+let _ = uninit_fn();
+⋮----
+if !std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid() {
+let _ = DeleteObject(CACHED_BITMAP.0.into());
+⋮----
+DefWindowProcW(hwnd, msg, wparam, lparam)
+⋮----
+_ => DefWindowProcW(hwnd, msg, wparam, lparam),
+⋮----
+unsafe fn sync_layered_window_contents(hwnd: HWND) {
+let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+⋮----
+if std::ptr::addr_of!(CACHED_BITMAP).read().is_invalid()
+⋮----
+let hbm = CreateDIBSection(Some(hdc_screen), &bmi, DIB_RGB_COLORS, &mut bits, None, 0);
+⋮----
+CACHED_BITMAP = SendHbitmap(h);
+⋮----
+let mem_dc = CreateCompatibleDC(Some(hdc_screen));
+let old_bmp = SelectObject(mem_dc, CACHED_BITMAP.0.into());
+⋮----
+zoom_alpha.min(CURRENT_ALPHA)
+⋮----
+pixels_u32.fill(bg_val);
+⋮----
+let w = (r.right - r.left).abs();
+let h = (r.bottom - r.top).abs();
+⋮----
+let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF));
+let old_pen = SelectObject(mem_dc, pen.into());
+let null_brush = GetStockObject(NULL_BRUSH);
+let old_brush = SelectObject(mem_dc, null_brush);
+let _ = RoundRect(mem_dc, r.left, r.top, r.right, r.bottom, 12, 12);
+SelectObject(mem_dc, old_brush);
+SelectObject(mem_dc, old_pen);
+let _ = DeleteObject(pen.into());
+let b_left = (r.left - 5).max(0);
+let b_top = (r.top - 5).max(0);
+let b_right = (r.right + 5).min(width);
+let b_bottom = (r.bottom + 5).min(height);
+⋮----
+if row_start < pixels_u32.len() && row_end <= pixels_u32.len() {
+⋮----
+x: GetSystemMetrics(SM_XVIRTUALSCREEN),
+y: GetSystemMetrics(SM_YVIRTUALSCREEN),
+⋮----
+let _ = UpdateLayeredWindow(
+⋮----
+Some(hdc_screen),
+Some(&screen_pos),
+Some(&wnd_size),
+Some(mem_dc),
+Some(&src_pos),
+COLORREF(0),
+Some(&blend),
+⋮----
+SelectObject(mem_dc, old_bmp);
+let _ = DeleteDC(mem_dc);
 </file>
 
 <file path="src/overlay/text_selection_webview/mod.rs">
@@ -10571,179 +10414,164 @@ ui.label(egui::RichText::new(clean_msg).small());
 ui.add(egui::ProgressBar::new(*progress).animate(true));
 </file>
 
-<file path="src/gui/settings_ui/global/mod.rs">
-use super::node_graph::request_node_graph_view_reset;
-use crate::config::Config;
-⋮----
-use crate::gui::locale::LocaleText;
-⋮----
-use auto_launch::AutoLaunch;
+<file path="src/gui/utils.rs">
 use eframe::egui;
-use std::collections::HashMap;
-mod downloaded_tools;
-mod tts_settings;
-mod update_section;
-mod usage_stats;
-use crate::gui::settings_ui::download_manager::DownloadManager;
-use downloaded_tools::render_downloaded_tools_modal;
-use tts_settings::render_tts_settings_modal;
-use update_section::render_update_section_content;
-use usage_stats::render_usage_modal;
 ⋮----
-pub fn render_global_settings(
+use std::os::windows::process::CommandExt;
+use std::process::Command;
+use windows::core::w;
 ⋮----
-let is_dark = ui.visuals().dark_mode;
+use windows_core::BOOL;
+struct MonitorEnumContext {
 ⋮----
-ui.add_space(5.0);
+unsafe extern "system" fn monitor_enum_proc(
 ⋮----
-.fill(card_bg)
-.stroke(card_stroke)
-.inner_margin(12.0)
-.corner_radius(10.0)
-.show(ui, |ui| {
-ui.horizontal(|ui| {
-ui.label(
+if GetMonitorInfoW(hmonitor, &mut mi as *mut _ as *mut _).as_bool() {
 ⋮----
-.strong()
-.size(14.0),
+let trimmed_name = device_name.trim_matches(char::from(0)).to_string();
+context.monitors.push(trimmed_name);
 ⋮----
-ui.add_space(16.0);
+pub fn get_monitor_names() -> Vec<String> {
 ⋮----
-.checkbox(&mut config.use_groq, text.use_groq_checkbox)
-.changed()
+let _ = EnumDisplayMonitors(
 ⋮----
-.checkbox(&mut config.use_cerebras, text.use_cerebras_checkbox)
+Some(monitor_enum_proc),
+LPARAM(&mut ctx as *mut _ as isize),
 ⋮----
-.checkbox(&mut config.use_gemini, text.use_gemini_checkbox)
+pub fn copy_to_clipboard_text(text: &str) {
 ⋮----
-.checkbox(&mut config.use_openrouter, text.use_openrouter_checkbox)
+pub fn is_running_as_admin() -> bool {
 ⋮----
-if ui.checkbox(&mut config.use_ollama, "Ollama").changed() {
+if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut h_token).is_ok() {
 ⋮----
-ui.add_space(6.0);
+if GetTokenInformation(
 ⋮----
-ui.label(text.groq_label);
-if ui.link(text.get_key_link).clicked() {
+Some(&mut elevation as *mut _ as *mut std::ffi::c_void),
 ⋮----
-.add(
+.is_ok()
 ⋮----
-.id(egui::Id::new("settings_api_key_groq"))
-.password(!*show_api_key)
-.desired_width(API_KEY_FIELD_WIDTH),
+pub fn is_system_in_dark_mode() -> bool {
 ⋮----
-if icon_button(ui, eye_icon).clicked() {
+use winreg::RegKey;
 ⋮----
-ui.label(text.cerebras_api_key_label);
-if ui.link(text.cerebras_get_key_link).clicked() {
+hkcu.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
 ⋮----
-.id(egui::Id::new("settings_api_key_cerebras"))
-.password(!*show_cerebras_api_key)
+pub fn configure_fonts(ctx: &egui::Context) {
 ⋮----
-ui.label(text.gemini_api_key_label);
-if ui.link(text.gemini_get_key_link).clicked() {
+fonts.font_data.insert(
+gs_font_name.to_owned(),
 ⋮----
-.id(egui::Id::new("settings_api_key_gemini"))
-.password(!*show_gemini_api_key)
+let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
+let font_dir = std::path::Path::new(&windir).join("Fonts");
+let viet_font_path = font_dir.join("segoeui.ttf");
+let viet_fallback_path = font_dir.join("arial.ttf");
+let viet_data = std::fs::read(&viet_font_path).or_else(|_| std::fs::read(&viet_fallback_path));
 ⋮----
-ui.label(text.openrouter_api_key_label);
-if ui.link(text.openrouter_get_key_link).clicked() {
+let korean_font_path = font_dir.join("malgun.ttf");
 ⋮----
-.id(egui::Id::new("settings_api_key_openrouter"))
-.password(!*show_openrouter_api_key)
+viet_font_name.to_owned(),
 ⋮----
-ui.label("Ollama URL:");
-if ui.link(text.ollama_url_guide).clicked() {
+if let Some(vec) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+vec.insert(0, viet_font_name.to_owned());
 ⋮----
-.id(egui::Id::new("settings_api_key_ollama_url"))
+if let Some(vec) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
 ⋮----
-.ctx()
-.memory(|mem| mem.data.get_temp::<String>(egui::Id::new("ollama_status")))
+korean_font_name.to_owned(),
 ⋮----
-ui.label(egui::RichText::new(&status).size(11.0));
+let idx = if vec.contains(&viet_font_name.to_string()) {
 ⋮----
-ui.add_space(10.0);
+vec.insert(idx, korean_font_name.to_owned());
 ⋮----
-egui::RichText::new(format!("📊 {}", text.usage_statistics_title))
-.color(egui::Color32::WHITE)
-.strong(),
+vec.insert(0, gs_font_name.to_owned());
 ⋮----
-.fill(stats_bg)
-.corner_radius(10.0),
+ctx.set_fonts(fonts);
 ⋮----
-.on_hover_cursor(egui::CursorIcon::PointingHand)
-.on_hover_text(text.usage_statistics_tooltip)
-.clicked()
+pub fn set_admin_startup(enable: bool) -> bool {
 ⋮----
-egui::RichText::new(format!("🔊 {}", text.tts_settings_button))
+let exe_str = match exe_path.to_str() {
 ⋮----
-.fill(tts_bg)
+if exe_str.is_empty() {
 ⋮----
-egui::RichText::new(format!("📦 {}", text.downloaded_tools_button))
+cmd.args(&[
 ⋮----
-.fill(tools_bg)
+&format!("\"{}\"", exe_str),
 ⋮----
-render_usage_modal(
+cmd.creation_flags(0x08000000);
+let output = cmd.output();
 ⋮----
-let ctx = ui.ctx().clone();
-render_downloaded_tools_modal(&ctx, ui, show_tools_modal, download_manager, text);
-if render_tts_settings_modal(ui, config, text, show_tts_modal) {
+Ok(o) => o.status.success(),
 ⋮----
-render_update_section_content(ui, updater, update_status, text);
+cmd.args(&["/delete", "/tn", TASK_NAME, "/f"]);
 ⋮----
-.checkbox(&mut startup_toggle, text.startup_label)
+pub fn is_admin_startup_enabled() -> bool {
 ⋮----
-let _ = launcher.disable();
+cmd.args(&["/query", "/tn", TASK_NAME]);
 ⋮----
-let _ = launcher.enable();
+is_admin_startup_pointing_to_current_exe()
 ⋮----
-ui.indent("admin_indent", |ui| {
+pub fn is_admin_startup_pointing_to_current_exe() -> bool {
 ⋮----
-if ui.checkbox(&mut is_admin_mode, checkbox_label).clicked() {
+cmd.args(&["/query", "/tn", TASK_NAME, "/xml"]);
 ⋮----
-ui.add_enabled_ui(false, |ui| {
-ui.checkbox(&mut _is_admin_mode_disabled, checkbox_label);
+if let Ok(output) = cmd.output() {
+if output.status.success() {
 ⋮----
-.size(11.0)
-.color(egui::Color32::from_rgb(200, 100, 50)),
+return xml_content.to_lowercase().contains(&exe_str.to_lowercase());
 ⋮----
-.color(egui::Color32::from_rgb(34, 139, 34)),
+fn rgba_to_bgra(data: &[u8]) -> Vec<u8> {
+let mut bgra = data.to_vec();
+for chunk in bgra.chunks_exact_mut(4) {
+chunk.swap(0, 2);
 ⋮----
-.checkbox(&mut config.start_in_tray, text.start_in_tray_label)
+unsafe fn create_hicon_from_bytes(bytes: &[u8], target_w: i32, target_h: i32) -> Option<HANDLE> {
+let img = image::load_from_memory(bytes).ok()?;
+let resized = img.resize_exact(
 ⋮----
-ui.add_space(8.0);
+let rgba = resized.to_rgba8();
+let bgra_data = rgba_to_bgra(rgba.as_raw());
 ⋮----
-ui.label(text.graphics_mode_label);
-let current_label = match config.ui_language.as_str() {
+let mask_bits = vec![0u8; mask_len];
+let hicon_result = CreateIcon(
 ⋮----
-.selected_text(current_label)
-.show_ui(ui, |ui| {
+mask_bits.as_ptr(),
+bgra_data.as_ptr(),
 ⋮----
-.selectable_label(
+if hicon.is_invalid() {
 ⋮----
-config.graphics_mode = "standard".to_string();
+Some(std::mem::transmute::<_, HANDLE>(hicon))
 ⋮----
-config.graphics_mode = "minimal".to_string();
+pub fn set_window_icon(hwnd: HWND, is_dark_mode: bool) {
 ⋮----
-ui.add_space(40.0);
+include_bytes!("../../assets/app-icon-small.png")
 ⋮----
-egui::RichText::new(text.force_quit).color(egui::Color32::WHITE),
+include_bytes!("../../assets/app-icon-small-light.png")
 ⋮----
-.fill(quite_bg)
-.corner_radius(8.0),
+if !hwnd.is_invalid() {
+let small_w = GetSystemMetrics(SM_CXSMICON);
+let small_h = GetSystemMetrics(SM_CYSMICON);
+let big_w = GetSystemMetrics(SM_CXICON);
+let big_h = GetSystemMetrics(SM_CYICON);
+if let Some(hicon_small) = create_hicon_from_bytes(icon_bytes, small_w, small_h) {
 ⋮----
-.color(egui::Color32::WHITE),
+Some(hwnd),
 ⋮----
-.fill(reset_bg)
+WPARAM(ICON_SMALL as usize),
+LPARAM(hicon_small.0 as isize),
 ⋮----
-let saved_groq_key = config.api_key.clone();
-let saved_gemini_key = config.gemini_api_key.clone();
-let saved_openrouter_key = config.openrouter_api_key.clone();
-let saved_cerebras_key = config.cerebras_api_key.clone();
-let saved_language = config.ui_language.clone();
+if let Some(hicon_big) = create_hicon_from_bytes(icon_bytes, big_w, big_h) {
 ⋮----
-let saved_ollama_base_url = config.ollama_base_url.clone();
+WPARAM(ICON_BIG as usize),
+LPARAM(hicon_big.0 as isize),
 ⋮----
-request_node_graph_view_reset(ui.ctx());
+pub fn update_window_icon_native(is_dark_mode: bool) {
+⋮----
+let class_name = w!("eframe");
+let title_name = w!("Screen Goated Toolbox (SGT by nganlinh4)");
+let mut hwnd = FindWindowW(class_name, title_name).unwrap_or_default();
+if hwnd.is_invalid() {
+hwnd = FindWindowW(None, title_name).unwrap_or_default();
+⋮----
+set_window_icon(hwnd, is_dark_mode);
 </file>
 
 <file path="src/overlay/favorite_bubble/window.rs">
@@ -12120,140 +11948,6 @@ if lower_err.contains("rate limit")
 || lower_err.contains("quota exceeded")
 </file>
 
-<file path="src/gui/app/init.rs">
-use crate::gui::settings_ui::ViewMode;
-use crate::gui::utils::get_monitor_names;
-⋮----
-use auto_launch::AutoLaunch;
-use eframe::egui;
-use std::sync::atomic::Ordering;
-use std::sync::mpsc::channel;
-⋮----
-impl SettingsApp {
-pub fn new(
-⋮----
-let app_name = if cfg!(debug_assertions) {
-⋮----
-let app_path = std::env::current_exe().unwrap();
-⋮----
-let auto = AutoLaunch::new(app_name, app_path.to_str().unwrap(), args);
-let current_admin_state = if cfg!(target_os = "windows") {
-⋮----
-use winreg::RegKey;
-⋮----
-if let Ok(key) = hkcu.open_subkey_with_flags(
-⋮----
-if reg_val != app_path.to_str().unwrap_or("") {
-⋮----
-if auto.is_enabled().unwrap_or(false) {
-⋮----
-// If we couldn't read registry but is_enabled returns true,
-// assume potential mismatch to be safe and ensure correct path
-⋮----
-// 2. Check Task Scheduler for Admin startup (FIX for persistence)
-// If the Task exists, we consider startup enabled AND admin mode enabled.
-⋮----
-// VERIFY path matches current executable!
-⋮----
-// Don't enable registry when Task Scheduler is active
-⋮----
-// Task exists but points to wrong EXE (e.g. Debug vs Release mismatch)
-⋮----
-// We are Admin, fix it immediately silently
-⋮----
-// Not admin, can't fix automatically.
-// Disable it so user sees unchecked box and re-enables it (triggering UAC)
-⋮----
-// Config thinks admin is on, but Task is missing?
-// Trust the system state -> Task is missing, so it's off.
-⋮----
-// Ensure path is current in case exe moved, but only write if needed
-⋮----
-let _ = auto.enable();
-⋮----
-let (tx, rx) = channel();
-// Tray thread
-let tx_tray = tx.clone();
-let ctx_tray = ctx.clone();
-⋮----
-while let Ok(event) = TrayIconEvent::receiver().recv() {
-⋮----
-// Handle right-click directly - show popup even when main window is hidden
-⋮----
-// Other events go through the normal channel
-let _ = tx_tray.send(UserEvent::Tray(event));
-ctx_tray.request_repaint();
-⋮----
-// Restore signal listener
-let ctx_restore = ctx.clone();
-⋮----
-match OpenEventW(
-⋮----
-w!("Global\\ScreenGoatedToolboxRestoreEvent"),
-⋮----
-let result = WaitForSingleObject(event_handle, INFINITE);
-⋮----
-let class_name = w!("eframe");
-let mut hwnd = FindWindowW(class_name, None).unwrap_or_default();
-if hwnd.is_invalid() {
-let title = w!("Screen Goated Toolbox (SGT by nganlinh4)");
-hwnd = FindWindowW(None, title).unwrap_or_default();
-⋮----
-if !hwnd.is_invalid() {
-let _ = ShowWindow(hwnd, SW_RESTORE);
-let _ = ShowWindow(hwnd, SW_SHOW);
-let _ = SetForegroundWindow(hwnd);
-let _ = SetFocus(Some(hwnd));
-⋮----
-RESTORE_SIGNAL.store(true, Ordering::SeqCst);
-ctx_restore.request_repaint();
-let _ = ResetEvent(event_handle);
-⋮----
-let _ = CloseHandle(event_handle);
-⋮----
-let tx_menu = tx.clone();
-let ctx_menu = ctx.clone();
-⋮----
-while let Ok(event) = MenuEvent::receiver().recv() {
-match event.id.0.as_str() {
-⋮----
-let hwnd = FindWindowW(class_name, None).unwrap_or_default();
-let hwnd = if hwnd.is_invalid() {
-⋮----
-FindWindowW(None, title).unwrap_or_default()
-⋮----
-let _ = tx_menu.send(UserEvent::Menu(event.clone()));
-ctx_menu.request_repaint();
-⋮----
-let _ = tx_menu.send(UserEvent::Menu(event));
-⋮----
-let view_mode = if config.presets.is_empty() {
-⋮----
-ViewMode::Preset(if config.active_preset_idx < config.presets.len() {
-⋮----
-let cached_monitors = get_monitor_names();
-let (up_tx, up_rx) = channel();
-⋮----
-let devices_clone = cached_audio_devices.clone();
-⋮----
-if let Ok(mut lock) = devices_clone.lock() {
-⋮----
-let initial_ui_language = config.ui_language.clone();
-⋮----
-.duration_since(std::time::UNIX_EPOCH)
-.unwrap()
-.as_millis() as u32;
-tray_favorite_bubble_item.set_checked(config.show_favorite_bubble);
-⋮----
-let initial_has_favorites = config.presets.iter().any(|p| p.is_favorite);
-⋮----
-auto_launcher: Some(auto),
-⋮----
-Some(crate::gui::splash::SplashScreen::new(&ctx))
-⋮----
-updater: Some(Updater::new(up_tx)),
-</file>
-
 <file path="src/gui/app/rendering.rs">
 use super::types::SettingsApp;
 use crate::gui::locale::LocaleText;
@@ -12679,6 +12373,184 @@ let key = format!(
 cmd.args(&["query", &key, "/ve"]);
 ⋮----
 Ok(o) => o.status.success(),
+</file>
+
+<file path="src/gui/settings_ui/global/mod.rs">
+use super::node_graph::request_node_graph_view_reset;
+use crate::config::Config;
+⋮----
+use crate::gui::locale::LocaleText;
+⋮----
+use auto_launch::AutoLaunch;
+use eframe::egui;
+use std::collections::HashMap;
+mod downloaded_tools;
+mod tts_settings;
+mod update_section;
+mod usage_stats;
+use crate::gui::settings_ui::download_manager::DownloadManager;
+use downloaded_tools::render_downloaded_tools_modal;
+use tts_settings::render_tts_settings_modal;
+use update_section::render_update_section_content;
+use usage_stats::render_usage_modal;
+⋮----
+pub fn render_global_settings(
+⋮----
+let is_dark = ui.visuals().dark_mode;
+⋮----
+ui.add_space(5.0);
+⋮----
+.fill(card_bg)
+.stroke(card_stroke)
+.inner_margin(12.0)
+.corner_radius(10.0)
+.show(ui, |ui| {
+ui.horizontal(|ui| {
+ui.label(
+⋮----
+.strong()
+.size(14.0),
+⋮----
+ui.add_space(16.0);
+⋮----
+.checkbox(&mut config.use_groq, text.use_groq_checkbox)
+.changed()
+⋮----
+.checkbox(&mut config.use_cerebras, text.use_cerebras_checkbox)
+⋮----
+.checkbox(&mut config.use_gemini, text.use_gemini_checkbox)
+⋮----
+.checkbox(&mut config.use_openrouter, text.use_openrouter_checkbox)
+⋮----
+if ui.checkbox(&mut config.use_ollama, "Ollama").changed() {
+⋮----
+ui.add_space(6.0);
+⋮----
+ui.label(text.groq_label);
+if ui.link(text.get_key_link).clicked() {
+⋮----
+.add(
+⋮----
+.id(egui::Id::new("settings_api_key_groq"))
+.password(!*show_api_key)
+.desired_width(API_KEY_FIELD_WIDTH),
+⋮----
+if icon_button(ui, eye_icon).clicked() {
+⋮----
+ui.label(text.cerebras_api_key_label);
+if ui.link(text.cerebras_get_key_link).clicked() {
+⋮----
+.id(egui::Id::new("settings_api_key_cerebras"))
+.password(!*show_cerebras_api_key)
+⋮----
+ui.label(text.gemini_api_key_label);
+if ui.link(text.gemini_get_key_link).clicked() {
+⋮----
+.id(egui::Id::new("settings_api_key_gemini"))
+.password(!*show_gemini_api_key)
+⋮----
+ui.label(text.openrouter_api_key_label);
+if ui.link(text.openrouter_get_key_link).clicked() {
+⋮----
+.id(egui::Id::new("settings_api_key_openrouter"))
+.password(!*show_openrouter_api_key)
+⋮----
+ui.label("Ollama URL:");
+if ui.link(text.ollama_url_guide).clicked() {
+⋮----
+.id(egui::Id::new("settings_api_key_ollama_url"))
+⋮----
+.ctx()
+.memory(|mem| mem.data.get_temp::<String>(egui::Id::new("ollama_status")))
+⋮----
+ui.label(egui::RichText::new(&status).size(11.0));
+⋮----
+ui.add_space(10.0);
+⋮----
+egui::RichText::new(format!("📊 {}", text.usage_statistics_title))
+.color(egui::Color32::WHITE)
+.strong(),
+⋮----
+.fill(stats_bg)
+.corner_radius(10.0),
+⋮----
+.on_hover_cursor(egui::CursorIcon::PointingHand)
+.on_hover_text(text.usage_statistics_tooltip)
+.clicked()
+⋮----
+egui::RichText::new(format!("🔊 {}", text.tts_settings_button))
+⋮----
+.fill(tts_bg)
+⋮----
+egui::RichText::new(format!("📦 {}", text.downloaded_tools_button))
+⋮----
+.fill(tools_bg)
+⋮----
+render_usage_modal(
+⋮----
+let ctx = ui.ctx().clone();
+render_downloaded_tools_modal(&ctx, ui, show_tools_modal, download_manager, text);
+if render_tts_settings_modal(ui, config, text, show_tts_modal) {
+⋮----
+render_update_section_content(ui, updater, update_status, text);
+⋮----
+.checkbox(&mut startup_toggle, text.startup_label)
+⋮----
+if let Some(exe_str) = exe_path.to_str() {
+config.authorized_startup_path = exe_str.to_string();
+⋮----
+let _ = launcher.disable();
+⋮----
+let _ = launcher.enable();
+⋮----
+ui.indent("admin_indent", |ui| {
+⋮----
+if ui.checkbox(&mut is_admin_mode, checkbox_label).clicked() {
+⋮----
+ui.add_enabled_ui(false, |ui| {
+ui.checkbox(&mut _is_admin_mode_disabled, checkbox_label);
+⋮----
+.size(11.0)
+.color(egui::Color32::from_rgb(200, 100, 50)),
+⋮----
+.color(egui::Color32::from_rgb(34, 139, 34)),
+⋮----
+.checkbox(&mut config.start_in_tray, text.start_in_tray_label)
+⋮----
+ui.add_space(8.0);
+⋮----
+ui.label(text.graphics_mode_label);
+let current_label = match config.ui_language.as_str() {
+⋮----
+.selected_text(current_label)
+.show_ui(ui, |ui| {
+⋮----
+.selectable_label(
+⋮----
+config.graphics_mode = "standard".to_string();
+⋮----
+config.graphics_mode = "minimal".to_string();
+⋮----
+ui.add_space(40.0);
+⋮----
+egui::RichText::new(text.force_quit).color(egui::Color32::WHITE),
+⋮----
+.fill(quite_bg)
+.corner_radius(8.0),
+⋮----
+.color(egui::Color32::WHITE),
+⋮----
+.fill(reset_bg)
+⋮----
+let saved_groq_key = config.api_key.clone();
+let saved_gemini_key = config.gemini_api_key.clone();
+let saved_openrouter_key = config.openrouter_api_key.clone();
+let saved_cerebras_key = config.cerebras_api_key.clone();
+let saved_language = config.ui_language.clone();
+⋮----
+let saved_ollama_base_url = config.ollama_base_url.clone();
+⋮----
+request_node_graph_view_reset(ui.ctx());
 </file>
 
 <file path="src/overlay/realtime_webview/webview.rs">
@@ -13298,6 +13170,276 @@ targets.push(HWND(hwnd_int as *mut std::ffi::c_void));
 ⋮----
 if IsWindow(Some(target)).as_bool() {
 let _ = PostMessageW(Some(target), WM_CLOSE, WPARAM(0), LPARAM(0));
+</file>
+
+<file path="src/overlay/result/mod.rs">
+pub mod button_canvas;
+mod event_handler;
+pub mod layout;
+mod logic;
+pub mod markdown_view;
+pub mod paint;
+pub mod state;
+mod window;
+⋮----
+pub fn is_any_refine_active() -> bool {
+let states = WINDOW_STATES.lock().unwrap();
+states.values().any(|s| s.is_editing)
+⋮----
+pub fn get_active_refine_parent() -> Option<HWND> {
+⋮----
+.iter()
+.find(|(_, s)| s.is_editing)
+.map(|(hwnd, _)| HWND(*hwnd as *mut std::ffi::c_void))
+⋮----
+pub fn set_refine_text(hwnd: HWND, text: &str, is_insert: bool) {
+⋮----
+let mut states = WINDOW_STATES.lock().unwrap();
+if let Some(state) = states.get_mut(&hwnd_key) {
+state.input_text = text.to_string();
+⋮----
+pub fn trigger_copy(hwnd: HWND) {
+⋮----
+.get(&hwnd_key)
+.map(|s| s.full_text.clone())
+.unwrap_or_default()
+⋮----
+if !text.is_empty() {
+⋮----
+if let Some(state) = states.get_mut(&(hwnd_val as isize)) {
+⋮----
+button_canvas::update_window_position(HWND(hwnd_val as *mut std::ffi::c_void));
+⋮----
+pub fn trigger_undo(hwnd: HWND) {
+⋮----
+if let Some(last) = state.text_history.pop() {
+let current = state.full_text.clone();
+state.redo_history.push(current);
+state.full_text = last.clone();
+(Some(last), state.is_markdown_mode)
+⋮----
+windows::core::PCWSTR(wide_text.as_ptr()),
+⋮----
+let _ = PostMessageW(
+Some(hwnd),
+⋮----
+WPARAM(0),
+LPARAM(0),
+⋮----
+pub fn trigger_redo(hwnd: HWND) {
+⋮----
+if let Some(redo) = state.redo_history.pop() {
+⋮----
+state.text_history.push(current);
+state.full_text = redo.clone();
+(Some(redo), state.is_markdown_mode)
+⋮----
+pub fn trigger_edit(hwnd: HWND) {
+⋮----
+state.input_text.clear();
+⋮----
+pub fn trigger_refine_submit(hwnd: HWND, text: &str) {
+if text.trim().is_empty() {
+⋮----
+let text_to_refine = state.full_text.clone();
+state.text_history.push(text_to_refine.clone());
+state.redo_history.clear();
+⋮----
+state.pending_text = Some(String::new());
+⋮----
+start_refinement(hwnd, text);
+⋮----
+pub fn trigger_refine_cancel(hwnd: HWND) {
+⋮----
+fn start_refinement(hwnd: HWND, user_prompt: &str) {
+⋮----
+if let Some(s) = states.get_mut(&hwnd_key) {
+let prev = s.full_text.clone();
+⋮----
+s.context_data.clone(),
+s.model_id.clone(),
+s.provider.clone(),
+⋮----
+s.preset_prompt.clone(),
+⋮----
+let user_input = user_prompt.to_string();
+⋮----
+if prev_text.trim().is_empty() && !preset_prompt.is_empty() {
+⋮----
+let capture_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+⋮----
+let app = crate::APP.lock().unwrap();
+⋮----
+app.config.api_key.clone(),
+app.config.gemini_api_key.clone(),
+⋮----
+&app.config.ui_language.clone()
+⋮----
+if let Some(state) = states.get_mut(&(capture_hwnd.0 as isize)) {
+⋮----
+if chunk.starts_with(crate::api::WIPE_SIGNAL) {
+acc_text.clear();
+acc_text.push_str(&chunk[crate::api::WIPE_SIGNAL.len()..]);
+⋮----
+acc_text.push_str(chunk);
+⋮----
+state.pending_text = Some(acc_text.clone());
+state.full_text = acc_text.clone();
+⋮----
+state.full_text = final_text.clone();
+state.pending_text = Some(final_text);
+⋮----
+.map(|m| m.full_name)
+.unwrap_or_else(|| model_id.to_string());
+(app.config.ui_language.clone(), full_name)
+⋮----
+&e.to_string(),
+⋮----
+Some(&model_full_name),
+⋮----
+state.pending_text = Some(err_msg.clone());
+⋮----
+pub fn trigger_markdown_toggle(hwnd: HWND) {
+⋮----
+.map(|s| !s.is_refining && !s.is_streaming_active)
+.unwrap_or(false)
+⋮----
+pub fn trigger_speaker(hwnd: HWND) {
+⋮----
+.map(|s| (s.full_text.clone(), s.tts_request_id, s.tts_loading))
+⋮----
+if current_tts_id != 0 && crate::api::tts::TTS_MANAGER.is_speaking(current_tts_id) {
+crate::api::tts::TTS_MANAGER.stop();
+⋮----
+} else if !full_text.is_empty() {
+⋮----
+let request_id = crate::api::tts::TTS_MANAGER.speak(&full_text, hwnd_key);
+⋮----
+pub fn trigger_close_all() {
+⋮----
+.keys()
+.map(|&k| HWND(k as *mut std::ffi::c_void))
+.collect()
+⋮----
+if windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool() {
+let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+⋮----
+pub fn trigger_drag_window(hwnd: HWND, dx: i32, dy: i32) {
+</file>
+
+<file path="src/gui/app/init.rs">
+use crate::gui::settings_ui::ViewMode;
+use crate::gui::utils::get_monitor_names;
+⋮----
+use auto_launch::AutoLaunch;
+use eframe::egui;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::channel;
+⋮----
+impl SettingsApp {
+pub fn new(
+⋮----
+let app_path = std::env::current_exe().unwrap();
+let app_path_str = app_path.to_str().unwrap_or("");
+⋮----
+// Check for current admin state early
+let current_admin_state = if cfg!(target_os = "windows") {
+⋮----
+let _ = auto.disable();
+⋮----
+use winreg::RegKey;
+⋮----
+if let Ok(key) = hkcu.open_subkey_with_flags(
+⋮----
+if key.get_value::<String, &str>(app_name).is_ok() {
+⋮----
+if !registry_enabled_in_system && auto.is_enabled().unwrap_or(false) {
+⋮----
+if config.authorized_startup_path.is_empty() {
+config.authorized_startup_path = app_path_str.to_string();
+⋮----
+let is_authorized = if config.authorized_startup_path.is_empty() {
+⋮----
+let other_exists = std::path::Path::new(&config.authorized_startup_path).exists();
+⋮----
+let _ = auto.enable();
+⋮----
+let (tx, rx) = channel();
+let tx_tray = tx.clone();
+let ctx_tray = ctx.clone();
+⋮----
+while let Ok(event) = TrayIconEvent::receiver().recv() {
+⋮----
+let _ = tx_tray.send(UserEvent::Tray(event));
+ctx_tray.request_repaint();
+⋮----
+let ctx_restore = ctx.clone();
+⋮----
+match OpenEventW(
+⋮----
+w!("Global\\ScreenGoatedToolboxRestoreEvent"),
+⋮----
+let result = WaitForSingleObject(event_handle, INFINITE);
+⋮----
+let class_name = w!("eframe");
+let mut hwnd = FindWindowW(class_name, None).unwrap_or_default();
+if hwnd.is_invalid() {
+let title = w!("Screen Goated Toolbox (SGT by nganlinh4)");
+hwnd = FindWindowW(None, title).unwrap_or_default();
+⋮----
+if !hwnd.is_invalid() {
+let _ = ShowWindow(hwnd, SW_RESTORE);
+let _ = ShowWindow(hwnd, SW_SHOW);
+let _ = SetForegroundWindow(hwnd);
+let _ = SetFocus(Some(hwnd));
+⋮----
+RESTORE_SIGNAL.store(true, Ordering::SeqCst);
+ctx_restore.request_repaint();
+let _ = ResetEvent(event_handle);
+⋮----
+let _ = CloseHandle(event_handle);
+⋮----
+let tx_menu = tx.clone();
+let ctx_menu = ctx.clone();
+⋮----
+while let Ok(event) = MenuEvent::receiver().recv() {
+match event.id.0.as_str() {
+⋮----
+let hwnd = FindWindowW(class_name, None).unwrap_or_default();
+let hwnd = if hwnd.is_invalid() {
+⋮----
+FindWindowW(None, title).unwrap_or_default()
+⋮----
+let _ = tx_menu.send(UserEvent::Menu(event.clone()));
+ctx_menu.request_repaint();
+⋮----
+let _ = tx_menu.send(UserEvent::Menu(event));
+⋮----
+let view_mode = if config.presets.is_empty() {
+⋮----
+ViewMode::Preset(if config.active_preset_idx < config.presets.len() {
+⋮----
+let cached_monitors = get_monitor_names();
+let (up_tx, up_rx) = channel();
+⋮----
+let devices_clone = cached_audio_devices.clone();
+⋮----
+if let Ok(mut lock) = devices_clone.lock() {
+⋮----
+let initial_ui_language = config.ui_language.clone();
+⋮----
+.duration_since(std::time::UNIX_EPOCH)
+.unwrap()
+.as_millis() as u32;
+tray_favorite_bubble_item.set_checked(config.show_favorite_bubble);
+⋮----
+let initial_has_favorites = config.presets.iter().any(|p| p.is_favorite);
+⋮----
+auto_launcher: Some(auto),
+⋮----
+Some(crate::gui::splash::SplashScreen::new(&ctx))
+⋮----
+updater: Some(Updater::new(up_tx)),
 </file>
 
 <file path="src/gui/settings_ui/download_manager/run.rs">
@@ -14178,442 +14320,6 @@ if icon_button_sized(ui, star_icon, 22.0).clicked() {
 if presets.len() > 1 {
 if icon_button_sized(ui, Icon::Delete, 22.0).clicked() {
 *preset_idx_to_delete = Some(idx);
-</file>
-
-<file path="src/gui/splash.rs">
-use eframe::egui;
-⋮----
-use std::cmp::Ordering;
-use std::f32::consts::PI;
-⋮----
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-⋮----
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-⋮----
-struct Vec3 {
-⋮----
-impl Vec3 {
-⋮----
-fn new(x: f32, y: f32, z: f32) -> Self {
-⋮----
-fn add(self, v: Vec3) -> Self {
-⋮----
-fn sub(self, v: Vec3) -> Self {
-⋮----
-fn mul(self, s: f32) -> Self {
-⋮----
-fn len(self) -> f32 {
-(self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
-⋮----
-fn normalize(self) -> Self {
-let l = self.len();
-⋮----
-self.mul(1.0 / l)
-⋮----
-fn lerp(self, target: Vec3, t: f32) -> Self {
-⋮----
-lerp(self.x, target.x, t),
-lerp(self.y, target.y, t),
-lerp(self.z, target.z, t),
-⋮----
-fn rotate_x(self, angle: f32) -> Self {
-let (s, c) = angle.sin_cos();
-⋮----
-fn rotate_y(self, angle: f32) -> Self {
-⋮----
-fn rotate_z(self, angle: f32) -> Self {
-⋮----
-struct Cloud {
-⋮----
-struct Star {
-⋮----
-struct MoonFeature {
-⋮----
-struct Voxel {
-⋮----
-pub struct SplashScreen {
-⋮----
-pub enum SplashStatus {
-⋮----
-impl SplashScreen {
-pub fn new(ctx: &egui::Context) -> Self {
-let is_dark = ctx.style().visuals.dark_mode;
-⋮----
-start_time: ctx.input(|i| i.time),
-⋮----
-loading_text: "TRANSLATING...".to_string(),
-⋮----
-pub fn reset_timer(&mut self, ctx: &egui::Context) {
-self.start_time = ctx.input(|i| i.time);
-⋮----
-fn init_scene(&mut self) {
-⋮----
-rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
-⋮----
-for (y, row) in map.iter().enumerate() {
-for (x, ch) in row.chars().enumerate() {
-⋮----
-self.voxels.push(Voxel {
-⋮----
-rot: Vec3::new(rng() * 6.0, rng() * 6.0, rng() * 6.0),
-⋮----
-color: if rng() > 0.85 { C_WHITE } else { color_theme },
-noise_factor: rng(),
-⋮----
-spawn_letter(&s_map, -120.0, c_secondary);
-spawn_letter(&g_map, -35.0, c_primary);
-spawn_letter(&t_map, 50.0, c_secondary);
-⋮----
-let h_y = (rng() * 300.0) - 150.0;
-let h_radius = 80.0 + rng() * 60.0;
-let h_angle = rng() * PI * 2.0;
-let target = Vec3::new(h_angle.cos(), 0.0, h_angle.sin()).mul(800.0);
-⋮----
-rot: Vec3::new(rng(), rng(), rng()),
-⋮----
-self.stars.push(Star {
-pos: Vec2::new(rng(), rng() * 0.85),
-phase: rng() * PI * 2.0,
-brightness: 0.3 + rng() * 0.7,
-size: if rng() > 0.95 {
-1.5 + rng()
-⋮----
-0.8 + rng() * 0.5
-⋮----
-puffs.push((Vec2::ZERO, 1.0));
-let num_puffs = 5 + (rng() * 4.0) as usize;
-⋮----
-let angle = rng() * PI * 2.0;
-let dist = 15.0 + rng() * 25.0;
-let r_mult = 0.4 + rng() * 0.5;
-puffs.push((
-Vec2::new(angle.cos() * dist, angle.sin() * dist * 0.6),
-⋮----
-self.clouds.push(Cloud {
-pos: Vec2::new(rng() * 1200.0 - 600.0, rng() * 400.0 - 200.0),
-velocity: 5.0 + rng() * 15.0,
-scale: 1.2 + rng() * 1.5,
-opacity: 0.4 + rng() * 0.4,
-⋮----
-let dist = rng().sqrt() * 0.7;
-let pos = Vec2::new(angle.cos() * dist, angle.sin() * dist);
-self.moon_features.push(MoonFeature {
-⋮----
-radius: 0.15 + rng() * 0.25,
-⋮----
-let dist = rng().powf(0.8);
-⋮----
-radius: 0.02 + rng() * 0.06,
-⋮----
-pub fn update(&mut self, ctx: &egui::Context) -> SplashStatus {
-self.is_dark = ctx.style().visuals.dark_mode;
-⋮----
-self.init_scene();
-⋮----
-let now = ctx.input(|i| i.time);
-let dt = ctx.input(|i| i.stable_dt);
-if self.exit_start_time.is_none() {
-⋮----
-if ctx.input(|i| i.pointer.any_click()) {
-let is_in_switcher = if let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) {
-⋮----
-self.exit_start_time = Some(now);
-⋮----
-let physics_t = t_abs.min(ANIMATION_DURATION);
-⋮----
-warp_progress = (dt / EXIT_DURATION).clamp(0.0, 1.0);
-⋮----
-ctx.request_repaint();
-let viewport_rect = ctx.input(|i| {
-i.viewport()
-⋮----
-.unwrap_or(Rect::from_min_size(Pos2::ZERO, Vec2::ZERO))
-⋮----
-let size = if viewport_rect.width() < 100.0 || viewport_rect.height() < 100.0 {
-⋮----
-viewport_rect.size()
-⋮----
-if cloud.pos.x > rect.width() / 2.0 + 300.0 {
-cloud.pos.x = -rect.width() / 2.0 - 300.0;
-⋮----
-if let Some(pointer) = ctx.input(|i| i.pointer.hover_pos()) {
-let center = rect.center();
-⋮----
-600.0 + smoothstep(0.0, ANIMATION_DURATION, physics_t) * 100.0 - cam_z_offset;
-⋮----
-self.loading_text = "TRANSLATING...".to_string();
-⋮----
-self.loading_text = "OCR...".to_string();
-⋮----
-self.loading_text = "TRANSCRIBING...".to_string();
-⋮----
-self.loading_text = "nganlinh4".to_string();
-⋮----
-self.loading_text = "READY TO ROCK!".to_string();
-⋮----
-let progress = smoothstep(my_start, my_end, physics_t);
-⋮----
-let current_h_y = v.helix_y + (physics_t * 2.0 + v.noise_factor * 10.0).sin() * 5.0;
-⋮----
-let flare = (physics_t - flare_start).powi(2) * 20.0;
-⋮----
-current_angle.cos() * current_radius,
-⋮----
-current_angle.sin() * current_radius,
-⋮----
-((warp_progress - start_threshold) / move_duration).clamp(0.0, 1.0);
-⋮----
-let radial = Vec3::new(v.pos.x, v.pos.y, 0.0).normalize();
-⋮----
-let swirl_vec = radial.rotate_z(curl_angle);
-⋮----
-target_base = target_base.add(swirl_vec.mul(local_eased * dist_mult));
-⋮----
-let pos = helix_pos.lerp(target_base, progress);
-⋮----
-let to_mouse = pos.sub(self.mouse_world_pos);
-⋮----
-let dist = dist_sq.sqrt();
-⋮----
-v.velocity = v.velocity.add(to_mouse.normalize().mul(force * 2.0));
-⋮----
-let displacement = pos.sub(target_base);
-let spring_force = displacement.mul(-0.1);
-v.velocity = v.velocity.add(spring_force);
-v.velocity = v.velocity.mul(0.90);
-v.pos = pos.add(v.velocity);
-v.rot = v.rot.lerp(Vec3::ZERO, 0.1);
-⋮----
-let impact = (physics_t - my_end).max(0.0);
-let pulse = (impact * 10.0).sin() * (-3.0 * impact).exp() * 0.5;
-⋮----
-v.scale = lerp(0.8, 1.0, progress);
-⋮----
-pub fn paint(&self, ctx: &egui::Context, _theme_mode: &crate::config::ThemeMode) -> bool {
-⋮----
-warp_prog = (dt / EXIT_DURATION).powi(5);
-⋮----
-.order(egui::Order::Foreground)
-.fixed_pos(Pos2::ZERO)
-.show(ctx, |ui| {
-ui.allocate_response(
-⋮----
-egui::Sense::click_and_drag().union(egui::Sense::hover()),
-⋮----
-let painter = ctx.layer_painter(egui::LayerId::new(
-⋮----
-let master_alpha = alpha.clamp(0.0, 1.0);
-⋮----
-(1.0 - exit_dt / 0.3).max(0.0)
-⋮----
-.order(egui::Order::Tooltip)
-.fixed_pos(Pos2::new(14.0, 11.0))
-⋮----
-let pulse = (now * 2.0).sin().abs() * 0.2 + 0.8;
-⋮----
-Color32::WHITE.linear_multiply(switcher_alpha)
-⋮----
-Color32::BLACK.linear_multiply(switcher_alpha)
-⋮----
-ui.allocate_at_least(Vec2::splat(32.0), egui::Sense::click());
-let fill = if resp.hovered() {
-btn_bg.linear_multiply(1.5)
-⋮----
-btn_bg.linear_multiply(pulse as f32)
-⋮----
-ui.painter().rect_filled(rect, 8.0, fill);
-let old_panel_fill = ctx.style().visuals.panel_fill;
-⋮----
-Color32::from_rgb(109, 174, 235).linear_multiply(switcher_alpha);
-ctx.style_mut(|s| s.visuals.panel_fill = cutout_color);
-⋮----
-paint_icon(ui.painter(), rect.shrink(6.0), icon, icon_color);
-ctx.style_mut(|s| s.visuals.panel_fill = old_panel_fill);
-if resp.clicked() && switcher_alpha > 0.9 {
-⋮----
-let t_fade = (t / 0.5).clamp(0.0, 1.0);
-⋮----
-lerp(start_col.r() as f32, bg_color.r() as f32, t_fade) as u8,
-lerp(start_col.g() as f32, bg_color.g() as f32, t_fade) as u8,
-lerp(start_col.b() as f32, bg_color.b() as f32, t_fade) as u8,
-⋮----
-let sky_exit_fade = (1.0 - warp_prog * 4.0).clamp(0.0, 1.0);
-⋮----
-painter.rect_filled(rect, 12.0, bg_color.linear_multiply(sky_exit_fade));
-⋮----
-let c_top = C_SKY_DAY_TOP.linear_multiply(sky_exit_fade);
-painter.rect_filled(rect, 12.0, c_top);
-⋮----
-for (i, star) in self.stars.iter().enumerate() {
-let sx = rect.left() + (star.pos.x * rect.width()) + star_offset.x;
-let sy = rect.top() + (star.pos.y * rect.height()) + star_offset.y;
-let rnd = ((i as f32 * 1.618).fract() + (star.pos.x * 10.0).fract()).fract();
-⋮----
-let p = ((warp_prog - start) / dur).clamp(0.0, 1.0);
-⋮----
-let twinkle = (star.phase + star_time).sin() * 0.3 + 0.7;
-⋮----
-(star.brightness * twinkle * master_alpha * local_fade).clamp(0.0, 1.0);
-⋮----
-painter.circle_filled(
-⋮----
-C_WHITE.linear_multiply(star_alpha),
-⋮----
-C_WHITE.linear_multiply(day_star_alpha),
-⋮----
-mesh.vertices.push(egui::epaint::Vertex {
-⋮----
-let p1 = sun_pos + Vec2::new(angle.cos() * ray_len, angle.sin() * ray_len);
-⋮----
-sun_pos + Vec2::new(next_angle.cos() * ray_len, next_angle.sin() * ray_len);
-⋮----
-mesh.add_triangle(0, 1, 2);
-painter.add(mesh);
-⋮----
-let moon_alpha = master_alpha * (1.0 - warp_prog * 3.0).clamp(0.0, 1.0);
-⋮----
-let moon_bob = (t * 0.5).sin() * 5.0;
-⋮----
-C_MOON_GLOW.linear_multiply(0.03 * moon_alpha),
-⋮----
-C_MOON_GLOW.linear_multiply(0.08 * moon_alpha),
-⋮----
-C_MOON_BASE.linear_multiply(moon_alpha),
-⋮----
-let rot_cos = feature_rot.cos();
-let rot_sin = feature_rot.sin();
-⋮----
-let z_depth = (1.0 - dist_sq).sqrt();
-⋮----
-C_MOON_SHADOW.linear_multiply(f_alpha * 0.8),
-⋮----
-C_MOON_HIGHLIGHT.linear_multiply(f_alpha * 0.4),
-⋮----
-C_MOON_SHADOW.linear_multiply(f_alpha * 0.3),
-⋮----
-painter.circle_stroke(
-⋮----
-Stroke::new(2.0, C_MOON_HIGHLIGHT.linear_multiply(0.4 * moon_alpha)),
-⋮----
-let sun_bob = (t * 0.5).sin() * 5.0;
-⋮----
-C_SUN_GLOW.linear_multiply(0.1 * moon_alpha),
-⋮----
-C_SUN_GLOW.linear_multiply(0.2 * moon_alpha),
-⋮----
-C_SUN_BODY.linear_multiply(moon_alpha),
-⋮----
-Color32::from_rgb(160, 60, 0).linear_multiply(f_alpha * 0.8),
-⋮----
-C_SUN_FLARE.linear_multiply(f_alpha * 0.3),
-⋮----
-C_WHITE.linear_multiply(f_alpha * 0.5),
-⋮----
-Stroke::new(3.0, C_SUN_HIGHLIGHT.linear_multiply(0.5 * moon_alpha)),
-⋮----
-painter.with_clip_rect(Rect::from_min_max(
-⋮----
-painter.clone()
-⋮----
-for (i, cloud) in self.clouds.iter().enumerate() {
-⋮----
-let rnd = (i as f32 * 0.73).fract();
-⋮----
-C_CLOUD_CORE.linear_multiply(cloud_alpha * 0.95)
-⋮----
-C_CLOUD_WHITE.linear_multiply(cloud_alpha * 0.95)
-⋮----
-cloud_painter.circle_filled(
-⋮----
-let render_t = t.min(ANIMATION_DURATION + 5.0);
-⋮----
-let rnd = (i as f32 * 0.9).sin() * 0.5 + 0.5;
-⋮----
-let perspective = 250.0 / (z_dist - warp_prog * 0.8).max(0.1);
-⋮----
-if y > rect.bottom() || y < horizon {
-⋮----
-let w = rect.width() * (2.5 / z_dist);
-⋮----
-let alpha_grid = (1.0 - (y - horizon) / (rect.bottom() - horizon)).powf(0.5)
-⋮----
-(C_DAY_REP, 4.0 * (1.0 - (y - horizon) / rect.height()))
-⋮----
-painter.line_segment(
-⋮----
-Stroke::new(thickness, grid_col.linear_multiply(alpha_grid)),
-⋮----
-let physics_t = t.min(ANIMATION_DURATION);
-⋮----
-let cam_dist = (600.0 + smoothstep(0.0, 8.0, physics_t) * 100.0) - cam_fly_dist;
-⋮----
-Vec::with_capacity(self.voxels.len());
-⋮----
-local_debris_alpha = 1.0 - smoothstep(fade_start, fade_end, physics_t);
-⋮----
-.rotate_x(global_rot.x)
-.rotate_y(global_rot.y)
-.rotate_z(global_rot.z);
-⋮----
-let local_linear = ((warp_prog - start_threshold) / move_duration).clamp(0.0, 1.0);
-let fade = (local_linear * 1.5).clamp(0.0, 1.0);
-⋮----
-let final_col = base_col.linear_multiply(alpha_local);
-draw_list.push((
-⋮----
-draw_list.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
-⋮----
-Color32::from_black_alpha(200).linear_multiply(col.a() as f32 / 255.0)
-⋮----
-Color32::from_rgb(100, 120, 150).linear_multiply(col.a() as f32 / 255.0)
-⋮----
-Color32::from_rgb(0, 40, 100).linear_multiply(col.a() as f32 / 255.0)
-⋮----
-painter.circle_filled(pos, r, shadow_col);
-⋮----
-painter.circle_filled(pos + body_offset, r * 0.85, col);
-⋮----
-Color32::WHITE.linear_multiply(0.5)
-⋮----
-col.linear_multiply(0.5)
-⋮----
-painter.circle_filled(pos + gradient_offset, r * 0.5, glow_col);
-⋮----
-.linear_multiply(col.a() as f32 / 255.0);
-painter.circle_filled(highlight_pos, r * 0.25, highlight_col);
-⋮----
-Color32::WHITE.linear_multiply(col.a() as f32 / 255.0),
-⋮----
-let ui_alpha = 1.0 - (warp_prog * 10.0).clamp(0.0, 1.0);
-⋮----
-let ui_color = ui_text_col.linear_multiply(master_alpha * ui_alpha);
-⋮----
-C_CYAN.linear_multiply(master_alpha * ui_alpha)
-⋮----
-C_DAY_TEXT.linear_multiply(master_alpha * ui_alpha)
-⋮----
-C_WHITE.linear_multiply(master_alpha * ui_alpha)
-⋮----
-C_MAGENTA.linear_multiply(master_alpha * ui_alpha)
-⋮----
-C_DAY_REP.linear_multiply(master_alpha * ui_alpha)
-⋮----
-let title_text = format!("SCREEN GOATED TOOLBOX {}", env!("CARGO_PKG_VERSION"));
-⋮----
-painter.text(
-⋮----
-title_font.clone(),
-⋮----
-painter.rect_filled(bar_rect, 2.0, bar_bg_col);
-let prog = (physics_t / (ANIMATION_DURATION - 0.5)).clamp(0.0, 1.0);
-⋮----
-fill.set_width(bar_rect.width() * prog);
-painter.rect_filled(fill, 2.0, magenta_color);
-⋮----
-let pulse = (t * 5.0).sin().abs() * 0.7 + 0.3;
-⋮----
-click_col.linear_multiply(pulse),
 </file>
 
 <file path="src/overlay/auto_copy_badge.rs">
@@ -15629,161 +15335,6 @@ let states = crate::overlay::result::state::WINDOW_STATES.lock().unwrap();
 _ => DefWindowProcW(hwnd, msg, wparam, lparam),
 </file>
 
-<file path="src/overlay/result/mod.rs">
-pub mod button_canvas;
-mod event_handler;
-pub mod layout;
-mod logic;
-pub mod markdown_view;
-pub mod paint;
-pub mod state;
-mod window;
-⋮----
-pub fn is_any_refine_active() -> bool {
-let states = WINDOW_STATES.lock().unwrap();
-states.values().any(|s| s.is_editing)
-⋮----
-pub fn get_active_refine_parent() -> Option<HWND> {
-⋮----
-.iter()
-.find(|(_, s)| s.is_editing)
-.map(|(hwnd, _)| HWND(*hwnd as *mut std::ffi::c_void))
-⋮----
-pub fn set_refine_text(hwnd: HWND, text: &str, is_insert: bool) {
-⋮----
-let mut states = WINDOW_STATES.lock().unwrap();
-if let Some(state) = states.get_mut(&hwnd_key) {
-state.input_text = text.to_string();
-⋮----
-pub fn trigger_copy(hwnd: HWND) {
-⋮----
-.get(&hwnd_key)
-.map(|s| s.full_text.clone())
-.unwrap_or_default()
-⋮----
-if !text.is_empty() {
-⋮----
-if let Some(state) = states.get_mut(&(hwnd_val as isize)) {
-⋮----
-button_canvas::update_window_position(HWND(hwnd_val as *mut std::ffi::c_void));
-⋮----
-pub fn trigger_undo(hwnd: HWND) {
-⋮----
-if let Some(last) = state.text_history.pop() {
-let current = state.full_text.clone();
-state.redo_history.push(current);
-state.full_text = last.clone();
-(Some(last), state.is_markdown_mode)
-⋮----
-windows::core::PCWSTR(wide_text.as_ptr()),
-⋮----
-let _ = PostMessageW(
-Some(hwnd),
-⋮----
-WPARAM(0),
-LPARAM(0),
-⋮----
-pub fn trigger_redo(hwnd: HWND) {
-⋮----
-if let Some(redo) = state.redo_history.pop() {
-⋮----
-state.text_history.push(current);
-state.full_text = redo.clone();
-(Some(redo), state.is_markdown_mode)
-⋮----
-pub fn trigger_edit(hwnd: HWND) {
-⋮----
-state.input_text.clear();
-⋮----
-pub fn trigger_refine_submit(hwnd: HWND, text: &str) {
-if text.trim().is_empty() {
-⋮----
-let text_to_refine = state.full_text.clone();
-state.text_history.push(text_to_refine.clone());
-state.redo_history.clear();
-⋮----
-state.pending_text = Some(String::new());
-⋮----
-start_refinement(hwnd, text);
-⋮----
-pub fn trigger_refine_cancel(hwnd: HWND) {
-⋮----
-fn start_refinement(hwnd: HWND, user_prompt: &str) {
-⋮----
-if let Some(s) = states.get_mut(&hwnd_key) {
-let prev = s.full_text.clone();
-⋮----
-s.context_data.clone(),
-s.model_id.clone(),
-s.provider.clone(),
-⋮----
-s.preset_prompt.clone(),
-⋮----
-let user_input = user_prompt.to_string();
-⋮----
-if prev_text.trim().is_empty() && !preset_prompt.is_empty() {
-⋮----
-let capture_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-⋮----
-let app = crate::APP.lock().unwrap();
-⋮----
-app.config.api_key.clone(),
-app.config.gemini_api_key.clone(),
-⋮----
-&app.config.ui_language.clone()
-⋮----
-if let Some(state) = states.get_mut(&(capture_hwnd.0 as isize)) {
-⋮----
-if chunk.starts_with(crate::api::WIPE_SIGNAL) {
-acc_text.clear();
-acc_text.push_str(&chunk[crate::api::WIPE_SIGNAL.len()..]);
-⋮----
-acc_text.push_str(chunk);
-⋮----
-state.pending_text = Some(acc_text.clone());
-state.full_text = acc_text.clone();
-⋮----
-state.full_text = final_text.clone();
-state.pending_text = Some(final_text);
-⋮----
-.map(|m| m.full_name)
-.unwrap_or_else(|| model_id.to_string());
-(app.config.ui_language.clone(), full_name)
-⋮----
-&e.to_string(),
-⋮----
-Some(&model_full_name),
-⋮----
-state.pending_text = Some(err_msg.clone());
-⋮----
-pub fn trigger_markdown_toggle(hwnd: HWND) {
-⋮----
-.map(|s| !s.is_refining && !s.is_streaming_active)
-.unwrap_or(false)
-⋮----
-pub fn trigger_speaker(hwnd: HWND) {
-⋮----
-.map(|s| (s.full_text.clone(), s.tts_request_id, s.tts_loading))
-⋮----
-if current_tts_id != 0 && crate::api::tts::TTS_MANAGER.is_speaking(current_tts_id) {
-crate::api::tts::TTS_MANAGER.stop();
-⋮----
-} else if !full_text.is_empty() {
-⋮----
-let request_id = crate::api::tts::TTS_MANAGER.speak(&full_text, hwnd_key);
-⋮----
-pub fn trigger_close_all() {
-⋮----
-.keys()
-.map(|&k| HWND(k as *mut std::ffi::c_void))
-.collect()
-⋮----
-if windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool() {
-let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-⋮----
-pub fn trigger_drag_window(hwnd: HWND, dx: i32, dy: i32) {
-</file>
-
 <file path="src/overlay/result/paint.rs">
 use super::layout::should_show_buttons;
 ⋮----
@@ -16294,6 +15845,442 @@ let is_currently_dark = ctx.style().visuals.dark_mode;
 self.save_and_sync();
 ⋮----
 fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+</file>
+
+<file path="src/gui/splash.rs">
+use eframe::egui;
+⋮----
+use std::cmp::Ordering;
+use std::f32::consts::PI;
+⋮----
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+⋮----
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+⋮----
+struct Vec3 {
+⋮----
+impl Vec3 {
+⋮----
+fn new(x: f32, y: f32, z: f32) -> Self {
+⋮----
+fn add(self, v: Vec3) -> Self {
+⋮----
+fn sub(self, v: Vec3) -> Self {
+⋮----
+fn mul(self, s: f32) -> Self {
+⋮----
+fn len(self) -> f32 {
+(self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+⋮----
+fn normalize(self) -> Self {
+let l = self.len();
+⋮----
+self.mul(1.0 / l)
+⋮----
+fn lerp(self, target: Vec3, t: f32) -> Self {
+⋮----
+lerp(self.x, target.x, t),
+lerp(self.y, target.y, t),
+lerp(self.z, target.z, t),
+⋮----
+fn rotate_x(self, angle: f32) -> Self {
+let (s, c) = angle.sin_cos();
+⋮----
+fn rotate_y(self, angle: f32) -> Self {
+⋮----
+fn rotate_z(self, angle: f32) -> Self {
+⋮----
+struct Cloud {
+⋮----
+struct Star {
+⋮----
+struct MoonFeature {
+⋮----
+struct Voxel {
+⋮----
+pub struct SplashScreen {
+⋮----
+pub enum SplashStatus {
+⋮----
+impl SplashScreen {
+pub fn new(ctx: &egui::Context) -> Self {
+let is_dark = ctx.style().visuals.dark_mode;
+⋮----
+start_time: ctx.input(|i| i.time),
+⋮----
+loading_text: "TRANSLATING...".to_string(),
+⋮----
+pub fn reset_timer(&mut self, ctx: &egui::Context) {
+self.start_time = ctx.input(|i| i.time);
+⋮----
+fn init_scene(&mut self) {
+⋮----
+rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+⋮----
+for (y, row) in map.iter().enumerate() {
+for (x, ch) in row.chars().enumerate() {
+⋮----
+self.voxels.push(Voxel {
+⋮----
+rot: Vec3::new(rng() * 6.0, rng() * 6.0, rng() * 6.0),
+⋮----
+color: if rng() > 0.85 { C_WHITE } else { color_theme },
+noise_factor: rng(),
+⋮----
+spawn_letter(&s_map, -120.0, c_secondary);
+spawn_letter(&g_map, -35.0, c_primary);
+spawn_letter(&t_map, 50.0, c_secondary);
+⋮----
+let h_y = (rng() * 300.0) - 150.0;
+let h_radius = 80.0 + rng() * 60.0;
+let h_angle = rng() * PI * 2.0;
+let target = Vec3::new(h_angle.cos(), 0.0, h_angle.sin()).mul(800.0);
+⋮----
+rot: Vec3::new(rng(), rng(), rng()),
+⋮----
+self.stars.push(Star {
+pos: Vec2::new(rng(), rng() * 0.85),
+phase: rng() * PI * 2.0,
+brightness: 0.3 + rng() * 0.7,
+size: if rng() > 0.95 {
+1.5 + rng()
+⋮----
+0.8 + rng() * 0.5
+⋮----
+puffs.push((Vec2::ZERO, 1.0));
+let num_puffs = 5 + (rng() * 4.0) as usize;
+⋮----
+let angle = rng() * PI * 2.0;
+let dist = 15.0 + rng() * 25.0;
+let r_mult = 0.4 + rng() * 0.5;
+puffs.push((
+Vec2::new(angle.cos() * dist, angle.sin() * dist * 0.6),
+⋮----
+self.clouds.push(Cloud {
+pos: Vec2::new(rng() * 1200.0 - 600.0, rng() * 400.0 - 200.0),
+velocity: 5.0 + rng() * 15.0,
+scale: 1.2 + rng() * 1.5,
+opacity: 0.4 + rng() * 0.4,
+⋮----
+let dist = rng().sqrt() * 0.7;
+let pos = Vec2::new(angle.cos() * dist, angle.sin() * dist);
+self.moon_features.push(MoonFeature {
+⋮----
+radius: 0.15 + rng() * 0.25,
+⋮----
+let dist = rng().powf(0.8);
+⋮----
+radius: 0.02 + rng() * 0.06,
+⋮----
+pub fn update(&mut self, ctx: &egui::Context) -> SplashStatus {
+self.is_dark = ctx.style().visuals.dark_mode;
+⋮----
+self.init_scene();
+⋮----
+let now = ctx.input(|i| i.time);
+let dt = ctx.input(|i| i.stable_dt);
+if self.exit_start_time.is_none() {
+⋮----
+if ctx.input(|i| i.pointer.any_click()) {
+let is_in_switcher = if let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) {
+⋮----
+self.exit_start_time = Some(now);
+⋮----
+let physics_t = t_abs.min(ANIMATION_DURATION);
+⋮----
+warp_progress = (dt / EXIT_DURATION).clamp(0.0, 1.0);
+⋮----
+ctx.request_repaint();
+let viewport_rect = ctx.input(|i| {
+i.viewport()
+⋮----
+.unwrap_or(Rect::from_min_size(Pos2::ZERO, Vec2::ZERO))
+⋮----
+let size = if viewport_rect.width() < 100.0 || viewport_rect.height() < 100.0 {
+⋮----
+viewport_rect.size()
+⋮----
+if cloud.pos.x > rect.width() / 2.0 + 300.0 {
+cloud.pos.x = -rect.width() / 2.0 - 300.0;
+⋮----
+if let Some(pointer) = ctx.input(|i| i.pointer.hover_pos()) {
+let center = rect.center();
+⋮----
+600.0 + smoothstep(0.0, ANIMATION_DURATION, physics_t) * 100.0 - cam_z_offset;
+⋮----
+self.loading_text = "TRANSLATING...".to_string();
+⋮----
+self.loading_text = "OCR...".to_string();
+⋮----
+self.loading_text = "TRANSCRIBING...".to_string();
+⋮----
+self.loading_text = "nganlinh4".to_string();
+⋮----
+self.loading_text = "READY TO ROCK!".to_string();
+⋮----
+let progress = smoothstep(my_start, my_end, physics_t);
+⋮----
+let current_h_y = v.helix_y + (physics_t * 2.0 + v.noise_factor * 10.0).sin() * 5.0;
+⋮----
+let flare = (physics_t - flare_start).powi(2) * 20.0;
+⋮----
+current_angle.cos() * current_radius,
+⋮----
+current_angle.sin() * current_radius,
+⋮----
+((warp_progress - start_threshold) / move_duration).clamp(0.0, 1.0);
+⋮----
+let radial = Vec3::new(v.pos.x, v.pos.y, 0.0).normalize();
+⋮----
+let swirl_vec = radial.rotate_z(curl_angle);
+⋮----
+target_base = target_base.add(swirl_vec.mul(local_eased * dist_mult));
+⋮----
+let pos = helix_pos.lerp(target_base, progress);
+⋮----
+let to_mouse = pos.sub(self.mouse_world_pos);
+⋮----
+let dist = dist_sq.sqrt();
+⋮----
+v.velocity = v.velocity.add(to_mouse.normalize().mul(force * 2.0));
+⋮----
+let displacement = pos.sub(target_base);
+let spring_force = displacement.mul(-0.1);
+v.velocity = v.velocity.add(spring_force);
+v.velocity = v.velocity.mul(0.90);
+v.pos = pos.add(v.velocity);
+v.rot = v.rot.lerp(Vec3::ZERO, 0.1);
+⋮----
+let impact = (physics_t - my_end).max(0.0);
+let pulse = (impact * 10.0).sin() * (-3.0 * impact).exp() * 0.5;
+⋮----
+v.scale = lerp(0.8, 1.0, progress);
+⋮----
+pub fn paint(&self, ctx: &egui::Context, _theme_mode: &crate::config::ThemeMode) -> bool {
+⋮----
+warp_prog = (dt / EXIT_DURATION).powi(5);
+⋮----
+.order(egui::Order::Foreground)
+.fixed_pos(Pos2::ZERO)
+.show(ctx, |ui| {
+ui.allocate_response(
+⋮----
+egui::Sense::click_and_drag().union(egui::Sense::hover()),
+⋮----
+let painter = ctx.layer_painter(egui::LayerId::new(
+⋮----
+let master_alpha = alpha.clamp(0.0, 1.0);
+⋮----
+(1.0 - exit_dt / 0.3).max(0.0)
+⋮----
+.order(egui::Order::Tooltip)
+.fixed_pos(Pos2::new(14.0, 11.0))
+⋮----
+let pulse = (now * 2.0).sin().abs() * 0.2 + 0.8;
+⋮----
+Color32::WHITE.linear_multiply(switcher_alpha)
+⋮----
+Color32::BLACK.linear_multiply(switcher_alpha)
+⋮----
+ui.allocate_at_least(Vec2::splat(32.0), egui::Sense::click());
+let fill = if resp.hovered() {
+btn_bg.linear_multiply(1.5)
+⋮----
+btn_bg.linear_multiply(pulse as f32)
+⋮----
+ui.painter().rect_filled(rect, 8.0, fill);
+let old_panel_fill = ctx.style().visuals.panel_fill;
+⋮----
+Color32::from_rgb(109, 174, 235).linear_multiply(switcher_alpha);
+ctx.style_mut(|s| s.visuals.panel_fill = cutout_color);
+⋮----
+paint_icon(ui.painter(), rect.shrink(6.0), icon, icon_color);
+ctx.style_mut(|s| s.visuals.panel_fill = old_panel_fill);
+if resp.clicked() && switcher_alpha > 0.9 {
+⋮----
+let t_fade = (t / 0.5).clamp(0.0, 1.0);
+⋮----
+lerp(start_col.r() as f32, bg_color.r() as f32, t_fade) as u8,
+lerp(start_col.g() as f32, bg_color.g() as f32, t_fade) as u8,
+lerp(start_col.b() as f32, bg_color.b() as f32, t_fade) as u8,
+⋮----
+let sky_exit_fade = (1.0 - warp_prog * 4.0).clamp(0.0, 1.0);
+⋮----
+painter.rect_filled(rect, 12.0, bg_color.linear_multiply(sky_exit_fade));
+⋮----
+let c_top = C_SKY_DAY_TOP.linear_multiply(sky_exit_fade);
+painter.rect_filled(rect, 12.0, c_top);
+⋮----
+for (i, star) in self.stars.iter().enumerate() {
+let sx = rect.left() + (star.pos.x * rect.width()) + star_offset.x;
+let sy = rect.top() + (star.pos.y * rect.height()) + star_offset.y;
+let rnd = ((i as f32 * 1.618).fract() + (star.pos.x * 10.0).fract()).fract();
+⋮----
+let p = ((warp_prog - start) / dur).clamp(0.0, 1.0);
+⋮----
+let twinkle = (star.phase + star_time).sin() * 0.3 + 0.7;
+⋮----
+(star.brightness * twinkle * master_alpha * local_fade).clamp(0.0, 1.0);
+⋮----
+painter.circle_filled(
+⋮----
+C_WHITE.linear_multiply(star_alpha),
+⋮----
+C_WHITE.linear_multiply(day_star_alpha),
+⋮----
+mesh.vertices.push(egui::epaint::Vertex {
+⋮----
+let p1 = sun_pos + Vec2::new(angle.cos() * ray_len, angle.sin() * ray_len);
+⋮----
+sun_pos + Vec2::new(next_angle.cos() * ray_len, next_angle.sin() * ray_len);
+⋮----
+mesh.add_triangle(0, 1, 2);
+painter.add(mesh);
+⋮----
+let moon_alpha = master_alpha * (1.0 - warp_prog * 3.0).clamp(0.0, 1.0);
+⋮----
+let moon_bob = (t * 0.5).sin() * 5.0;
+⋮----
+C_MOON_GLOW.linear_multiply(0.03 * moon_alpha),
+⋮----
+C_MOON_GLOW.linear_multiply(0.08 * moon_alpha),
+⋮----
+C_MOON_BASE.linear_multiply(moon_alpha),
+⋮----
+let rot_cos = feature_rot.cos();
+let rot_sin = feature_rot.sin();
+⋮----
+let z_depth = (1.0 - dist_sq).sqrt();
+⋮----
+C_MOON_SHADOW.linear_multiply(f_alpha * 0.8),
+⋮----
+C_MOON_HIGHLIGHT.linear_multiply(f_alpha * 0.4),
+⋮----
+C_MOON_SHADOW.linear_multiply(f_alpha * 0.3),
+⋮----
+painter.circle_stroke(
+⋮----
+Stroke::new(2.0, C_MOON_HIGHLIGHT.linear_multiply(0.4 * moon_alpha)),
+⋮----
+let sun_bob = (t * 0.5).sin() * 5.0;
+⋮----
+C_SUN_GLOW.linear_multiply(0.1 * moon_alpha),
+⋮----
+C_SUN_GLOW.linear_multiply(0.2 * moon_alpha),
+⋮----
+C_SUN_BODY.linear_multiply(moon_alpha),
+⋮----
+Color32::from_rgb(160, 60, 0).linear_multiply(f_alpha * 0.8),
+⋮----
+C_SUN_FLARE.linear_multiply(f_alpha * 0.3),
+⋮----
+C_WHITE.linear_multiply(f_alpha * 0.5),
+⋮----
+Stroke::new(3.0, C_SUN_HIGHLIGHT.linear_multiply(0.5 * moon_alpha)),
+⋮----
+painter.with_clip_rect(Rect::from_min_max(
+⋮----
+painter.clone()
+⋮----
+for (i, cloud) in self.clouds.iter().enumerate() {
+⋮----
+let rnd = (i as f32 * 0.73).fract();
+⋮----
+C_CLOUD_CORE.linear_multiply(cloud_alpha * 0.95)
+⋮----
+C_CLOUD_WHITE.linear_multiply(cloud_alpha * 0.95)
+⋮----
+cloud_painter.circle_filled(
+⋮----
+let render_t = t.min(ANIMATION_DURATION + 5.0);
+⋮----
+let rnd = (i as f32 * 0.9).sin() * 0.5 + 0.5;
+⋮----
+let perspective = 250.0 / (z_dist - warp_prog * 0.8).max(0.1);
+⋮----
+if y > rect.bottom() || y < horizon {
+⋮----
+let w = rect.width() * (2.5 / z_dist);
+⋮----
+let alpha_grid = (1.0 - (y - horizon) / (rect.bottom() - horizon)).powf(0.5)
+⋮----
+(C_DAY_REP, 4.0 * (1.0 - (y - horizon) / rect.height()))
+⋮----
+painter.line_segment(
+⋮----
+Stroke::new(thickness, grid_col.linear_multiply(alpha_grid)),
+⋮----
+let physics_t = t.min(ANIMATION_DURATION);
+⋮----
+let cam_dist = (600.0 + smoothstep(0.0, 8.0, physics_t) * 100.0) - cam_fly_dist;
+⋮----
+Vec::with_capacity(self.voxels.len());
+⋮----
+local_debris_alpha = 1.0 - smoothstep(fade_start, fade_end, physics_t);
+⋮----
+.rotate_x(global_rot.x)
+.rotate_y(global_rot.y)
+.rotate_z(global_rot.z);
+⋮----
+let local_linear = ((warp_prog - start_threshold) / move_duration).clamp(0.0, 1.0);
+let fade = (local_linear * 1.5).clamp(0.0, 1.0);
+⋮----
+let final_col = base_col.linear_multiply(alpha_local);
+draw_list.push((
+⋮----
+draw_list.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
+⋮----
+Color32::from_black_alpha(200).linear_multiply(col.a() as f32 / 255.0)
+⋮----
+Color32::from_rgb(100, 120, 150).linear_multiply(col.a() as f32 / 255.0)
+⋮----
+Color32::from_rgb(0, 40, 100).linear_multiply(col.a() as f32 / 255.0)
+⋮----
+painter.circle_filled(pos, r, shadow_col);
+⋮----
+painter.circle_filled(pos + body_offset, r * 0.85, col);
+⋮----
+Color32::WHITE.linear_multiply(0.5)
+⋮----
+col.linear_multiply(0.5)
+⋮----
+painter.circle_filled(pos + gradient_offset, r * 0.5, glow_col);
+⋮----
+.linear_multiply(col.a() as f32 / 255.0);
+painter.circle_filled(highlight_pos, r * 0.25, highlight_col);
+⋮----
+Color32::WHITE.linear_multiply(col.a() as f32 / 255.0),
+⋮----
+let ui_alpha = 1.0 - (warp_prog * 10.0).clamp(0.0, 1.0);
+⋮----
+let ui_color = ui_text_col.linear_multiply(master_alpha * ui_alpha);
+⋮----
+C_CYAN.linear_multiply(master_alpha * ui_alpha)
+⋮----
+C_DAY_TEXT.linear_multiply(master_alpha * ui_alpha)
+⋮----
+C_WHITE.linear_multiply(master_alpha * ui_alpha)
+⋮----
+C_MAGENTA.linear_multiply(master_alpha * ui_alpha)
+⋮----
+C_DAY_REP.linear_multiply(master_alpha * ui_alpha)
+⋮----
+let title_text = format!("SCREEN GOATED TOOLBOX {}", env!("CARGO_PKG_VERSION"));
+⋮----
+painter.text(
+⋮----
+title_font.clone(),
+⋮----
+painter.rect_filled(bar_rect, 2.0, bar_bg_col);
+let prog = (physics_t / (ANIMATION_DURATION - 0.5)).clamp(0.0, 1.0);
+⋮----
+fill.set_width(bar_rect.width() * prog);
+painter.rect_filled(fill, 2.0, magenta_color);
+⋮----
+let pulse = (t * 5.0).sin().abs() * 0.7 + 0.3;
+⋮----
+click_col.linear_multiply(pulse),
 </file>
 
 <file path="src/overlay/favorite_bubble/panel.rs">
@@ -17264,10 +17251,75 @@ fn get_html(initial_text: &str) -> String {
 format!(
 </file>
 
+<file path="src/gui/locale.rs">
+pub struct LocaleText {
+⋮----
+pub force_quit: &'static str, // NEW
+⋮----
+// --- NEW TEXT INPUT FIELDS ---
+⋮----
+pub continuous_input_label: &'static str, // Checkbox for continuous input mode
+⋮----
+// --- COMPOUND SEARCH UI ---
+⋮----
+pub search_searching: &'static str,        // "searching" / "tìm kiếm"
+⋮----
+pub search_found_sources: &'static str,    // "FOUND {} SOURCES" / "ĐÃ TÌM THẤY {} NGUỒN"
+⋮----
+pub search_no_title: &'static str,      // "(No title)" / "(Không có tiêu đề)"
+⋮----
+pub search_analyzed_sources: &'static str, // "Analyzed {} sources" / "Đã phân tích {} nguồn"
+⋮----
+pub controller_checkbox_label: &'static str, // "Bộ điều khiển" / "Controller" / "컨트롤러"
+// --- GLOBAL SETTINGS UI HEADERS ---
+⋮----
+// --- MODEL THINKING INDICATOR ---
+⋮----
+// App selection modal
+⋮----
+// --- TRAY MENU ---
+⋮----
+// --- FAVORITE BUBBLE ---
+⋮----
+// --- AUTO COPY BADGE ---
+⋮----
+// --- REALTIME EGUI SPECIFIC ---
+⋮----
+// --- HELP ASSISTANT ---
+⋮----
+// --- PROMPT DJ ---
+⋮----
+// --- PARAKEET DOWNLOAD MODAL ---
+⋮----
+// --- OVERLAY BUTTONS TOOLTIPS ---
+⋮----
+pub download_delete_deps_btn: &'static str, // "delete yt-dlp (xx MB) and ffmpeg (xx MB)"
+⋮----
+// Format: "{percent}% of {total} at {speed}, ETA {eta}"
+⋮----
+pub download_scan_ignore_btn: &'static str, // NEW
+⋮----
+pub download_quality_best: &'static str, // NEW
+⋮----
+pub download_no_cookie_option: &'static str, // NEW
+⋮----
+pub download_hide_log_btn: &'static str, // NEW
+// --- DOWNLOADED TOOLS MODAL ---
+⋮----
+pub tool_status_installed: &'static str, // "Installed ({})"
+⋮----
+impl LocaleText {
+pub fn get(lang_code: &str) -> Self {
+⋮----
+tips_list: vec![
+⋮----
+tts_preview_texts: vec![
+</file>
+
 <file path="Cargo.toml">
 [package]
 name = "screen-goated-toolbox"
-version = "4.4.0"
+version = "4.4.1"
 edition = "2021"
 
 [build-dependencies]
@@ -17359,71 +17411,6 @@ codegen-units = 1
 strip = "symbols"  # Keep minimal debug info for AV trust (don't fully strip)
 debug = 1          # Include basic debug info - helps Windows Defender trust the exe
 panic = "unwind"
-</file>
-
-<file path="src/gui/locale.rs">
-pub struct LocaleText {
-⋮----
-pub force_quit: &'static str, // NEW
-⋮----
-// --- NEW TEXT INPUT FIELDS ---
-⋮----
-pub continuous_input_label: &'static str, // Checkbox for continuous input mode
-⋮----
-// --- COMPOUND SEARCH UI ---
-⋮----
-pub search_searching: &'static str,        // "searching" / "tìm kiếm"
-⋮----
-pub search_found_sources: &'static str,    // "FOUND {} SOURCES" / "ĐÃ TÌM THẤY {} NGUỒN"
-⋮----
-pub search_no_title: &'static str,      // "(No title)" / "(Không có tiêu đề)"
-⋮----
-pub search_analyzed_sources: &'static str, // "Analyzed {} sources" / "Đã phân tích {} nguồn"
-⋮----
-pub controller_checkbox_label: &'static str, // "Bộ điều khiển" / "Controller" / "컨트롤러"
-// --- GLOBAL SETTINGS UI HEADERS ---
-⋮----
-// --- MODEL THINKING INDICATOR ---
-⋮----
-// App selection modal
-⋮----
-// --- TRAY MENU ---
-⋮----
-// --- FAVORITE BUBBLE ---
-⋮----
-// --- AUTO COPY BADGE ---
-⋮----
-// --- REALTIME EGUI SPECIFIC ---
-⋮----
-// --- HELP ASSISTANT ---
-⋮----
-// --- PROMPT DJ ---
-⋮----
-// --- PARAKEET DOWNLOAD MODAL ---
-⋮----
-// --- OVERLAY BUTTONS TOOLTIPS ---
-⋮----
-pub download_delete_deps_btn: &'static str, // "delete yt-dlp (xx MB) and ffmpeg (xx MB)"
-⋮----
-// Format: "{percent}% of {total} at {speed}, ETA {eta}"
-⋮----
-pub download_scan_ignore_btn: &'static str, // NEW
-⋮----
-pub download_quality_best: &'static str, // NEW
-⋮----
-pub download_no_cookie_option: &'static str, // NEW
-⋮----
-pub download_hide_log_btn: &'static str, // NEW
-// --- DOWNLOADED TOOLS MODAL ---
-⋮----
-pub tool_status_installed: &'static str, // "Installed ({})"
-⋮----
-impl LocaleText {
-pub fn get(lang_code: &str) -> Self {
-⋮----
-tips_list: vec![
-⋮----
-tts_preview_texts: vec![
 </file>
 
 <file path="src/main.rs">
