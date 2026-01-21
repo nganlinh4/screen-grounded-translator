@@ -289,87 +289,15 @@ body {{
     border-radius: 8px;
     transition: opacity 0.15s ease;
 }}
-.slider-container {{
-    position: absolute;
-    top: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(20, 20, 30, 0.95);
-    padding: 10px 16px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    border: 1px solid rgba(255,255,255,0.08);
-}}
-.container:hover .slider-container {{
-    opacity: 1;
-}}
-.slider-label {{
-    color: #e0e0e0;
-    font-size: 12px !important;
-    white-space: nowrap;
-    /* Prevent inherited font width variations from affecting slider label - !important to override JS inline styles */
-    font-variation-settings: 'wght' 400, 'wdth' 100, 'slnt' 0 !important;
-    letter-spacing: normal !important;
-    line-height: normal !important;
-}}
-.slider {{
-    -webkit-appearance: none;
-    width: 120px;
-    height: 4px;
-    background: rgba(255,255,255,0.2);
-    border-radius: 2px;
-    outline: none;
-    cursor: pointer;
-}}
-.slider::-webkit-slider-thumb {{
-    -webkit-appearance: none;
-    width: 16px;
-    height: 16px;
-    background: #8ab4f8;
-    border-radius: 50%;
-    cursor: pointer;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-    transition: transform 0.15s ease;
-}}
-.slider::-webkit-slider-thumb:hover {{
-    transform: scale(1.15);
-}}
-.value {{
-    color: #fff;
-    font-size: 12px;
-    font-weight: 500;
-    min-width: 36px;
-    text-align: right;
-}}
 </style>
 </head>
 <body>
 <div class="container">
     <img class="image" id="img" src="data:{};base64,{}" />
-    <div class="slider-container">
-        <span class="slider-label">{}</span>
-        <input type="range" class="slider" id="opacity" min="10" max="100" value="100" />
-        <span class="value" id="val">100%</span>
-    </div>
 </div>
-<script>
-const slider = document.getElementById('opacity');
-const val = document.getElementById('val');
-slider.oninput = function() {{
-    val.textContent = this.value + '%';
-    if (window.ipc) {{
-        window.ipc.postMessage('opacity:' + this.value);
-    }}
-}};
-</script>
 </body>
 </html>"#,
-                        font_css, mime_type, base64_img, locale.opacity_label
+                        font_css, mime_type, base64_img
                     )
                 }
                 RefineContext::Audio(wav_data) => {

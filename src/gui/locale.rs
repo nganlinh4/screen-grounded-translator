@@ -246,6 +246,7 @@ pub struct LocaleText {
     pub overlay_broom_tooltip: &'static str,
     pub overlay_back_tooltip: &'static str,
     pub overlay_forward_tooltip: &'static str,
+    pub overlay_opacity_tooltip: &'static str,
     pub download_feature_btn: &'static str,
     pub download_feature_title: &'static str,
     pub download_delete_deps_btn: &'static str, // "delete yt-dlp (xx MB) and ffmpeg (xx MB)"
@@ -597,6 +598,7 @@ impl LocaleText {
                   overlay_broom_tooltip: "Chổi: Trái - Đóng | Phải - Copy | Kéo - Di chuyển | Kéo phải - Dời cả nhóm",
                   overlay_back_tooltip: "Quay lại",
                   overlay_forward_tooltip: "Tiếp theo",
+                  overlay_opacity_tooltip: "Độ mờ",
                   
                   download_feature_btn: "Tải video/audio mọi nguồn",
                   download_feature_title: "Tải video/audio mọi nguồn",
@@ -1000,6 +1002,7 @@ impl LocaleText {
                    overlay_broom_tooltip: "빗자루: 왼쪽 - 닫기 | 오른쪽 - 복사 | 드래그 - 이동 | 오른쪽 드래그 - 그룹 이동",
                    overlay_back_tooltip: "뒤로",
                    overlay_forward_tooltip: "앞으로",
+                   overlay_opacity_tooltip: "불투명도",
                   },
                 _ => Self {
                  history_btn: "History",
@@ -1289,6 +1292,7 @@ impl LocaleText {
                    overlay_broom_tooltip: "Broom: Left - Close | Right - Copy | Drag - Move | Right-Drag - Move Group",
                    overlay_back_tooltip: "Back",
                    overlay_forward_tooltip: "Forward",
+                   overlay_opacity_tooltip: "Opacity",
                    
                    download_feature_btn: "Download Video/Audio from Anywhere",
                    download_feature_title: "Download Video/Audio from Anywhere",

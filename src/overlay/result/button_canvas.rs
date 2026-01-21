@@ -380,6 +380,7 @@ fn generate_canvas_html() -> String {
         "broom": locale.overlay_broom_tooltip,
         "back": locale.overlay_back_tooltip,
         "forward": locale.overlay_forward_tooltip,
+        "opacity": locale.overlay_opacity_tooltip,
         "overlay_refine_placeholder": locale.overlay_refine_placeholder,
     })
     .to_string();
@@ -416,10 +417,10 @@ fn generate_canvas_html() -> String {
         "content_copy": get_colored_svg("content_copy"),
         "check": get_colored_svg("check"),
         "download": get_colored_svg("download"),
-        "download": get_colored_svg("download"),
         "volume_up": get_colored_svg("volume_up"),
         "mic": get_colored_svg("mic"),
         "send": get_colored_svg("send"),
+        "opacity": get_colored_svg("opacity"),
     })
     .to_string();
 
@@ -608,6 +609,83 @@ html, body {{
 .refine-action-btn.send {{
     color: var(--btn-active-color);
 }}
+
+/* Opacity Expanding Button - Expands Leftwards */
+.opacity-btn-expandable {{
+    width: 24px;
+    height: 24px;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.15s, color 0.15s !important;
+    overflow: hidden;
+    padding: 0 4px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: flex-end !important; /* Anchor icon on the right */
+    white-space: nowrap;
+    border-radius: 6px;
+}}
+
+.opacity-btn-expandable:hover {{
+    width: 110px !important; /* Reduced from 125px */
+    background: var(--btn-hover-bg) !important;
+    transform: none !important;
+}}
+
+.opacity-icon-wrapper {{
+    width: 16px;
+    min-width: 16px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    order: 2;
+    flex-shrink: 0;
+}}
+
+.opacity-slider-wrapper {{
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+    order: 1;
+    padding-right: 4px;
+    min-width: 0;
+}}
+
+.opacity-btn-expandable:hover .opacity-slider-wrapper {{
+    opacity: 1;
+    pointer-events: auto;
+    transition: opacity 0.3s ease 0.1s;
+}}
+
+.opacity-slider-inline {{
+    -webkit-appearance: none;
+    flex: 1;
+    min-width: 0;
+    height: 3px;
+    background: var(--btn-border);
+    border-radius: 2px;
+    cursor: pointer;
+    outline: none;
+}}
+
+.opacity-slider-inline::-webkit-slider-thumb {{
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    background: var(--btn-active-color);
+    border-radius: 50%;
+    cursor: pointer;
+}}
+
+.opacity-value-inline {{
+    font-size: 9px;
+    color: var(--btn-color);
+    min-width: 25px;
+    text-align: center;
+}}
 </style>
 </head>
 <body>
@@ -631,6 +709,27 @@ let lastSentRegions = new Map();
 let cursorX = 0, cursorY = 0;
 // Track drag state globally so opacity updates can sync regions during drag
 let broomDragData = null;
+
+// Opacity slider state
+window.opacityValues = {{}}; // hwnd -> current opacity value (10-100)
+
+// Update opacity and send to Rust
+window.updateOpacity = function(hwnd, value) {{
+    value = parseInt(value);
+    window.opacityValues[hwnd] = value;
+    window.ipc.postMessage(JSON.stringify({{
+        action: "set_opacity",
+        hwnd: hwnd,
+        value: value
+    }}));
+    
+    // Update the local value display
+    const group = document.querySelector('.button-group[data-hwnd="' + hwnd + '"]');
+    if (group) {{
+        const span = group.querySelector('.opacity-value-inline');
+        if (span) span.textContent = value + '%';
+    }}
+}};
 
 // Called from Rust every 50ms with current cursor position
 window.updateCursorPosition = (x, y) => {{
@@ -705,15 +804,16 @@ function updateButtonOpacity() {{
             if (lastVisibleState.get(group.dataset.hwnd)) {{
                 const rect = group.getBoundingClientRect();
                 const region = {{
-                    x: rect.left - padding,
-                    y: rect.top + 1, // Start slightly below top edge to ensure we don't cover window bottom border
-                    w: rect.width + (padding * 2),
-                    h: rect.height + padding // Only pad bottom
+                    // Add large left buffer (200px) to account for expanding UI
+                    // CSS expansion happens in the WebView and might go outside the strictly measured box
+                    x: rect.left - 200,
+                    y: rect.top - 5, 
+                    w: rect.width + 200 + padding,
+                    h: rect.height + padding + 5
                 }};
                 regions.push(region);
                 
                 // Track what we sent (using the RAW rect, not the padded one, for change detection stability)
-                // Actually, let's track the RAW rect matching the change detection above
                 const rawRegion = {{
                     x: Math.round(rect.left),
                     y: Math.round(rect.top),
@@ -824,6 +924,7 @@ function generateButtonsHTML(hwnd, state) {{
     
     let buttons = '';
     
+    
     // Back button - always rendered, hidden when not available
     const backHideClass = canGoBack ? '' : 'hidden';
     buttons += `<div class="btn ${{backHideClass}}" onclick="action('${{hwnd}}', 'back')" title="${{window.L10N.back}}">
@@ -836,6 +937,19 @@ function generateButtonsHTML(hwnd, state) {{
         ${{window.iconSvgs.arrow_forward}}
     </div>`;
     
+    // Opacity button - Expanding on hover, positioned left of Copy, grows to the LEFT
+    const opacityValue = window.opacityValues?.[hwnd] || 100;
+    buttons += `<div class="btn opacity-btn-expandable ${{hideClass}}" title="${{window.L10N.opacity}}">
+        <div class="opacity-slider-wrapper">
+            <input type="range" class="opacity-slider-inline" min="10" max="100" value="${{opacityValue}}" 
+                oninput="updateOpacity('${{hwnd}}', this.value)" />
+            <span class="opacity-value-inline">${{opacityValue}}%</span>
+        </div>
+        <div class="opacity-icon-wrapper">
+            ${{window.iconSvgs.opacity}}
+        </div>
+    </div>`;
+
     // Copy - hidden when browsing but preserves space
     buttons += `<div class="btn ${{state.copySuccess ? 'success' : ''}} ${{hideClass}}" onclick="action('${{hwnd}}', 'copy')" title="${{window.L10N.copy}}">
         ${{window.iconSvgs[state.copySuccess ? 'check' : 'content_copy']}}
@@ -976,20 +1090,13 @@ function updateWindows(windowsData) {{
         const actualH = group.offsetHeight || (pos.direction === 'left' || pos.direction === 'right' ? 400 : 50);
 
         // Re-clamp position based on actual dimensions
-        // calculateButtonPosition returns a centered position, but we need to ensure it's on screen
-        // We can just clamp the estimated 'pos' using actual dimensions
-        
-        // Helper to clamp
-        const clamp = (val, size, max) => Math.max(0, Math.min(val, max - size));
-
-        let finalX = pos.x;
-        let finalY = pos.y;
-
-        // Recalculate centering if dimensions differ significantly? 
         // calculateButtonPosition used hardcoded 400/50. 
         // If actual is 600, centering based on 400 is wrong.
         // Let's re-run the relevant centering logic with actual dims
         
+        let finalX = pos.x;
+        let finalY = pos.y;
+
         if (pos.direction === 'bottom') {{
             // Right align relative to window
             finalX = data.rect.x + data.rect.w - actualW;
@@ -1010,6 +1117,9 @@ function updateWindows(windowsData) {{
             finalY = Math.max(data.rect.y, finalY);
         }}
 
+        // Helper to clamp
+        const clamp = (val, size, max) => Math.max(0, Math.min(val, max - size));
+
         // Final screen clamping
         finalX = clamp(finalX, actualW, screenW);
         finalY = clamp(finalY, actualH, screenH);
@@ -1018,8 +1128,16 @@ function updateWindows(windowsData) {{
         // The local drag handler owns the position to ensure smoothness.
         // Overwriting it with potentially stale Rust data causes stutter/glitching.
         if (!broomDragData || broomDragData.hwnd !== hwnd) {{
-            group.style.left = finalX + 'px';
-            group.style.top = finalY + 'px';
+            // Anchor to right if it's right-aligned to window, so expansion happens towards the left
+            if (pos.direction === 'bottom' || pos.direction === 'right') {{
+                group.style.left = 'auto';
+                group.style.right = (screenW - (finalX + actualW)) + 'px';
+                group.style.top = finalY + 'px';
+            }} else {{
+                group.style.left = finalX + 'px';
+                group.style.right = 'auto';
+                group.style.top = finalY + 'px';
+            }}
         }}
     }}
     
@@ -1599,6 +1717,25 @@ fn handle_ipc_message(body: &str) {
                         }
                     }
                 }
+            }
+            "set_opacity" => {
+                if let Some(value) = json.get("value").and_then(|v| v.as_f64()) {
+                    let alpha = ((value / 100.0) * 255.0) as u8;
+                    unsafe {
+                        use windows::Win32::UI::WindowsAndMessaging::{
+                            SetLayeredWindowAttributes, LWA_ALPHA,
+                        };
+                        let _ = SetLayeredWindowAttributes(
+                            hwnd,
+                            windows::Win32::Foundation::COLORREF(0),
+                            alpha,
+                            LWA_ALPHA,
+                        );
+                    }
+                }
+            }
+            "request_update" => {
+                update_canvas();
             }
             "broom_drag" => {
                 // Legacy JS-driven drag (unused now but kept for compatibility)
