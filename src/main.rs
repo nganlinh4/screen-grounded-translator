@@ -809,6 +809,7 @@ unsafe extern "system" fn hotkey_proc(
                 }
 
                 // Check if continuous mode is active or pending
+                let mut just_activated_continuous = false;
                 if overlay::continuous_mode::is_active() {
                     // Continuous mode is ACTIVE.
                     // Ignore ALL hotkey presses - let the keyboard hooks handle exit (ESC or hotkey tap).
@@ -820,6 +821,7 @@ unsafe extern "system" fn hotkey_proc(
                     let current = overlay::continuous_mode::get_preset_idx();
                     let hotkey = overlay::continuous_mode::get_hotkey_name();
                     overlay::continuous_mode::activate(current, hotkey);
+                    just_activated_continuous = true;
                     // Do NOT return. Proceed to trigger logic below.
                 }
 
@@ -937,7 +939,9 @@ unsafe extern "system" fn hotkey_proc(
                         if overlay::text_selection::is_active() {
                             // Ignore repeat hotkeys to allow "hold to activate"
                             return LRESULT(0);
-                        } else if overlay::continuous_mode::is_active() {
+                        } else if overlay::continuous_mode::is_active()
+                            && !just_activated_continuous
+                        {
                             // Continuous mode is active - the worker thread's retrigger handles showing the tag
                             // Just ignore hotkey repeats to prevent duplicate notifications
                             return LRESULT(0);

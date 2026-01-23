@@ -196,11 +196,15 @@ pub fn try_instant_process(preset_idx: usize) -> bool {
                         "Preset".to_string()
                     }
                 };
-                crate::overlay::continuous_mode::activate(preset_idx, hotkey_name.clone());
-                crate::overlay::continuous_mode::show_activation_notification(
-                    &preset_name,
-                    &hotkey_name,
-                );
+
+                // Disable continuous mode for Master Preset
+                if preset_name != "preset_text_select_master" {
+                    crate::overlay::continuous_mode::activate(preset_idx, hotkey_name.clone());
+                    crate::overlay::continuous_mode::show_activation_notification(
+                        &preset_name,
+                        &hotkey_name,
+                    );
+                }
             }
         }
 
@@ -702,12 +706,15 @@ fn internal_create_tag_thread() {
                             }
                         };
 
-                        crate::overlay::continuous_mode::activate(p_idx, hotkey_name.clone());
-                        crate::overlay::continuous_mode::show_activation_notification(
-                            &p_name,
-                            &hotkey_name,
-                        );
-                        CONTINUOUS_ACTIVATED_THIS_SESSION.store(true, Ordering::SeqCst);
+                        // Disable continuous mode for Master Preset
+                        if p_name != "preset_text_select_master" {
+                            crate::overlay::continuous_mode::activate(p_idx, hotkey_name.clone());
+                            crate::overlay::continuous_mode::show_activation_notification(
+                                &p_name,
+                                &hotkey_name,
+                            );
+                            CONTINUOUS_ACTIVATED_THIS_SESSION.store(true, Ordering::SeqCst);
+                        }
                     }
                 }
 
