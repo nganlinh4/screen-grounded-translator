@@ -3,7 +3,7 @@ use eframe::egui::{Align2, Color32, FontId, Pos2, Rect, Stroke, Vec2};
 use std::cmp::Ordering;
 use std::f32::consts::PI;
 
-use crate::gui::icons::{Icon, paint_icon};
+use crate::gui::icons::{paint_icon, Icon};
 use crate::{WINDOW_HEIGHT, WINDOW_WIDTH};
 
 // --- CONFIGURATION ---
@@ -191,7 +191,11 @@ impl SplashScreen {
     }
 
     fn init_scene(&mut self) {
-        let mut rng_state = 987654321u64;
+        let mut rng_state = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(987654321u64);
+
         let mut rng = || {
             rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
             (rng_state >> 32) as f32 / 4294967295.0
@@ -246,11 +250,17 @@ impl SplashScreen {
         spawn_letter(&t_map, 50.0, c_secondary);
 
         // Debris
-        for _ in 0..60 {
+        for _ in 0..100 {
             let h_y = (rng() * 300.0) - 150.0;
             let h_radius = 80.0 + rng() * 60.0;
             let h_angle = rng() * PI * 2.0;
-            let target = Vec3::new(h_angle.cos(), 0.0, h_angle.sin()).mul(800.0);
+
+            let n = rng();
+            // Spread targets in a thick 3D torus/nebula
+            let t_y = rng() * 700.0 - 50.0;
+            // Diverse depth: Some very close, some very far
+            let t_dist = 400.0 + n.powi(2) * 1400.0;
+            let target = Vec3::new(h_angle.cos() * t_dist, t_y, h_angle.sin() * t_dist);
 
             self.voxels.push(Voxel {
                 helix_radius: h_radius,
@@ -259,10 +269,11 @@ impl SplashScreen {
                 target_pos: target,
                 pos: Vec3::ZERO,
                 rot: Vec3::new(rng(), rng(), rng()),
-                scale: 0.3,
+                // Diverse sizes: small dust to larger puffs
+                scale: 0.1 + n * 0.5,
                 velocity: Vec3::ZERO,
-                color: C_SHADOW, // Default, overridden in render for day mode
-                noise_factor: rng(),
+                color: C_SHADOW,
+                noise_factor: n,
                 is_debris: true,
             });
         }
@@ -477,6 +488,13 @@ impl SplashScreen {
                     current_angle.sin() * current_radius,
                 );
                 let mut target_base = v.target_pos;
+
+                // Add slow cosmic drift/orbit to debris targets so they don't look static
+                if v.is_debris {
+                    let orbit_speed = 0.02 + v.noise_factor * 0.08;
+                    target_base = target_base.rotate_y(t_abs * orbit_speed);
+                    target_base.y += (t_abs * 0.5 + v.noise_factor * 10.0).sin() * 20.0;
+                }
 
                 if warp_progress > 0.0 {
                     // "One by One" Departure:
@@ -1130,6 +1148,15 @@ impl SplashScreen {
             let mut alpha_local = master_alpha;
             if v.is_debris {
                 alpha_local *= local_debris_alpha;
+
+                // PREMIUM: Diverse opacity based on distance/noise
+                let base_opacity = 0.4 + (v.noise_factor * 0.6);
+                alpha_local *= base_opacity;
+
+                // PREMIUM: Add subtle cosmic twinkle/glimmer
+                let twinkle =
+                    (t * (3.0 + v.noise_factor * 2.0) + v.noise_factor * 50.0).sin() * 0.25 + 0.75;
+                alpha_local *= twinkle;
             }
 
             let mut base_col = v.color;
@@ -1186,34 +1213,44 @@ impl SplashScreen {
 
         for (_, pos, r, col, is_white_voxel, is_debris) in draw_list {
             // 1. Shadow/Base (The "Rim" on the shadow side)
-            // Darken the color significantly for the edge
-            let shadow_col = if self.is_dark {
-                Color32::from_black_alpha(200).linear_multiply(col.a() as f32 / 255.0)
+            // Use the clipped cloud painter for debris in Day mode so they don't enter the sea
+            let p = if !self.is_dark && is_debris {
+                &cloud_painter
             } else {
-                // In Day mode, white voxels get a blueish/grey shadow to define shape
-                if is_white_voxel {
-                    Color32::from_rgb(100, 120, 150).linear_multiply(col.a() as f32 / 255.0)
+                &painter
+            };
+
+            // 1. Shadow/Base (The "Rim" on the shadow side)
+            if !(!self.is_dark && is_debris) {
+                let shadow_col = if self.is_dark {
+                    Color32::from_black_alpha(200).linear_multiply(col.a() as f32 / 255.0)
                 } else {
-                    // Blue voxels get dark blue shadow
-                    Color32::from_rgb(0, 40, 100).linear_multiply(col.a() as f32 / 255.0)
-                }
-            };
+                    // In Day mode, white voxels get a blueish/grey shadow to define shape
+                    if is_white_voxel {
+                        Color32::from_rgb(100, 120, 150).linear_multiply(col.a() as f32 / 255.0)
+                    } else {
+                        // Blue voxels get dark blue shadow
+                        Color32::from_rgb(0, 40, 100).linear_multiply(col.a() as f32 / 255.0)
+                    }
+                };
+                p.circle_filled(pos, r, shadow_col);
 
-            painter.circle_filled(pos, r, shadow_col);
+                // 2. Main Body (Shifted towards light to create crescent shadow)
+                let body_offset = light_dir_2d * (r * 0.15);
+                p.circle_filled(pos + body_offset, r * 0.85, col);
 
-            // 2. Main Body (Shifted towards light to create crescent shadow)
-            let body_offset = light_dir_2d * (r * 0.15);
-            painter.circle_filled(pos + body_offset, r * 0.85, col);
-
-            // 3. Inner Gradient / Glow (Soft light in center)
-            // Lighter version of main color
-            let glow_col = if is_white_voxel {
-                Color32::WHITE.linear_multiply(0.5)
+                // 3. Inner Gradient / Glow (Soft light in center)
+                let glow_col = if is_white_voxel {
+                    Color32::WHITE.linear_multiply(0.5)
+                } else {
+                    col.linear_multiply(0.5)
+                };
+                let gradient_offset = light_dir_2d * (r * 0.3);
+                p.circle_filled(pos + gradient_offset, r * 0.5, glow_col);
             } else {
-                col.linear_multiply(0.5)
-            };
-            let gradient_offset = light_dir_2d * (r * 0.3);
-            painter.circle_filled(pos + gradient_offset, r * 0.5, glow_col);
+                // Day Mode Debris: Pure white soft-edged "puffs" (no shading, no border)
+                p.circle_filled(pos, r, col);
+            }
 
             // 4. Specular Highlight (Sharp Reflection) - ONLY FOR MAIN LOGO VOXELS
             if !is_debris {
