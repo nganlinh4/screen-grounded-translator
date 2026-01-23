@@ -7,7 +7,9 @@ use std::num::NonZeroIsize;
 use std::sync::{Mutex, Once};
 use windows::core::*;
 use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
+use windows::Win32::Graphics::Dwm::{
+    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE,
+};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::Com::{CoInitialize, CoUninitialize};
 use windows::Win32::System::LibraryLoader::*;
@@ -596,7 +598,18 @@ pub fn is_active() -> bool {
     if hwnd_val == 0 {
         return false;
     }
-    unsafe { IsWindowVisible(HWND(hwnd_val as *mut std::ffi::c_void)).as_bool() }
+    unsafe {
+        let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+        if !IsWindowVisible(hwnd).as_bool() {
+            return false;
+        }
+        // Since we use offscreen WS_VISIBLE, we must check coordinates
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            return rect.left > -3000;
+        }
+        false
+    }
 }
 
 pub fn cancel_input() {
@@ -906,14 +919,14 @@ fn internal_create_window_loop() {
         let x = (screen_w - win_w) / 2;
         let y = (screen_h - win_h) / 2;
 
-        // Start HIDDEN logic
+        // Start HIDDEN logic (Offscreen but VISIBLE for Webview init)
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
             class_name,
             w!("Text Input"),
-            WS_POPUP, // Start invisible (not WS_VISIBLE)
-            x,
-            y,
+            WS_POPUP | WS_VISIBLE,
+            -4000,
+            -4000,
             win_w,
             win_h,
             None,
@@ -933,6 +946,15 @@ fn internal_create_window_loop() {
         }
 
         INPUT_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
+
+        // Windows 11 Rounded Corners - Disable native rounding
+        let corner_pref = 1u32; // DWMWCP_DONOTROUND
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::addr_of!(corner_pref) as *const _,
+            std::mem::size_of_val(&corner_pref) as u32,
+        );
         crate::log_info!("[TextInput] HWND stored, starting WebView initialization...");
 
         // WebView Initialization
@@ -1065,6 +1087,7 @@ unsafe fn init_webview(hwnd: HWND, w: i32, h: i32) -> std::result::Result<(), ()
 
             builder
                 // Store HTML in font server and get URL for same-origin font loading
+                .with_background_color((0, 0, 0, 0))
                 .with_bounds(Rect {
                     position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
                         webview_x, webview_y,
