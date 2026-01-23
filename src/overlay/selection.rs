@@ -282,7 +282,7 @@ pub fn show_selection_overlay(preset_idx: usize) {
             x,
             y,
             w,
-            h - 1,
+            h,
             None,
             None,
             Some(instance.into()),
@@ -1031,34 +1031,102 @@ unsafe fn sync_layered_window_contents(hwnd: HWND) {
         let h = (r.bottom - r.top).abs();
 
         if w > 0 && h > 0 {
-            // Draw pure white box (GDI will set color but likely alpha 0)
-            let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FFFFFF));
-            let old_pen = SelectObject(mem_dc, pen.into());
-            let null_brush = GetStockObject(NULL_BRUSH);
-            let old_brush = SelectObject(mem_dc, null_brush);
+            // ANTI-ALIASED ROUNDED BOX (Custom pixel shader replaces aliased GDI RoundRect)
+            let default_radius = 12.0f32;
+            let border_width = 2.0f32;
 
-            let _ = RoundRect(mem_dc, r.left, r.top, r.right, r.bottom, 12, 12);
+            // Box coordinates (relative to virtual screen)
+            let l_f = r.left as f32;
+            let t_f = r.top as f32;
+            let r_f = r.right as f32;
+            let b_f = r.bottom as f32;
 
-            SelectObject(mem_dc, old_brush);
-            SelectObject(mem_dc, old_pen);
-            let _ = DeleteObject(pen.into());
+            let hw = (r_f - l_f) / 2.0;
+            let hh = (b_f - t_f) / 2.0;
+            let cx = l_f + hw;
+            let cy = t_f + hh;
+
+            // ADAPTIVE RADIUS: Scale down if box is smaller than radius
+            let radius = default_radius.min(hw).min(hh);
+
+            let bg_alpha_f = effective_alpha as f32 / 255.0;
 
             // 3. SECURING ALPHA: Only iterate over the bounding area of the selection
             // This is much faster than processing the whole screen on every move
-            let b_left = (r.left - 5).max(0);
-            let b_top = (r.top - 5).max(0);
-            let b_right = (r.right + 5).min(width);
-            let b_bottom = (r.bottom + 5).min(height);
+            let b_left = (r.left - 10).max(0);
+            let b_top = (r.top - 10).max(0);
+            let b_right = (r.right + 10).min(width);
+            let b_bottom = (r.bottom + 10).min(height);
 
-            for y in b_top..b_bottom {
-                let row_start = (y * width + b_left) as usize;
-                let row_end = (y * width + b_right) as usize;
-                if row_start < pixels_u32.len() && row_end <= pixels_u32.len() {
-                    for p in &mut pixels_u32[row_start..row_end] {
-                        if (*p & 0x00FFFFFF) > 0x0A0A0A {
-                            *p = 0xFFFFFFFF; // Make the white box opaque
+            let rad_int = radius.ceil() as i32;
+            let top_band_end = (r.top + rad_int).min(b_bottom);
+            let bottom_band_start = (r.bottom - rad_int).max(top_band_end);
+
+            for py_int in b_top..b_bottom {
+                let row_base = (py_int * width) as usize;
+
+                // --- FAST PATH: Middle Band (no corners, just straight vertical edges) ---
+                if py_int >= top_band_end && py_int < bottom_band_start {
+                    let lb = r.left as usize;
+                    let rb = r.right as usize;
+                    if row_base + lb < pixels_u32.len() {
+                        // 1. Clear Hole (Transparent interior)
+                        let start = (row_base + lb).min(pixels_u32.len());
+                        let end = (row_base + rb).min(pixels_u32.len());
+                        if start < end {
+                            pixels_u32[start..end].fill(0x00000000);
+                        }
+
+                        // 2. Draw Left/Right Borders (2 pixels wide, opaque white)
+                        for x in 0..2 {
+                            if row_base + lb + x < pixels_u32.len() {
+                                pixels_u32[row_base + lb + x] = 0xFFFFFFFF;
+                            }
+                            if row_base + rb - 1 - x < pixels_u32.len() {
+                                pixels_u32[row_base + rb - 1 - x] = 0xFFFFFFFF;
+                            }
                         }
                     }
+                    continue;
+                }
+
+                // --- SLOW PATH: Top/Bottom Bands (SDF for corners) ---
+                let py = py_int as f32 + 0.5; // pixel center
+                for px_int in b_left..b_right {
+                    let idx = row_base + px_int as usize;
+                    if idx >= pixels_u32.len() {
+                        continue;
+                    }
+
+                    let px = px_int as f32 + 0.5;
+
+                    // Rounded Rect SDF (Signed Distance Field)
+                    let dx = (px - cx).abs() - (hw - radius);
+                    let dy = (py - cy).abs() - (hh - radius);
+
+                    let dist = if dx > 0.0 && dy > 0.0 {
+                        (dx * dx + dy * dy).sqrt() - radius
+                    } else {
+                        dx.max(dy) - radius
+                    };
+
+                    // Composition:
+                    // alpha_outer: 1.0 inside boundary, 0.0 outside. Smooth transition at edge.
+                    let alpha_outer = (0.5 - dist).clamp(0.0, 1.0);
+                    // alpha_inner: 1.0 inside inner border, 0.0 outside.
+                    let alpha_inner = (0.5 - (dist + border_width)).clamp(0.0, 1.0);
+
+                    let border_alpha = alpha_outer - alpha_inner;
+
+                    // Initial background alpha (dimming) reduces inside the hole
+                    let final_bg_alpha = bg_alpha_f * (1.0 - alpha_outer);
+
+                    // Final Color (Pre-multiplied alpha)
+                    // Background is black (0,0,0), border is white (1,1,1)
+                    let a = ((final_bg_alpha + border_alpha) * 255.0) as u32;
+                    let c = (border_alpha * 255.0) as u32;
+
+                    pixels_u32[idx] = (a << 24) | (c << 16) | (c << 8) | c;
                 }
             }
         }
@@ -1078,7 +1146,7 @@ unsafe fn sync_layered_window_contents(hwnd: HWND) {
     };
     let wnd_size = SIZE {
         cx: width,
-        cy: height - 1,
+        cy: height,
     };
     let src_pos = POINT { x: 0, y: 0 };
 
