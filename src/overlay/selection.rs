@@ -614,12 +614,24 @@ unsafe extern "system" fn selection_wnd_proc(
                     };
 
                     if let Some(preset_idx) = final_preset_idx {
-                        // 3. CHECK FOR CONTINUOUS MODE ACTIVATION (MOVED UP)
-                        let is_already_active = super::continuous_mode::is_active();
-                        if !is_already_active {
-                            // LATE ACTIVATION (e.g. for Master Presets or fallback)
-                            let held = HOLD_DETECTED_THIS_SESSION.load(Ordering::SeqCst);
-                            if held && !CONTINUOUS_ACTIVATED_THIS_SESSION.load(Ordering::SeqCst) {
+                        // 3. CHECK FOR CONTINUOUS MODE ACTIVATION (IMPROVED)
+                        if !super::continuous_mode::is_active() {
+                            // Instant activation if key is physically held during mouse-up
+                            let is_held = {
+                                if TRIGGER_VK_CODE != 0 {
+                                    (unsafe { GetAsyncKeyState(TRIGGER_VK_CODE as i32) } as u16
+                                        & 0x8000)
+                                        != 0
+                                } else {
+                                    false
+                                }
+                            };
+
+                            let held_detected = HOLD_DETECTED_THIS_SESSION.load(Ordering::SeqCst);
+
+                            if (is_held || held_detected)
+                                && !CONTINUOUS_ACTIVATED_THIS_SESSION.load(Ordering::SeqCst)
+                            {
                                 let mut hotkey_name = super::continuous_mode::get_hotkey_name();
                                 if hotkey_name.is_empty() {
                                     hotkey_name = super::continuous_mode::get_latest_hotkey_name();
@@ -628,7 +640,6 @@ unsafe extern "system" fn selection_wnd_proc(
                                     hotkey_name = "Hotkey".to_string();
                                 }
 
-                                // Need preset name manually here since we haven't cloned `preset` yet
                                 let p_name = {
                                     if let Ok(app) = APP.lock() {
                                         app.config
@@ -646,6 +657,7 @@ unsafe extern "system" fn selection_wnd_proc(
                                     &p_name,
                                     &hotkey_name,
                                 );
+                                CONTINUOUS_ACTIVATED_THIS_SESSION.store(true, Ordering::SeqCst);
                             }
                         }
 
@@ -677,6 +689,19 @@ unsafe extern "system" fn selection_wnd_proc(
                         });
 
                         // 3. Continuous mode is handled by the loop in main.rs
+                    }
+
+                    // 3. SEAMLESS CONTINUOUS MODE OR FADE OUT
+                    if super::continuous_mode::is_active() {
+                        // --- STICKY SEAMLESS SUCCESSION ---
+                        // Mode is active - we stay in the overlay even if the key is released.
+                        // This allows drawing multiple boxes in succession.
+                        // Dismissal is handled by ESC or Hotkey Tap.
+                        START_POS = POINT::default();
+                        CURR_POS = POINT::default();
+                        ZOOM_ALPHA_OVERRIDE = None;
+                        sync_layered_window_contents(hwnd);
+                        return LRESULT(0);
                     }
 
                     // 3. START FADE OUT
