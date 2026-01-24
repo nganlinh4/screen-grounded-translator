@@ -415,7 +415,7 @@ unsafe extern "system" fn tag_wnd_proc(
 fn internal_create_tag_thread() {
     unsafe {
         use windows::Win32::System::Com::*;
-        let coinit = CoInitialize(None);
+        let _coinit = CoInitialize(None);
 
         let instance = GetModuleHandleW(None).unwrap();
         let class_name = w!("SGT_TextTag_Web_Persistent");
@@ -496,7 +496,7 @@ fn internal_create_tag_thread() {
         std::thread::sleep(std::time::Duration::from_millis(150));
 
         // Retry loop for stability (similar to text_input)
-        for attempt in 1..=3 {
+        for _attempt in 1..=3 {
             let res = {
                 // LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
                 let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
@@ -529,7 +529,7 @@ fn internal_create_tag_thread() {
                     final_webview = Some(wv);
                     break;
                 }
-                Err(e) => {
+                Err(_e) => {
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
             }
@@ -588,7 +588,7 @@ fn internal_create_tag_thread() {
                 // Continuous Mode Support: Ensure we don't get stuck if KeyUp was missed during warmup.
                 if TRIGGER_VK_CODE != 0 {
                     let is_physically_down =
-                        (unsafe { GetAsyncKeyState(TRIGGER_VK_CODE as i32) } as u16 & 0x8000) != 0;
+                        (GetAsyncKeyState(TRIGGER_VK_CODE as i32) as u16 & 0x8000) != 0;
 
                     // If it's physically up, force our state to false.
                     if !is_physically_down && IS_HOTKEY_HELD.load(Ordering::SeqCst) {
@@ -745,7 +745,7 @@ fn internal_create_tag_thread() {
                         let _ = GetCursorPos(&mut pt);
                         let hwnd_under_mouse = WindowFromPoint(pt);
                         let mut pid: u32 = 0;
-                        unsafe { GetWindowThreadProcessId(hwnd_under_mouse, Some(&mut pid)) };
+                        GetWindowThreadProcessId(hwnd_under_mouse, Some(&mut pid));
                         let our_pid = std::process::id();
 
                         if pid != our_pid {

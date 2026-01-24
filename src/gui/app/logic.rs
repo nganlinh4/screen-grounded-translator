@@ -175,13 +175,12 @@ impl SettingsApp {
                 ctx.request_repaint();
                 return;
             }
-        } else if self.startup_stage == 1 {
-            self.startup_stage = 2;
+        } else if self.startup_stage < 30 {
+            // Wait for ~30 frames to let egui and the OS settle window metrics
+            self.startup_stage += 1;
             ctx.request_repaint();
-        } else if self.startup_stage == 2 {
-            if let Some(splash) = &mut self.splash {
-                splash.reset_timer(ctx);
-            }
+            return;
+        } else if self.startup_stage == 30 {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                 WINDOW_WIDTH,
                 WINDOW_HEIGHT,
@@ -192,18 +191,22 @@ impl SettingsApp {
             let should_be_visible = !self.config.start_in_tray || self.tray_icon.is_none();
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(should_be_visible));
 
-            self.startup_stage = 3;
+            self.startup_stage = 31;
+        }
+    }
 
-            // Trigger auto-update check at startup
-            if let Some(updater) = &self.updater {
-                updater.check_for_updates();
-            }
+    /// Called exactly once when the splash screen finishes its exit animation.
+    /// Use this for intrusive background tasks that might cause UI stutter.
+    fn on_splash_finished(&mut self) {
+        // 1. Trigger auto-update check (Network/Disk IO)
+        if let Some(updater) = &self.updater {
+            updater.check_for_updates();
+        }
 
-            // Start favorite bubble if enabled and has favorites
-            let has_favorites = self.config.presets.iter().any(|p| p.is_favorite);
-            if self.config.show_favorite_bubble && has_favorites {
-                crate::overlay::favorite_bubble::show_favorite_bubble();
-            }
+        // 2. Start favorite bubble (WebView creation)
+        let has_favorites = self.config.presets.iter().any(|p| p.is_favorite);
+        if self.config.show_favorite_bubble && has_favorites {
+            crate::overlay::favorite_bubble::show_favorite_bubble();
         }
     }
 
@@ -241,6 +244,7 @@ impl SettingsApp {
                 }
                 crate::gui::splash::SplashStatus::Finished => {
                     self.splash = None;
+                    self.on_splash_finished();
                 }
             }
         }

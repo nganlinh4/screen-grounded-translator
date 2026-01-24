@@ -304,7 +304,7 @@ impl SettingsApp {
             tray_quit_item,
             tray_favorite_bubble_item,
             last_ui_language: initial_ui_language,
-            tray_retry_timer: -5.0, // Negative to force immediate retry if needed
+            tray_retry_timer: 4.0, // Delay tray creation to prevent startup stutter
             event_rx: rx,
             is_quitting: false,
             run_at_startup,

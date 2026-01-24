@@ -36,9 +36,7 @@ pub mod tray_popup; // Custom non-blocking tray popup menu
 pub use recording::{
     is_recording_overlay_active, show_recording_overlay, stop_recording_and_submit,
 };
-pub use selection::{
-    is_selection_overlay_active, is_selection_overlay_active_and_dismiss, show_selection_overlay,
-};
+pub use selection::{is_selection_overlay_active, show_selection_overlay};
 pub use text_selection::show_text_selection_tag;
 // Use the new WebView2-based realtime overlay
 lazy_static::lazy_static! {

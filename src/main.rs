@@ -405,9 +405,9 @@ fn main() -> eframe::Result<()> {
             }
         };
 
-        // 1. Wait briefly for main window to initialize and show
-        // This prevents the warmup window from interfering with main window visibility
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // 1. Wait until splash is COMPLETELY finished before starting background resource preparation.
+        // This ensures the animation and sound remain interference-free.
+        std::thread::sleep(std::time::Duration::from_millis(4000));
 
         // 1. Warmup tray popup (with is_warmup=true to avoid focus stealing)
         wait_for_popup_close();

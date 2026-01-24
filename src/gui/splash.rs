@@ -5,6 +5,9 @@ use std::f32::consts::PI;
 
 use crate::gui::icons::{paint_icon, Icon};
 use crate::{WINDOW_HEIGHT, WINDOW_WIDTH};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 
 // --- CONFIGURATION ---
 const ANIMATION_DURATION: f32 = 3.6;
@@ -149,6 +152,146 @@ struct Voxel {
     is_debris: bool,
 }
 
+// --- AUDIO ENGINE ---
+// Shared state between main thread and audio thread
+struct SharedAudioState {
+    physics_t: f32,
+    warp_progress: f32,
+    impact_trigger: bool,
+    is_dark: bool,
+    is_finished: bool,
+}
+
+// Internal state used ONLY by the audio thread (no lock needed)
+struct RenderState {
+    phase: f32,
+    noise_phase: f32,
+    impact_phase: f32,
+}
+
+struct SplashAudio {
+    _stream: cpal::Stream,
+    state: Arc<Mutex<SharedAudioState>>,
+}
+
+impl SplashAudio {
+    fn new() -> Option<Self> {
+        let host = cpal::default_host();
+        let device = host.default_output_device()?;
+        let config = device.default_output_config().ok()?;
+
+        let state = Arc::new(Mutex::new(SharedAudioState {
+            physics_t: 0.0,
+            warp_progress: 0.0,
+            impact_trigger: false,
+            is_dark: false,
+            is_finished: false,
+        }));
+
+        let state_clone = Arc::clone(&state);
+        let sample_rate = u32::from(config.sample_rate()) as f32;
+        let channels = config.channels() as usize;
+
+        // Internal rendering state stays in the closure
+        let mut r = RenderState {
+            phase: 0.0,
+            noise_phase: 0.0,
+            impact_phase: 0.0,
+        };
+
+        let stream = device
+            .build_output_stream(
+                &config.into(),
+                move |data: &mut [f32], _| {
+                    let mut s_lock = state_clone.lock().unwrap();
+                    if s_lock.is_finished {
+                        for x in data.iter_mut() {
+                            *x = 0.0;
+                        }
+                        return;
+                    }
+
+                    // Snapshot shared state once per buffer to minimize lock time
+                    let physics_t = s_lock.physics_t;
+                    let warp_progress = s_lock.warp_progress;
+                    let is_dark = s_lock.is_dark;
+                    if s_lock.impact_trigger {
+                        r.impact_phase = 1.0;
+                        s_lock.impact_trigger = false;
+                    }
+                    drop(s_lock); // Release lock!
+
+                    for frame in data.chunks_mut(channels) {
+                        // 0. ENVELOPE
+                        let attack = (physics_t / 0.05).min(1.0);
+                        let decay = (1.0 - (physics_t - 1.6).max(0.0) / 0.8).max(0.0);
+                        let env = attack * decay;
+
+                        // 1. VOXEL SHIMMER
+                        let theme_freq = if is_dark { 110.0 } else { 220.0 };
+                        let base_freq = theme_freq + (physics_t * 40.0);
+                        let vol_vox = env * 0.03;
+
+                        let s1 = (r.phase * base_freq * 2.0 * PI / sample_rate).sin();
+                        let s2 = (r.phase * base_freq * 1.5 * 2.0 * PI / sample_rate).sin();
+                        let s3 = (r.phase * base_freq * 2.5 * 2.0 * PI / sample_rate).sin();
+                        let voxels = (s1 + s2 * 0.5 + s3 * 0.3) * vol_vox;
+
+                        // 2. COSMIC WIND
+                        let raw_noise = ((r.phase * 0.013).sin() * 43758.5453).fract();
+                        r.noise_phase =
+                            (r.noise_phase * 0.994 + (raw_noise - 0.5) * 0.012).clamp(-1.0, 1.0);
+                        let wind = r.noise_phase * 0.012 * env;
+
+                        // 3. ASSEMBLY IMPACT
+                        let mut impact = 0.0;
+                        if r.impact_phase > 0.001 {
+                            let f_base = 180.0 + r.impact_phase * 360.0;
+                            let h1 = (r.phase * f_base * 1.0 * 2.0 * PI / sample_rate).sin();
+                            let h2 = (r.phase * f_base * 2.1 * 2.0 * PI / sample_rate).sin();
+                            let h3 = (r.phase * f_base * 3.5 * 2.0 * PI / sample_rate).sin();
+                            impact = (h1 + h2 * 0.4 + h3 * 0.2) * r.impact_phase * 0.05;
+                            r.impact_phase *= 0.9995;
+                        }
+
+                        // 4. WARP WHOOSH
+                        let mut whoosh = 0.0;
+                        if warp_progress > 0.0001 {
+                            let p = warp_progress;
+                            let whoosh_freq = 80.0 + p.powf(1.5) * 4500.0;
+                            let attack_w = (p / 0.1).min(1.0);
+                            let decay_w = (1.0 - (p - 0.15).max(0.0) / 0.7).max(0.0);
+                            let whoosh_vol = attack_w * decay_w * 0.07;
+                            whoosh =
+                                (r.phase * whoosh_freq * 2.0 * PI / sample_rate).sin() * whoosh_vol;
+                        }
+
+                        let mixed = (voxels + wind + impact + whoosh).clamp(-1.0, 1.0);
+                        for sample in frame.iter_mut() {
+                            *sample = mixed;
+                        }
+                        r.phase += 1.0;
+                    }
+                },
+                |err| crate::log_info!("Splash audio stream error: {}", err),
+                None,
+            )
+            .ok()?;
+
+        stream.play().ok()?;
+        Some(Self {
+            _stream: stream,
+            state,
+        })
+    }
+}
+
+fn rand_f32(phase: f32) -> f32 {
+    let mut state = (phase * 1000.0) as u32;
+    state = state.wrapping_mul(1103515245).wrapping_add(12345);
+    (state as f32) / (u32::MAX as f32)
+}
+
 pub struct SplashScreen {
     start_time: f64,
     voxels: Vec<Voxel>,
@@ -161,6 +304,10 @@ pub struct SplashScreen {
     loading_text: String,
     exit_start_time: Option<f64>,
     is_dark: bool,
+    audio: Arc<Mutex<Option<SplashAudio>>>,
+    has_played_impact: bool,
+    // Pre-allocated buffers for performance (zero allocation in hot path)
+    draw_list: RefCell<Vec<(f32, Pos2, f32, Color32, bool, bool)>>,
 }
 
 pub enum SplashStatus {
@@ -171,19 +318,38 @@ pub enum SplashStatus {
 impl SplashScreen {
     pub fn new(ctx: &egui::Context) -> Self {
         let is_dark = ctx.style().visuals.dark_mode;
-        Self {
+        let audio_container = Arc::new(Mutex::new(None));
+        let audio_container_clone = audio_container.clone();
+
+        std::thread::spawn(move || {
+            if let Some(audio) = SplashAudio::new() {
+                if let Ok(mut lock) = audio_container_clone.lock() {
+                    *lock = Some(audio);
+                }
+            }
+        });
+
+        let mut slf = Self {
             start_time: ctx.input(|i| i.time),
-            voxels: Vec::with_capacity(500),
-            clouds: Vec::new(),
-            stars: Vec::new(),
-            moon_features: Vec::new(),
+            voxels: Vec::with_capacity(600),
+            clouds: Vec::with_capacity(20),
+            stars: Vec::with_capacity(200),
+            moon_features: Vec::with_capacity(100),
             init_done: false,
             mouse_influence: Vec2::ZERO,
             mouse_world_pos: Vec3::ZERO,
             loading_text: "TRANSLATING...".to_string(),
             exit_start_time: None,
             is_dark,
-        }
+            audio: audio_container,
+            has_played_impact: false,
+            draw_list: RefCell::new(Vec::with_capacity(600)),
+        };
+
+        // Immediately init the heavy scene data on creation
+        // instead of waiting for the first update frame.
+        slf.init_scene();
+        slf
     }
 
     pub fn reset_timer(&mut self, ctx: &egui::Context) {
@@ -351,9 +517,6 @@ impl SplashScreen {
 
     pub fn update(&mut self, ctx: &egui::Context) -> SplashStatus {
         self.is_dark = ctx.style().visuals.dark_mode;
-        if !self.init_done {
-            self.init_scene();
-        }
 
         let now = ctx.input(|i| i.time);
         let dt = ctx.input(|i| i.stable_dt);
@@ -384,9 +547,34 @@ impl SplashScreen {
         if let Some(exit_start) = self.exit_start_time {
             let dt = (now - exit_start) as f32;
             if dt > EXIT_DURATION {
+                if let Ok(mut lock) = self.audio.lock() {
+                    if let Some(audio) = lock.as_mut() {
+                        if let Ok(mut s) = audio.state.lock() {
+                            s.is_finished = true;
+                        }
+                    }
+                }
                 return SplashStatus::Finished;
             }
             warp_progress = (dt / EXIT_DURATION).clamp(0.0, 1.0); // Linear global progress, curves applied per-voxel
+        }
+
+        // --- UPDATE AUDIO STATE ---
+        if let Ok(mut lock) = self.audio.lock() {
+            if let Some(audio) = lock.as_mut() {
+                if let Ok(mut s) = audio.state.lock() {
+                    s.physics_t = physics_t;
+                    s.warp_progress = warp_progress;
+                    s.is_dark = self.is_dark;
+
+                    // Trigger impact once when assembly is nearly complete
+                    if physics_t > 1.6 && !self.has_played_impact {
+                        s.impact_trigger = true;
+                        drop(s); // release lock before updating self
+                        self.has_played_impact = true;
+                    }
+                }
+            }
         }
 
         ctx.request_repaint();
@@ -769,12 +957,14 @@ impl SplashScreen {
             let ray_count = 12;
             let ray_rot = t * 0.1;
 
+            let mut mesh = egui::Mesh::default();
+            let c1 = Color32::from_white_alpha(55);
+
             for i in 0..ray_count {
                 let angle = (i as f32 / ray_count as f32) * PI * 2.0 + ray_rot;
                 let next_angle = ((i as f32 + 0.5) / ray_count as f32) * PI * 2.0 + ray_rot;
 
-                // Draw a large fan wedge (Original Style: Clear Center -> Visible Edge)
-                let mut mesh = egui::Mesh::default();
+                let v_idx = mesh.vertices.len() as u32;
                 mesh.vertices.push(egui::epaint::Vertex {
                     pos: sun_pos,
                     uv: Pos2::ZERO,
@@ -782,9 +972,6 @@ impl SplashScreen {
                 });
 
                 let ray_len = 1200.0;
-                // Increased alpha from 30 to 55 to make it "pop"
-                let c1 = Color32::from_white_alpha(55);
-
                 let p1 = sun_pos + Vec2::new(angle.cos() * ray_len, angle.sin() * ray_len);
                 let p2 =
                     sun_pos + Vec2::new(next_angle.cos() * ray_len, next_angle.sin() * ray_len);
@@ -800,9 +987,9 @@ impl SplashScreen {
                     color: c1,
                 });
 
-                mesh.add_triangle(0, 1, 2);
-                painter.add(mesh);
+                mesh.add_triangle(v_idx, v_idx + 1, v_idx + 2);
             }
+            painter.add(mesh);
         }
 
         // --- LAYER 2: THE REALISTIC PINK MOON ---
@@ -1109,9 +1296,10 @@ impl SplashScreen {
         // Light direction highlight offset (Top-Left)
         let light_dir_2d = Vec2::new(-0.4, -0.4);
 
-        // Store: (Z-depth, ScreenPos, Radius, BaseColor, IsGlowing/White, IsDebris)
-        let mut draw_list: Vec<(f32, Pos2, f32, Color32, bool, bool)> =
-            Vec::with_capacity(self.voxels.len());
+        // Use pre-allocated buffer (Interior Mutability)
+        let mut draw_list_ref = self.draw_list.borrow_mut();
+        draw_list_ref.clear();
+        let draw_list = &mut *draw_list_ref;
 
         let sphere_radius_base = 8.5; // Overlap for pipe look
 
@@ -1211,7 +1399,7 @@ impl SplashScreen {
         // Sort back-to-front (Z-Painter's Algorithm)
         draw_list.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
 
-        for (_, pos, r, col, is_white_voxel, is_debris) in draw_list {
+        for (_, pos, r, col, is_white_voxel, is_debris) in draw_list.iter().copied() {
             // 1. Shadow/Base (The "Rim" on the shadow side)
             // Use the clipped cloud painter for debris in Day mode so they don't enter the sea
             let p = if !self.is_dark && is_debris {
@@ -1355,6 +1543,7 @@ impl SplashScreen {
                 );
             }
         }
+
         theme_clicked
     }
 }
