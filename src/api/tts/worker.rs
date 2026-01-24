@@ -125,6 +125,7 @@ pub fn run_socket_worker(manager: Arc<TtsManager>) {
             eprintln!("TTS: Failed to send setup: {}", e);
             let _ = socket.close(None);
             let _ = tx.send(AudioEvent::End);
+            clear_tts_state(request.req.hwnd);
             std::thread::sleep(Duration::from_secs(2));
             continue;
         }
@@ -186,6 +187,7 @@ pub fn run_socket_worker(manager: Arc<TtsManager>) {
         if !setup_complete {
             let _ = socket.close(None);
             let _ = tx.send(AudioEvent::End);
+            clear_tts_state(request.req.hwnd);
             continue;
         }
 
@@ -193,6 +195,7 @@ pub fn run_socket_worker(manager: Arc<TtsManager>) {
         if let Err(e) = send_tts_text(&mut socket, &request.req.text) {
             eprintln!("TTS: Failed to send text: {}", e);
             let _ = tx.send(AudioEvent::End);
+            clear_tts_state(request.req.hwnd);
             let _ = socket.close(None);
             continue;
         }
@@ -242,6 +245,7 @@ pub fn run_socket_worker(manager: Arc<TtsManager>) {
                 Err(e) => {
                     eprintln!("TTS: Read error: {}", e);
                     let _ = tx.send(AudioEvent::End);
+                    clear_tts_state(request.req.hwnd);
                     break;
                 }
             }

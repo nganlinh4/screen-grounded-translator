@@ -172,7 +172,7 @@ impl TtsManager {
 
     /// Check if this request ID is currently active
     pub fn is_speaking(&self, _request_id: u64) -> bool {
-        false
+        self.has_pending_audio()
     }
 
     /// Check if there's any pending TTS audio (in work queue, playback queue, or currently playing)
