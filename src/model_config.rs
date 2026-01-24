@@ -304,19 +304,7 @@ lazy_static::lazy_static! {
             "1440 요청/일",
             "1440 requests/day"
         ),
-        ModelConfig::new(
-            "cerebras_zai_glm",
-            "cerebras",
-            "C-Rất chính xác",
-            "C-매우 정확함",
-            "C-Very Accurate",
-            "zai-glm-4.6",
-            ModelType::Text,
-            true,
-            "100 lượt/ngày",
-            "100 요청/일",
-            "100 requests/day"
-        ),
+
         ModelConfig::new(
             "cerebras_zai_glm_4_7",
             "cerebras",
