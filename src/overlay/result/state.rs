@@ -189,6 +189,7 @@ pub struct WindowState {
     pub on_speaker_btn: bool, // Hover state for speaker button
     pub tts_request_id: u64,  // Active TTS request ID (0 = not speaking)
     pub tts_loading: bool,    // True when TTS is loading/connecting (shows spinner)
+    pub opacity_percent: u8,  // Transparency level (0-100)
 }
 
 // SAFETY: Raw pointers are not Send/Sync, but we only use them within the main thread

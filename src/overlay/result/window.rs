@@ -120,7 +120,7 @@ pub fn create_result_window(
         if is_any_markdown_mode {
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
             let _ = super::markdown_view::create_markdown_webview(hwnd, &initial_text, false);
-            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 220, LWA_ALPHA);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 217, LWA_ALPHA);
         }
 
         let mut physics = CursorPhysics::default();
@@ -200,11 +200,12 @@ pub fn create_result_window(
                     on_speaker_btn: false,
                     tts_request_id: 0,
                     tts_loading: false,
+                    opacity_percent: 85,
                 },
             );
         }
 
-        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 220, LWA_ALPHA);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 217, LWA_ALPHA);
 
         let corner_preference = 2u32;
         let _ = DwmSetWindowAttribute(

@@ -890,7 +890,7 @@ function generateButtonsHTML(hwnd, state) {{
     </div>`;
     
     // Opacity button - Expanding on hover, positioned left of Copy, grows to the LEFT
-    const opacityValue = window.opacityValues?.[hwnd] || 100;
+    const opacityValue = state.opacityPercent || 100;
     buttons += `<div class="btn opacity-btn-expandable ${{hideClass}}" title="${{window.L10N.opacity}}">
         <div class="opacity-slider-wrapper">
             <input type="range" class="opacity-slider-inline" min="10" max="100" value="${{opacityValue}}" 
@@ -1672,7 +1672,17 @@ fn handle_ipc_message(body: &str) {
             }
             "set_opacity" => {
                 if let Some(value) = json.get("value").and_then(|v| v.as_f64()) {
+                    let percent = value as u8;
                     let alpha = ((value / 100.0) * 255.0) as u8;
+
+                    // Update state so it persists across button canvas refreshes
+                    {
+                        let mut states = WINDOW_STATES.lock().unwrap();
+                        if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+                            state.opacity_percent = percent;
+                        }
+                    }
+
                     unsafe {
                         use windows::Win32::UI::WindowsAndMessaging::{
                             SetLayeredWindowAttributes, LWA_ALPHA,
@@ -1809,10 +1819,10 @@ fn send_windows_update() {
                 "ttsLoading": state.map(|s| s.tts_loading).unwrap_or(false),
                 "ttsSpeaking": state.map(|s| s.tts_request_id != 0 && !s.tts_loading).unwrap_or(false),
                 "isMarkdown": state.map(|s| s.is_markdown_mode).unwrap_or(false),
-                "isMarkdown": state.map(|s| s.is_markdown_mode).unwrap_or(false),
                 "isBrowsing": state.map(|s| s.is_browsing).unwrap_or(false),
                 "isEditing": state.map(|s| s.is_editing).unwrap_or(false),
                 "inputText": state.map(|s| s.input_text.clone()).unwrap_or_default(),
+                "opacityPercent": state.map(|s| s.opacity_percent).unwrap_or(100),
             });
 
             // Scale physical coordinates to logical coordinates for WebView
