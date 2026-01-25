@@ -307,7 +307,7 @@ pub unsafe fn handle_lbutton_up(hwnd: HWND) -> LRESULT {
 pub unsafe fn handle_rbutton_up(hwnd: HWND) -> LRESULT {
     let _ = ReleaseCapture();
     button_canvas::set_drag_mode(false); // Disable unclipped drag mode
-    let mut perform_action = false;
+    let mut close_group = false;
 
     {
         let mut states = WINDOW_STATES.lock().unwrap();
@@ -315,47 +315,57 @@ pub unsafe fn handle_rbutton_up(hwnd: HWND) -> LRESULT {
             match &state.interaction_mode {
                 InteractionMode::DraggingGroup(_) => {
                     if !state.has_moved_significantly {
-                        perform_action = true;
+                        close_group = true;
                     }
                 }
                 _ => {
-                    perform_action = true;
+                    close_group = true;
                 }
             }
             state.interaction_mode = InteractionMode::None;
         }
     }
 
-    if perform_action {
-        let text_len = GetWindowTextLengthW(hwnd) + 1;
-        let mut buf = vec![0u16; text_len as usize];
-        GetWindowTextW(hwnd, &mut buf);
-        let text = String::from_utf16_lossy(&buf[..text_len as usize - 1]).to_string();
-        crate::overlay::utils::copy_to_clipboard(&text, hwnd);
-        {
-            let mut states = WINDOW_STATES.lock().unwrap();
-            if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-                state.copy_success = true;
+    if close_group {
+        let group = crate::overlay::result::state::get_window_group(hwnd);
+        for (h, _) in group {
+            if IsWindow(Some(h)).as_bool() {
+                let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         }
-        SetTimer(Some(hwnd), 1, 1500, None);
     }
     LRESULT(0)
 }
 
-pub unsafe fn handle_mbutton_up() -> LRESULT {
-    let mut targets = Vec::new();
+pub unsafe fn handle_mbutton_up(hwnd: HWND) -> LRESULT {
+    let _ = ReleaseCapture();
+    button_canvas::set_drag_mode(false); // Disable unclipped drag mode
+
+    let mut close_all = false;
     {
-        if let Ok(states) = WINDOW_STATES.lock() {
-            for (&hwnd_int, _) in states.iter() {
-                targets.push(HWND(hwnd_int as *mut std::ffi::c_void));
+        let mut states = WINDOW_STATES.lock().unwrap();
+        if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+            if !state.has_moved_significantly {
+                close_all = true;
             }
+            state.interaction_mode = InteractionMode::None;
         }
     }
 
-    for target in targets {
-        if IsWindow(Some(target)).as_bool() {
-            let _ = PostMessageW(Some(target), WM_CLOSE, WPARAM(0), LPARAM(0));
+    if close_all {
+        let mut targets = Vec::new();
+        {
+            if let Ok(states) = WINDOW_STATES.lock() {
+                for (&hwnd_int, _) in states.iter() {
+                    targets.push(HWND(hwnd_int as *mut std::ffi::c_void));
+                }
+            }
+        }
+
+        for target in targets {
+            if IsWindow(Some(target)).as_bool() {
+                let _ = PostMessageW(Some(target), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
         }
     }
     LRESULT(0)

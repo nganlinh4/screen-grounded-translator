@@ -130,7 +130,8 @@ pub unsafe fn handle_set_cursor(hwnd: HWND) -> LRESULT {
         SetCursor(Some(LoadCursorW(None, cursor_id).unwrap()));
         LRESULT(1)
     } else {
-        SetCursor(Some(HCURSOR(std::ptr::null_mut())));
+        // Hide system cursor when over window body to let procedural broom be the visual
+        SetCursor(None);
         LRESULT(1)
     }
 }
@@ -175,60 +176,15 @@ pub unsafe fn handle_rbutton_down(hwnd: HWND, _lparam: LPARAM) -> LRESULT {
     let mut screen_pt = POINT::default();
     let _ = GetCursorPos(&mut screen_pt);
 
-    let mut group_snapshot = Vec::new();
-    let mut token_to_match = None;
-
-    {
-        let states = WINDOW_STATES.lock().unwrap();
-        if let Some(state) = states.get(&(hwnd.0 as isize)) {
-            token_to_match = state.cancellation_token.clone();
-        }
-
-        // Strategy 1: Cancellation Token (Group Identity)
-        if let Some(token) = token_to_match {
-            for (&h_val, s) in states.iter() {
-                if let Some(ref t) = s.cancellation_token {
-                    if Arc::ptr_eq(&token, t) {
-                        let h = HWND(h_val as *mut std::ffi::c_void);
-                        let mut r = RECT::default();
-                        let _ = GetWindowRect(h, &mut r);
-                        group_snapshot.push((h, r));
-                    }
-                }
-            }
-        }
-
-        // Strategy 2: Linked Window Chain (Fallback/Augment if Token logic was insufficient)
-        // If we found 0 or 1 windows, it might just be an un-tokenized chain.
-        if group_snapshot.len() <= 1 {
-            group_snapshot.clear(); // Restart to build full chain
-
-            let mut visited = std::collections::HashSet::new();
-            let mut queue = std::collections::VecDeque::new();
-
-            queue.push_back(hwnd);
-            visited.insert(hwnd.0);
-
-            while let Some(current) = queue.pop_front() {
-                let mut r = RECT::default();
-                let _ = GetWindowRect(current, &mut r);
-                group_snapshot.push((current, r));
-
-                // Find neighbor in state map
-                if let Some(s) = states.get(&(current.0 as isize)) {
-                    if let Some(linked) = s.linked_window {
-                        // Basic validation that window is still managed
-                        if states.contains_key(&(linked.0 as isize)) {
-                            if !visited.contains(&linked.0) {
-                                visited.insert(linked.0);
-                                queue.push_back(linked);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let group = crate::overlay::result::state::get_window_group(hwnd);
+    let group_snapshot: Vec<(HWND, RECT)> = group
+        .into_iter()
+        .map(|(h, _)| {
+            let mut r = RECT::default();
+            let _ = GetWindowRect(h, &mut r);
+            (h, r)
+        })
+        .collect();
 
     {
         let mut states = WINDOW_STATES.lock().unwrap();
@@ -241,6 +197,36 @@ pub unsafe fn handle_rbutton_down(hwnd: HWND, _lparam: LPARAM) -> LRESULT {
 
     SetCapture(hwnd);
     button_canvas::set_drag_mode(true); // Enable unclipped drag mode for smooth UI
+    LRESULT(0)
+}
+
+pub unsafe fn handle_mbutton_down(hwnd: HWND, _lparam: LPARAM) -> LRESULT {
+    let mut screen_pt = POINT::default();
+    let _ = GetCursorPos(&mut screen_pt);
+
+    let mut targets = Vec::new();
+    {
+        let states = WINDOW_STATES.lock().unwrap();
+        for &hwnd_int in states.keys() {
+            let h = HWND(hwnd_int as *mut std::ffi::c_void);
+            let mut r = RECT::default();
+            if GetWindowRect(h, &mut r).is_ok() {
+                targets.push((h, r));
+            }
+        }
+    }
+
+    {
+        let mut states = WINDOW_STATES.lock().unwrap();
+        if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+            state.drag_start_mouse = screen_pt;
+            state.has_moved_significantly = false;
+            state.interaction_mode = InteractionMode::DraggingGroup(targets);
+        }
+    }
+
+    SetCapture(hwnd);
+    button_canvas::set_drag_mode(true);
     LRESULT(0)
 }
 
@@ -487,18 +473,37 @@ pub unsafe fn handle_mouse_move(hwnd: HWND, lparam: LPARAM) -> LRESULT {
         }
     } // Lock released
 
-    // Execute deferred group moves
-    for (h, x, y) in group_moves {
-        let _ = SetWindowPos(
-            h,
-            Some(HWND::default()),
-            x,
-            y,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        );
-        button_canvas::update_window_position(h);
+    // Execute deferred group moves using DeferWindowPos for performance
+    if !group_moves.is_empty() {
+        unsafe {
+            if let Ok(mut hdwp) = BeginDeferWindowPos(group_moves.len() as i32) {
+                for (h, x, y) in group_moves {
+                    hdwp = DeferWindowPos(
+                        hdwp,
+                        h,
+                        None,
+                        x,
+                        y,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+                    .unwrap_or(hdwp);
+                    // Single-window position update (optimized to avoid redundant GetWindowRect)
+                    let mut r = RECT::default();
+                    if GetWindowRect(h, &mut r).is_ok() {
+                        button_canvas::update_window_position_direct(
+                            h,
+                            x,
+                            y,
+                            r.right - r.left,
+                            r.bottom - r.top,
+                        );
+                    }
+                }
+                let _ = EndDeferWindowPos(hdwp);
+            }
+        }
     }
 
     LRESULT(0)

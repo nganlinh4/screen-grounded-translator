@@ -8446,6 +8446,53 @@ let img = image::load_from_memory(icon_bytes).expect("Failed to load app icon");
 rgba: img_rgba.into_vec(),
 </file>
 
+<file path="src/overlay/favorite_bubble/render.rs">
+use std::sync::atomic::Ordering;
+⋮----
+pub fn update_bubble_visual(hwnd: HWND) {
+⋮----
+LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
+⋮----
+let hdc_screen = GetDC(None);
+let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
+let bubble_size = BUBBLE_SIZE.load(Ordering::SeqCst);
+⋮----
+CreateDIBSection(Some(hdc_mem), &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+let old_bm = SelectObject(hdc_mem, hbm.into());
+if !bits.is_null() {
+⋮----
+let is_hovered = IS_HOVERED.load(Ordering::SeqCst);
+let is_expanded = IS_EXPANDED.load(Ordering::SeqCst);
+draw_bubble_pixels(pixels, bubble_size, is_hovered || is_expanded);
+⋮----
+let _ = GetWindowRect(hwnd, &mut rect);
+⋮----
+let _ = UpdateLayeredWindow(
+⋮----
+Some(hdc_screen),
+Some(&pt_dst),
+Some(&size),
+Some(hdc_mem),
+Some(&pt_src),
+COLORREF(0),
+Some(&blend),
+⋮----
+let _ = SelectObject(hdc_mem, old_bm);
+let _ = DeleteObject(hbm.into());
+let _ = DeleteDC(hdc_mem);
+let _ = ReleaseDC(None, hdc_screen);
+⋮----
+fn draw_bubble_pixels(pixels: &mut [u32], size: i32, _is_active: bool) {
+let opacity = CURRENT_OPACITY.load(Ordering::SeqCst);
+let is_dark = LAST_THEME_IS_DARK.load(Ordering::SeqCst);
+let icon_data = get_icon_data(size, is_dark);
+if !icon_data.is_empty() {
+⋮----
+if src_idx + 3 < icon_data.len() {
+⋮----
+let dist = (dx * dx + dy * dy).sqrt();
+</file>
+
 <file path="src/overlay/favorite_bubble/state.rs">
 use std::cell::RefCell;
 ⋮----
@@ -8721,6 +8768,99 @@ LPARAM(0),
 WM_DESTROY => LRESULT(0),
 </file>
 
+<file path="src/overlay/result/event_handler/click_actions.rs">
+use std::mem::size_of;
+⋮----
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+⋮----
+use windows::core::PCWSTR;
+use windows::Win32::Graphics::Gdi::InvalidateRect;
+⋮----
+use super::misc::WM_CREATE_WEBVIEW;
+⋮----
+use crate::overlay::utils::to_wstring;
+pub unsafe fn handle_lbutton_up(hwnd: HWND) -> LRESULT {
+let _ = ReleaseCapture();
+⋮----
+let mut states = WINDOW_STATES.lock().unwrap();
+if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+let was_resizing = matches!(state.interaction_mode, InteractionMode::Resizing(_));
+⋮----
+if let Some(last) = state.text_history.pop() {
+let current_text_for_redo = state.full_text.clone();
+prev_text = Some(last.clone());
+⋮----
+if !current_text_for_redo.is_empty() {
+state.redo_history.push(current_text_for_redo);
+⋮----
+let wide_text = to_wstring(&txt);
+let _ = SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
+⋮----
+let _ = InvalidateRect(Some(hwnd), None, false);
+⋮----
+if let Some(redo_text) = state.redo_history.pop() {
+let current_text_for_undo = state.full_text.clone();
+next_text = Some(redo_text.clone());
+⋮----
+if !current_text_for_undo.is_empty() {
+state.text_history.push(current_text_for_undo);
+⋮----
+let text_len = GetWindowTextLengthW(hwnd) + 1;
+let mut buf = vec![0u16; text_len as usize];
+GetWindowTextW(hwnd, &mut buf);
+let text = String::from_utf16_lossy(&buf[..text_len as usize - 1]).to_string();
+⋮----
+SetTimer(Some(hwnd), 1, 1500, None);
+⋮----
+let states = WINDOW_STATES.lock().unwrap();
+if let Some(state) = states.get(&(hwnd.0 as isize)) {
+⋮----
+(state.is_markdown_mode, state.full_text.clone())
+⋮----
+let _ = PostMessageW(Some(hwnd), WM_CREATE_WEBVIEW, WPARAM(0), LPARAM(0));
+SetTimer(Some(hwnd), 2, 30, None);
+⋮----
+let _ = SetWindowPos(
+⋮----
+Some(HWND::default()),
+⋮----
+let _ = KillTimer(Some(hwnd), 2);
+⋮----
+let _ = TrackMouseEvent(&mut tme);
+⋮----
+state.full_text.clone()
+⋮----
+if !full_text.is_empty() {
+⋮----
+state.full_text.clone(),
+⋮----
+&& crate::api::tts::TTS_MANAGER.is_speaking(current_tts_id)
+⋮----
+crate::api::tts::TTS_MANAGER.stop();
+⋮----
+} else if !full_text.is_empty() {
+⋮----
+let request_id = crate::api::tts::TTS_MANAGER.speak(&full_text, hwnd.0 as isize);
+⋮----
+if IsWindow(Some(linked)).as_bool() {
+let _ = PostMessageW(Some(linked), WM_CLOSE, WPARAM(0), LPARAM(0));
+⋮----
+let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+⋮----
+LRESULT(0)
+⋮----
+pub unsafe fn handle_rbutton_up(hwnd: HWND) -> LRESULT {
+⋮----
+pub unsafe fn handle_mbutton_up() -> LRESULT {
+⋮----
+if let Ok(states) = WINDOW_STATES.lock() {
+for (&hwnd_int, _) in states.iter() {
+targets.push(HWND(hwnd_int as *mut std::ffi::c_void));
+⋮----
+if IsWindow(Some(target)).as_bool() {
+let _ = PostMessageW(Some(target), WM_CLOSE, WPARAM(0), LPARAM(0));
+</file>
+
 <file path="src/overlay/result/event_handler/misc.rs">
 use std::sync::Arc;
 ⋮----
@@ -8946,6 +9086,363 @@ group_moves.push((*h, new_x, new_y));
 let _ = InvalidateRect(Some(hwnd), None, false);
 ⋮----
 pub unsafe fn handle_mouse_leave(hwnd: HWND) -> LRESULT {
+</file>
+
+<file path="src/overlay/result/paint.rs">
+use super::layout::should_show_buttons;
+⋮----
+use std::mem::size_of;
+use windows::core::w;
+⋮----
+unsafe fn measure_text_bounds(
+⋮----
+let hfont = CreateFontW(
+⋮----
+w!("Google Sans Flex"),
+⋮----
+let old_font = SelectObject(hdc, hfont.into());
+⋮----
+DrawTextW(
+⋮----
+SelectObject(hdc, old_font);
+let _ = DeleteObject(hfont.into());
+⋮----
+pub fn create_bitmap_from_pixels(pixels: &[u32], w: i32, h: i32) -> HBITMAP {
+⋮----
+let hdc = GetDC(None);
+⋮----
+let hbm = CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+if !bits.is_null() {
+⋮----
+pixels.as_ptr() as *const u8,
+⋮----
+pixels.len() * 4,
+⋮----
+ReleaseDC(None, hdc);
+⋮----
+fn dist_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+⋮----
+let h = (pax * bax + pay * bay) / (bax * bax + bay * bay).max(0.001);
+let h = h.clamp(0.0, 1.0);
+⋮----
+(dx * dx + dy * dy).sqrt()
+⋮----
+fn sd_box(px: f32, py: f32, cx: f32, cy: f32, w: f32, h: f32) -> f32 {
+let dx = (px - cx).abs() - w;
+let dy = (py - cy).abs() - h;
+(dx.max(0.0).powi(2) + dy.max(0.0).powi(2)).sqrt() + dx.max(dy).min(0.0)
+⋮----
+pub fn paint_window(hwnd: HWND) {
+⋮----
+let hdc = BeginPaint(hwnd, &mut ps);
+⋮----
+let _ = GetClientRect(hwnd, &mut rect);
+⋮----
+let mut states = WINDOW_STATES.lock().unwrap();
+if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+if state.bg_bitmap.is_invalid() || state.bg_w != width || state.bg_h != height {
+if !state.bg_bitmap.is_invalid() {
+let _ = DeleteObject(state.bg_bitmap.into());
+⋮----
+CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut p_bg_bits, None, 0)
+.unwrap();
+if !p_bg_bits.is_null() {
+⋮----
+pixels.fill(col);
+⋮----
+.duration_since(std::time::UNIX_EPOCH)
+.map(|d| d.as_millis() as u32)
+.unwrap_or(0);
+let time_since_last_resize = now.wrapping_sub(state.last_resize_time);
+⋮----
+.iter()
+.map(|p| (p.x, p.y, p.life, p.size, p.color))
+.collect();
+⋮----
+Some((
+⋮----
+&& crate::api::tts::TTS_MANAGER.is_speaking(state.tts_request_id);
+⋮----
+state.text_history.len(),
+state.redo_history.len(),
+⋮----
+state.graphics_mode.clone(),
+state.preset_prompt.clone(),
+state.input_text.clone(),
+⋮----
+"standard".to_string(),
+⋮----
+let mem_dc = CreateCompatibleDC(Some(hdc));
+⋮----
+let scratch_bitmap = CreateDIBSection(
+Some(hdc),
+⋮----
+let old_scratch = SelectObject(mem_dc, scratch_bitmap.into());
+if !cached_bg_bm.is_invalid() {
+let cache_dc = CreateCompatibleDC(Some(hdc));
+let old_cbm = SelectObject(cache_dc, cached_bg_bm.into());
+let _ = BitBlt(mem_dc, 0, 0, width, height, Some(cache_dc), 0, 0, SRCCOPY).ok();
+SelectObject(cache_dc, old_cbm);
+let _ = DeleteDC(cache_dc);
+⋮----
+if cache_dirty || cached_text_bm.is_invalid() {
+if !cached_text_bm.is_invalid() {
+let _ = DeleteObject(cached_text_bm.into());
+⋮----
+cached_text_bm = CreateCompatibleBitmap(hdc, width, height);
+⋮----
+let old_cache_bm = SelectObject(cache_dc, cached_text_bm.into());
+let dark_brush = CreateSolidBrush(COLORREF(bg_color_u32));
+⋮----
+FillRect(cache_dc, &fill_rect, dark_brush);
+let _ = DeleteObject(dark_brush.into());
+SetBkMode(cache_dc, TRANSPARENT);
+⋮----
+SetTextColor(cache_dc, COLORREF(text_col));
+⋮----
+vec![0u16; 1]
+⋮----
+let combined = if input_text.is_empty() {
+preset_prompt.clone()
+⋮----
+format!("{}\n\n{}", preset_prompt, input_text)
+⋮----
+quote.encode_utf16().collect::<Vec<u16>>()
+⋮----
+let text_len = GetWindowTextLengthW(hwnd);
+let mut b = vec![0u16; text_len as usize + 1];
+let actual_len = GetWindowTextW(hwnd, &mut b);
+b.truncate(actual_len as usize);
+⋮----
+let available_w = (width - (h_padding * 2)).max(1);
+⋮----
+let available_h = (height - v_safety_margin).max(1);
+⋮----
+18.min(available_h)
+⋮----
+available_h.max(2).min(150)
+⋮----
+let (h, w) = measure_text_bounds(cache_dc, &mut buf, mid, available_w);
+⋮----
+let old_font = SelectObject(cache_dc, hfont.into());
+⋮----
+let offset_y = ((height - text_h) / 2).max(0);
+⋮----
+DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, draw_flags);
+SelectObject(cache_dc, old_font);
+⋮----
+SelectObject(cache_dc, old_cache_bm);
+⋮----
+let old_cbm = SelectObject(cache_dc, cached_text_bm.into());
+⋮----
+if !scratch_bits.is_null() {
+⋮----
+let cycle = (anim_offset.abs() % 360.0) / 180.0;
+⋮----
+margin + ((t * scan_range as f32) as i32).clamp(0, scan_range - 1);
+⋮----
+if idx < raw_pixels.len() {
+⋮----
+let time_rad = anim_offset.to_radians();
+⋮----
+let d = sd_rounded_box(px, py, bx, by, 12.0);
+⋮----
+let dist = d.abs();
+⋮----
+let angle = py.atan2(px);
+let noise = (angle * 12.0 - time_rad * 2.0).sin() * 0.5;
+⋮----
+let t = (dist / glow_width).clamp(0.0, 1.0);
+let base_intensity = (1.0 - t).powi(3);
+⋮----
+let noise_mod = (1.0 + noise * 0.3).clamp(0.0, 2.0);
+⋮----
+(base_intensity * noise_mod).clamp(0.0, 1.0);
+⋮----
+let deg = angle.to_degrees() + (anim_offset * 2.0);
+⋮----
+let rgb = hsv_to_rgb(hue, 0.85, 1.0);
+⋮----
+let min_x = (d_x - radius - 1.0).floor() as i32;
+let max_x = (d_x + radius + 1.0).ceil() as i32;
+let min_y = (d_y - radius - 1.0).floor() as i32;
+let max_y = (d_y + radius + 1.0).ceil() as i32;
+let start_x = min_x.max(0);
+let end_x = max_x.min(width - 1);
+let start_y = min_y.max(0);
+let end_y = max_y.min(height - 1);
+⋮----
+let dist = (dx * dx + dy * dy).sqrt();
+let aa_edge = (radius + 0.5 - dist).clamp(0.0, 1.0);
+⋮----
+&& should_show_buttons(width, height)
+⋮----
+for y in b_start_y.max(0)..b_end_y.min(height) {
+⋮----
+let dy = (fy - cy).abs();
+⋮----
+let dx = (fx - cx_back).abs();
+⋮----
+let aa = (radius + 0.5 - dist).clamp(0.0, 1.0);
+⋮----
+border_alpha = ((radius + 0.5 - dist).clamp(0.0, 1.0)
+* ((dist - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
+⋮----
+let d_shaft = dist_segment(fx, fy, tip_x, cy, tail_x, cy);
+⋮----
+dist_segment(fx, fy, tip_x, cy, tip_x + 3.0, cy - 3.0);
+⋮----
+dist_segment(fx, fy, tip_x, cy, tip_x + 3.0, cy + 3.0);
+let d_arrow = d_shaft.min(d_wing1).min(d_wing2);
+icon_alpha = (1.3 - d_arrow).clamp(0.0, 1.0);
+⋮----
+let dx = (fx - cx_forward).abs();
+⋮----
+let d_shaft = dist_segment(fx, fy, tail_x, cy, tip_x, cy);
+⋮----
+dist_segment(fx, fy, tip_x, cy, tip_x - 3.0, cy - 3.0);
+⋮----
+dist_segment(fx, fy, tip_x, cy, tip_x - 3.0, cy + 3.0);
+⋮----
+let dx_c = (fx - cx_copy).abs();
+let dist_c = (dx_c * dx_c + dy * dy).sqrt();
+let aa_c = (radius + 0.5 - dist_c).clamp(0.0, 1.0);
+⋮----
+border_alpha = ((radius + 0.5 - dist_c).clamp(0.0, 1.0)
+* ((dist_c - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
+⋮----
+let d1 = dist_segment(
+⋮----
+let d2 = dist_segment(
+⋮----
+icon_alpha = (1.8 - d1.min(d2)).clamp(0.0, 1.0);
+⋮----
+let back_d = sd_box(fx, fy, cx_copy - 2.0, cy - 2.0, 3.0, 4.0);
+let back_outline = (1.25 - back_d.abs()).clamp(0.0, 1.0);
+let front_d = sd_box(fx, fy, cx_copy + 2.0, cy + 2.0, 3.0, 4.0);
+let front_fill = (0.8 - front_d).clamp(0.0, 1.0);
+let mask_d = sd_box(fx, fy, cx_copy + 2.0, cy + 2.0, 4.5, 5.5);
+⋮----
++ back_outline * mask_d.clamp(0.0, 1.0))
+.clamp(0.0, 1.0);
+⋮----
+let dx_e = (fx - cx_edit).abs();
+let dist_e = (dx_e * dx_e + dy * dy).sqrt();
+let aa_e = (radius + 0.5 - dist_e).clamp(0.0, 1.0);
+⋮----
+border_alpha = ((radius + 0.5 - dist_e).clamp(0.0, 1.0)
+* ((dist_e - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
+⋮----
+let sx = (fx - cx_edit).abs();
+let sy = (fy - cy).abs();
+⋮----
+(sx.powf(0.6) + sy.powf(0.6)).powf(1.0 / 0.6) - 4.5;
+let mut ia = (1.2 - star_dist).clamp(0.0, 1.0);
+let sx2 = (fx - (cx_edit + 4.5)).abs();
+let sy2 = (fy - (cy - 3.5)).abs();
+⋮----
+(sx2.powf(0.6) + sy2.powf(0.6)).powf(1.0 / 0.6) - 2.2;
+ia = ia.max((1.2 - star2_dist).clamp(0.0, 1.0));
+⋮----
+let dx_m = (fx - cx_md).abs();
+let dist_m = (dx_m * dx_m + dy * dy).sqrt();
+let aa_m = (radius + 0.5 - dist_m).clamp(0.0, 1.0);
+⋮----
+border_alpha = ((radius + 0.5 - dist_m).clamp(0.0, 1.0)
+* ((dist_m - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
+⋮----
+let d_m1 = dist_segment(
+⋮----
+let d_m2 = dist_segment(
+⋮----
+let d_m3 = dist_segment(
+⋮----
+let d_m4 = dist_segment(
+⋮----
+let d_m = d_m1.min(d_m2).min(d_m3).min(d_m4);
+icon_alpha = (1.5 - d_m).clamp(0.0, 1.0);
+⋮----
+let dx_dl = (fx - cx_dl).abs();
+let dist_dl = (dx_dl * dx_dl + dy * dy).sqrt();
+let aa_dl = (radius + 0.5 - dist_dl).clamp(0.0, 1.0);
+⋮----
+border_alpha = ((radius + 0.5 - dist_dl).clamp(0.0, 1.0)
+⋮----
+.clamp(0.0, 1.0)))
+⋮----
+dist_segment(fx, fy, cx_dl, cy - 4.0, cx_dl, cy + 2.0);
+let d_arrow1 = dist_segment(
+⋮----
+let d_arrow2 = dist_segment(
+⋮----
+let d_tray = dist_segment(
+⋮----
+let d_icon = d_line.min(d_arrow1).min(d_arrow2).min(d_tray);
+icon_alpha = (1.5 - d_icon).clamp(0.0, 1.0);
+⋮----
+let dx_u = (fx - cx_undo).abs();
+let dist_u = (dx_u * dx_u + dy * dy).sqrt();
+let aa_u = (radius + 0.5 - dist_u).clamp(0.0, 1.0);
+⋮----
+border_alpha = ((radius + 0.5 - dist_u).clamp(0.0, 1.0)
+* ((dist_u - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
+⋮----
+let dx_rd = (fx - cx_redo).abs();
+let dist_rd = (dx_rd * dx_rd + dy * dy).sqrt();
+let aa_rd = (radius + 0.5 - dist_rd).clamp(0.0, 1.0);
+⋮----
+border_alpha = ((radius + 0.5 - dist_rd).clamp(0.0, 1.0)
+⋮----
+let dx_sp = (fx - cx_speaker).abs();
+let dist_sp = (dx_sp * dx_sp + dy * dy).sqrt();
+let aa_sp = (radius + 0.5 - dist_sp).clamp(0.0, 1.0);
+⋮----
+border_alpha = ((radius + 0.5 - dist_sp).clamp(0.0, 1.0)
+⋮----
+let d_cone = sd_box(
+⋮----
+let d_bell1 = dist_segment(
+⋮----
+let d_bell2 = dist_segment(
+⋮----
+let d_bell3 = dist_segment(
+⋮----
+let d_bell = d_bell1.min(d_bell2).min(d_bell3);
+⋮----
+let angle = py_wave.atan2(px);
+⋮----
+if px > 0.0 && angle.abs() < std::f32::consts::FRAC_PI_3 {
+let dist_from_center = (px * px + py_wave * py_wave).sqrt();
+let d_wave1 = (dist_from_center - 3.5).abs() - 0.8;
+let d_wave2 = (dist_from_center - 6.0).abs() - 0.8;
+d_wave = d_wave1.min(d_wave2);
+⋮----
+let d_speaker = d_cone.min(d_bell).min(d_wave);
+icon_alpha = (1.5 - d_speaker).clamp(0.0, 1.0);
+⋮----
+| ((final_r.min(255.0) as u32) << 16)
+| ((final_g.min(255.0) as u32) << 8)
+| (final_b.min(255.0) as u32);
+⋮----
+let pixels = render_procedural_broom(params);
+let hbm = create_bitmap_from_pixels(&pixels, BROOM_W, BROOM_H);
+Some((bx, by, hbm))
+⋮----
+if !hbm.is_invalid() {
+let broom_dc = CreateCompatibleDC(Some(hdc));
+let old_hbm_broom = SelectObject(broom_dc, hbm.into());
+⋮----
+let _ = GdiAlphaBlend(
+⋮----
+SelectObject(broom_dc, old_hbm_broom);
+let _ = DeleteDC(broom_dc);
+let _ = DeleteObject(hbm.into());
+⋮----
+let _ = BitBlt(hdc, 0, 0, width, height, Some(mem_dc), 0, 0, SRCCOPY).ok();
+SelectObject(mem_dc, old_scratch);
+let _ = DeleteObject(scratch_bitmap.into());
+let _ = DeleteDC(mem_dc);
+let _ = EndPaint(hwnd, &mut ps);
 </file>
 
 <file path="src/overlay/text_selection_webview/html.rs">
@@ -9723,13 +10220,6 @@ vec![
 // Node 1: Format the QR content nicely
 </file>
 
-<file path="src/config/preset/defaults/text.rs">
-use crate::config::preset::Preset;
-⋮----
-pub fn create_text_presets() -> Vec<Preset> {
-vec![
-</file>
-
 <file path="src/gui/settings_ui/download_manager/utils.rs">
 use super::types::InstallStatus;
 use std::fs;
@@ -10099,143 +10589,6 @@ if node.id() != current_node_uuid {
 node.set_auto_copy(false);
 </file>
 
-<file path="src/model_config.rs">
-pub enum ModelType {
-⋮----
-pub struct ModelConfig {
-⋮----
-impl ModelConfig {
-pub fn new(
-⋮----
-id: id.to_string(),
-provider: provider.to_string(),
-name_vi: name_vi.to_string(),
-name_ko: name_ko.to_string(),
-name_en: name_en.to_string(),
-full_name: full_name.to_string(),
-⋮----
-quota_limit_vi: quota_limit_vi.to_string(),
-quota_limit_ko: quota_limit_ko.to_string(),
-quota_limit_en: quota_limit_en.to_string(),
-⋮----
-pub fn model_is_non_llm(model_id: &str) -> bool {
-⋮----
-pub fn get_all_models() -> &'static [ModelConfig] {
-⋮----
-pub fn get_model_by_id(id: &str) -> Option<ModelConfig> {
-get_all_models().iter().find(|m| m.id == id).cloned()
-⋮----
-/// Resolve a fallback model for retry logic
-/// Prioritizes:
-⋮----
-/// Prioritizes:
-/// 1. Same provider, same type (Prioritize based on list order - treating list as priority queue)
-⋮----
-/// 1. Same provider, same type (Prioritize based on list order - treating list as priority queue)
-/// 2. Different provider, same type
-⋮----
-/// 2. Different provider, same type
-use crate::config::Config;
-⋮----
-use crate::config::Config;
-⋮----
-/// 2. Different provider, same type
-/// Checks if the provider is actually configured (has API key) before suggesting it.
-⋮----
-/// Checks if the provider is actually configured (has API key) before suggesting it.
-pub fn resolve_fallback_model(
-⋮----
-pub fn resolve_fallback_model(
-⋮----
-let all_models = get_all_models_with_ollama();
-let current_model_opt = get_model_by_id(failed_model_id);
-⋮----
-.as_ref()
-.map(|m| m.provider.as_str())
-.unwrap_or("");
-// Helper to check if a provider is configured
-⋮----
-"groq" => !config.api_key.is_empty(),
-"google" => !config.gemini_api_key.is_empty(),
-"openai" => false, // We don't have openai_api_key in config struct (only openrouter/cerebras) - wait, checking Config struct..
-"openrouter" => !config.openrouter_api_key.is_empty(),
-"cerebras" => !config.cerebras_api_key.is_empty(),
-⋮----
-let must_support_search = model_supports_search_by_id(failed_model_id);
-if !current_provider.is_empty() {
-⋮----
-.iter()
-.filter(|m| {
-⋮----
-&& !failed_model_ids.contains(&m.id)
-&& (!must_support_search || model_supports_search_by_name(&m.full_name))
-⋮----
-.collect();
-if let Some(last) = same_provider_candidates.last() {
-return Some((*last).clone());
-⋮----
-&& is_provider_configured(&m.provider)
-⋮----
-if let Some(last) = diff_provider_candidates.last() {
-⋮----
-pub fn get_all_models_with_ollama() -> Vec<ModelConfig> {
-let mut models: Vec<ModelConfig> = ALL_MODELS.iter().cloned().collect();
-let cached = OLLAMA_MODEL_CACHE.lock().unwrap();
-for ollama_model in cached.iter() {
-models.push(ollama_model.clone());
-⋮----
-pub fn model_supports_search_by_name(full_name: &str) -> bool {
-if full_name.contains("gemma-3-27b-it") {
-⋮----
-if full_name.contains("gemini-3-flash-preview") {
-⋮----
-if full_name.contains("gemini") {
-⋮----
-if full_name.contains("gemma") {
-⋮----
-if full_name.contains("compound") {
-⋮----
-pub fn model_supports_search_by_id(id: &str) -> bool {
-if let Some(conf) = get_model_by_id(id) {
-return model_supports_search_by_name(&conf.full_name);
-⋮----
-if id.contains("compound") {
-⋮----
-pub fn is_ollama_scan_in_progress() -> bool {
-OLLAMA_SCAN_IN_PROGRESS.load(Ordering::SeqCst)
-⋮----
-pub fn trigger_ollama_model_scan() {
-let (use_ollama, base_url) = if let Ok(app) = crate::APP.lock() {
-(app.config.use_ollama, app.config.ollama_base_url.clone())
-⋮----
-let last_scan = OLLAMA_LAST_SCAN.lock().unwrap();
-if last_scan.elapsed().as_secs() < 5 {
-⋮----
-if OLLAMA_SCAN_IN_PROGRESS.swap(true, Ordering::SeqCst) {
-⋮----
-let mut last_scan = OLLAMA_LAST_SCAN.lock().unwrap();
-⋮----
-let model_id = format!(
-⋮----
-let display_name = format!("{} (Local)", ollama_model.name);
-⋮----
-new_models.push(ModelConfig {
-id: format!("{}-vision", model_id),
-provider: "ollama".to_string(),
-name_vi: display_name.clone(),
-name_ko: display_name.clone(),
-name_en: display_name.clone(),
-full_name: ollama_model.name.clone(),
-⋮----
-quota_limit_vi: "Không giới hạn".to_string(),
-quota_limit_ko: "무제한".to_string(),
-quota_limit_en: "Unlimited".to_string(),
-⋮----
-let mut cache = OLLAMA_MODEL_CACHE.lock().unwrap();
-⋮----
-OLLAMA_SCAN_IN_PROGRESS.store(false, Ordering::SeqCst);
-</file>
-
 <file path="src/overlay/favorite_bubble/html.rs">
 use crate::config::Preset;
 use crate::gui::settings_ui::get_localized_preset_name;
@@ -10280,53 +10633,6 @@ text.replace('\\', "\\\\")
 .replace('"', "\\\"")
 .replace('\n', "\\n")
 .replace('\r', "")
-</file>
-
-<file path="src/overlay/favorite_bubble/render.rs">
-use std::sync::atomic::Ordering;
-⋮----
-pub fn update_bubble_visual(hwnd: HWND) {
-⋮----
-LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
-⋮----
-let hdc_screen = GetDC(None);
-let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
-let bubble_size = BUBBLE_SIZE.load(Ordering::SeqCst);
-⋮----
-CreateDIBSection(Some(hdc_mem), &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
-let old_bm = SelectObject(hdc_mem, hbm.into());
-if !bits.is_null() {
-⋮----
-let is_hovered = IS_HOVERED.load(Ordering::SeqCst);
-let is_expanded = IS_EXPANDED.load(Ordering::SeqCst);
-draw_bubble_pixels(pixels, bubble_size, is_hovered || is_expanded);
-⋮----
-let _ = GetWindowRect(hwnd, &mut rect);
-⋮----
-let _ = UpdateLayeredWindow(
-⋮----
-Some(hdc_screen),
-Some(&pt_dst),
-Some(&size),
-Some(hdc_mem),
-Some(&pt_src),
-COLORREF(0),
-Some(&blend),
-⋮----
-let _ = SelectObject(hdc_mem, old_bm);
-let _ = DeleteObject(hbm.into());
-let _ = DeleteDC(hdc_mem);
-let _ = ReleaseDC(None, hdc_screen);
-⋮----
-fn draw_bubble_pixels(pixels: &mut [u32], size: i32, _is_active: bool) {
-let opacity = CURRENT_OPACITY.load(Ordering::SeqCst);
-let is_dark = LAST_THEME_IS_DARK.load(Ordering::SeqCst);
-let icon_data = get_icon_data(size, is_dark);
-if !icon_data.is_empty() {
-⋮----
-if src_idx + 3 < icon_data.len() {
-⋮----
-let dist = (dx * dx + dy * dy).sqrt();
 </file>
 
 <file path="src/overlay/html_components/font_manager.rs">
@@ -10423,609 +10729,54 @@ let cache_buster = SESSION_CACHE_BUSTER.as_str();
 format!(
 </file>
 
-<file path="src/overlay/result/event_handler/click_actions.rs">
-use std::mem::size_of;
-⋮----
-use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+<file path="src/overlay/result/event_handler/timer_tasks.rs">
+use super::super::logic;
+use crate::overlay::result::markdown_view;
+use crate::overlay::result::state::WINDOW_STATES;
+use crate::overlay::utils::to_wstring;
 ⋮----
 use windows::core::PCWSTR;
+⋮----
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 ⋮----
-use super::misc::WM_CREATE_WEBVIEW;
+pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
 ⋮----
-use crate::overlay::utils::to_wstring;
-pub unsafe fn handle_lbutton_up(hwnd: HWND) -> LRESULT {
-let _ = ReleaseCapture();
+let _ = GetCursorPos(&mut cursor_pos);
 ⋮----
-let mut states = WINDOW_STATES.lock().unwrap();
-if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-let was_resizing = matches!(state.interaction_mode, InteractionMode::Resizing(_));
-⋮----
-if let Some(last) = state.text_history.pop() {
-let current_text_for_redo = state.full_text.clone();
-prev_text = Some(last.clone());
-⋮----
-if !current_text_for_redo.is_empty() {
-state.redo_history.push(current_text_for_redo);
-⋮----
-let wide_text = to_wstring(&txt);
-let _ = SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
-⋮----
-let _ = InvalidateRect(Some(hwnd), None, false);
-⋮----
-if let Some(redo_text) = state.redo_history.pop() {
-let current_text_for_undo = state.full_text.clone();
-next_text = Some(redo_text.clone());
-⋮----
-if !current_text_for_undo.is_empty() {
-state.text_history.push(current_text_for_undo);
-⋮----
-let text_len = GetWindowTextLengthW(hwnd) + 1;
-let mut buf = vec![0u16; text_len as usize];
-GetWindowTextW(hwnd, &mut buf);
-let text = String::from_utf16_lossy(&buf[..text_len as usize - 1]).to_string();
-⋮----
-SetTimer(Some(hwnd), 1, 1500, None);
+let _ = GetWindowRect(hwnd, &mut window_rect);
 ⋮----
 let states = WINDOW_STATES.lock().unwrap();
 if let Some(state) = states.get(&(hwnd.0 as isize)) {
 ⋮----
-(state.is_markdown_mode, state.full_text.clone())
-⋮----
-let _ = PostMessageW(Some(hwnd), WM_CREATE_WEBVIEW, WPARAM(0), LPARAM(0));
-SetTimer(Some(hwnd), 2, 30, None);
-⋮----
-let _ = SetWindowPos(
-⋮----
-Some(HWND::default()),
-⋮----
-let _ = KillTimer(Some(hwnd), 2);
-⋮----
-let _ = TrackMouseEvent(&mut tme);
-⋮----
-state.full_text.clone()
-⋮----
-if !full_text.is_empty() {
-⋮----
-state.full_text.clone(),
-⋮----
-&& crate::api::tts::TTS_MANAGER.is_speaking(current_tts_id)
-⋮----
-crate::api::tts::TTS_MANAGER.stop();
-⋮----
-} else if !full_text.is_empty() {
-⋮----
-let request_id = crate::api::tts::TTS_MANAGER.speak(&full_text, hwnd.0 as isize);
-⋮----
-if IsWindow(Some(linked)).as_bool() {
-let _ = PostMessageW(Some(linked), WM_CLOSE, WPARAM(0), LPARAM(0));
-⋮----
-let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-⋮----
-LRESULT(0)
-⋮----
-pub unsafe fn handle_rbutton_up(hwnd: HWND) -> LRESULT {
-⋮----
-pub unsafe fn handle_mbutton_up() -> LRESULT {
-⋮----
-if let Ok(states) = WINDOW_STATES.lock() {
-for (&hwnd_int, _) in states.iter() {
-targets.push(HWND(hwnd_int as *mut std::ffi::c_void));
-⋮----
-if IsWindow(Some(target)).as_bool() {
-let _ = PostMessageW(Some(target), WM_CLOSE, WPARAM(0), LPARAM(0));
-</file>
-
-<file path="src/overlay/result/mod.rs">
-pub mod button_canvas;
-mod event_handler;
-pub mod layout;
-mod logic;
-pub mod markdown_view;
-pub mod paint;
-pub mod state;
-mod window;
-⋮----
-pub fn is_any_refine_active() -> bool {
-let states = WINDOW_STATES.lock().unwrap();
-states.values().any(|s| s.is_editing)
-⋮----
-pub fn get_active_refine_parent() -> Option<HWND> {
-⋮----
-.iter()
-.find(|(_, s)| s.is_editing)
-.map(|(hwnd, _)| HWND(*hwnd as *mut std::ffi::c_void))
-⋮----
-pub fn set_refine_text(hwnd: HWND, text: &str, is_insert: bool) {
-⋮----
-let mut states = WINDOW_STATES.lock().unwrap();
-if let Some(state) = states.get_mut(&hwnd_key) {
-state.input_text = text.to_string();
-⋮----
-pub fn trigger_copy(hwnd: HWND) {
-⋮----
-.get(&hwnd_key)
-.map(|s| s.full_text.clone())
-.unwrap_or_default()
-⋮----
-if !text.is_empty() {
-⋮----
-if let Some(state) = states.get_mut(&(hwnd_val as isize)) {
-⋮----
-button_canvas::update_window_position(HWND(hwnd_val as *mut std::ffi::c_void));
-⋮----
-pub fn trigger_undo(hwnd: HWND) {
-⋮----
-if let Some(last) = state.text_history.pop() {
-let current = state.full_text.clone();
-state.redo_history.push(current);
-state.full_text = last.clone();
-(Some(last), state.is_markdown_mode)
-⋮----
-windows::core::PCWSTR(wide_text.as_ptr()),
-⋮----
-let _ = PostMessageW(
-Some(hwnd),
-⋮----
-WPARAM(0),
-LPARAM(0),
-⋮----
-pub fn trigger_redo(hwnd: HWND) {
-⋮----
-if let Some(redo) = state.redo_history.pop() {
-⋮----
-state.text_history.push(current);
-state.full_text = redo.clone();
-(Some(redo), state.is_markdown_mode)
-⋮----
-pub fn trigger_edit(hwnd: HWND) {
-⋮----
-state.input_text.clear();
-⋮----
-pub fn trigger_refine_submit(hwnd: HWND, text: &str) {
-if text.trim().is_empty() {
-⋮----
-let text_to_refine = state.full_text.clone();
-state.text_history.push(text_to_refine.clone());
-state.redo_history.clear();
-⋮----
-state.pending_text = Some(String::new());
-⋮----
-start_refinement(hwnd, text);
-⋮----
-pub fn trigger_refine_cancel(hwnd: HWND) {
-⋮----
-fn start_refinement(hwnd: HWND, user_prompt: &str) {
-⋮----
-if let Some(s) = states.get_mut(&hwnd_key) {
-let prev = s.full_text.clone();
-⋮----
-s.context_data.clone(),
-s.model_id.clone(),
-s.provider.clone(),
-⋮----
-s.preset_prompt.clone(),
-⋮----
-let user_input = user_prompt.to_string();
-⋮----
-if prev_text.trim().is_empty() && !preset_prompt.is_empty() {
-⋮----
-let capture_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-⋮----
-let app = crate::APP.lock().unwrap();
-⋮----
-app.config.api_key.clone(),
-app.config.gemini_api_key.clone(),
-⋮----
-&app.config.ui_language.clone()
-⋮----
-if let Some(state) = states.get_mut(&(capture_hwnd.0 as isize)) {
-⋮----
-if chunk.starts_with(crate::api::WIPE_SIGNAL) {
-acc_text.clear();
-acc_text.push_str(&chunk[crate::api::WIPE_SIGNAL.len()..]);
-⋮----
-acc_text.push_str(chunk);
-⋮----
-state.pending_text = Some(acc_text.clone());
-state.full_text = acc_text.clone();
-⋮----
-state.full_text = final_text.clone();
-state.pending_text = Some(final_text);
-⋮----
-.map(|m| m.full_name)
-.unwrap_or_else(|| model_id.to_string());
-(app.config.ui_language.clone(), full_name)
-⋮----
-&e.to_string(),
-⋮----
-Some(&model_full_name),
-⋮----
-state.pending_text = Some(err_msg.clone());
-⋮----
-pub fn trigger_markdown_toggle(hwnd: HWND) {
-⋮----
-.map(|s| !s.is_refining && !s.is_streaming_active)
-.unwrap_or(false)
-⋮----
-pub fn trigger_speaker(hwnd: HWND) {
-⋮----
-.map(|s| (s.full_text.clone(), s.tts_request_id, s.tts_loading))
-⋮----
-if current_tts_id != 0 && crate::api::tts::TTS_MANAGER.is_speaking(current_tts_id) {
-crate::api::tts::TTS_MANAGER.stop();
-⋮----
-} else if !full_text.is_empty() {
-⋮----
-let request_id = crate::api::tts::TTS_MANAGER.speak(&full_text, hwnd_key);
-⋮----
-pub fn trigger_close_all() {
-⋮----
-.keys()
-.map(|&k| HWND(k as *mut std::ffi::c_void))
-.collect()
-⋮----
-if windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool() {
-let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-⋮----
-pub fn trigger_drag_window(hwnd: HWND, dx: i32, dy: i32) {
-</file>
-
-<file path="src/overlay/result/paint.rs">
-use super::layout::should_show_buttons;
-⋮----
-use std::mem::size_of;
-use windows::core::w;
-⋮----
-unsafe fn measure_text_bounds(
-⋮----
-let hfont = CreateFontW(
-⋮----
-w!("Google Sans Flex"),
-⋮----
-let old_font = SelectObject(hdc, hfont.into());
-⋮----
-DrawTextW(
-⋮----
-SelectObject(hdc, old_font);
-let _ = DeleteObject(hfont.into());
-⋮----
-pub fn create_bitmap_from_pixels(pixels: &[u32], w: i32, h: i32) -> HBITMAP {
-⋮----
-let hdc = GetDC(None);
-⋮----
-let hbm = CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
-if !bits.is_null() {
-⋮----
-pixels.as_ptr() as *const u8,
-⋮----
-pixels.len() * 4,
-⋮----
-ReleaseDC(None, hdc);
-⋮----
-fn dist_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-⋮----
-let h = (pax * bax + pay * bay) / (bax * bax + bay * bay).max(0.001);
-let h = h.clamp(0.0, 1.0);
-⋮----
-(dx * dx + dy * dy).sqrt()
-⋮----
-fn sd_box(px: f32, py: f32, cx: f32, cy: f32, w: f32, h: f32) -> f32 {
-let dx = (px - cx).abs() - w;
-let dy = (py - cy).abs() - h;
-(dx.max(0.0).powi(2) + dy.max(0.0).powi(2)).sqrt() + dx.max(dy).min(0.0)
-⋮----
-pub fn paint_window(hwnd: HWND) {
-⋮----
-let hdc = BeginPaint(hwnd, &mut ps);
-⋮----
-let _ = GetClientRect(hwnd, &mut rect);
-⋮----
 let mut states = WINDOW_STATES.lock().unwrap();
 if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-if state.bg_bitmap.is_invalid() || state.bg_w != width || state.bg_h != height {
-if !state.bg_bitmap.is_invalid() {
-let _ = DeleteObject(state.bg_bitmap.into());
 ⋮----
-CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut p_bg_bits, None, 0)
-.unwrap();
-if !p_bg_bits.is_null() {
+let _ = InvalidateRect(Some(hwnd), None, false);
 ⋮----
-pixels.fill(col);
+return LRESULT(0);
 ⋮----
-.duration_since(std::time::UNIX_EPOCH)
+.duration_since(UNIX_EPOCH)
 .map(|d| d.as_millis() as u32)
 .unwrap_or(0);
-let time_since_last_resize = now.wrapping_sub(state.last_resize_time);
 ⋮----
-.iter()
-.map(|p| (p.x, p.y, p.life, p.size, p.color))
-.collect();
+if state.pending_text.is_some()
 ⋮----
-Some((
+|| now.wrapping_sub(state.last_text_update_time) > 16)
 ⋮----
-&& crate::api::tts::TTS_MANAGER.is_speaking(state.tts_request_id);
+pending_update = state.pending_text.take();
 ⋮----
-state.text_history.len(),
-state.redo_history.len(),
+let time_since_last_calc = now.wrapping_sub(state.last_font_calc_time);
 ⋮----
-state.graphics_mode.clone(),
-state.preset_prompt.clone(),
-state.input_text.clone(),
+state.full_text = txt.clone();
 ⋮----
-"standard".to_string(),
+Some(state.full_text.clone()),
 ⋮----
-let mem_dc = CreateCompatibleDC(Some(hdc));
+now.wrapping_sub(state.last_webview_update_time);
 ⋮----
-let scratch_bitmap = CreateDIBSection(
-Some(hdc),
+let wide_text = to_wstring(&txt);
+let _ = SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
 ⋮----
-let old_scratch = SelectObject(mem_dc, scratch_bitmap.into());
-if !cached_bg_bm.is_invalid() {
-let cache_dc = CreateCompatibleDC(Some(hdc));
-let old_cbm = SelectObject(cache_dc, cached_bg_bm.into());
-let _ = BitBlt(mem_dc, 0, 0, width, height, Some(cache_dc), 0, 0, SRCCOPY).ok();
-SelectObject(cache_dc, old_cbm);
-let _ = DeleteDC(cache_dc);
-⋮----
-if cache_dirty || cached_text_bm.is_invalid() {
-if !cached_text_bm.is_invalid() {
-let _ = DeleteObject(cached_text_bm.into());
-⋮----
-cached_text_bm = CreateCompatibleBitmap(hdc, width, height);
-⋮----
-let old_cache_bm = SelectObject(cache_dc, cached_text_bm.into());
-let dark_brush = CreateSolidBrush(COLORREF(bg_color_u32));
-⋮----
-FillRect(cache_dc, &fill_rect, dark_brush);
-let _ = DeleteObject(dark_brush.into());
-SetBkMode(cache_dc, TRANSPARENT);
-⋮----
-SetTextColor(cache_dc, COLORREF(text_col));
-⋮----
-vec![0u16; 1]
-⋮----
-let combined = if input_text.is_empty() {
-preset_prompt.clone()
-⋮----
-format!("{}\n\n{}", preset_prompt, input_text)
-⋮----
-quote.encode_utf16().collect::<Vec<u16>>()
-⋮----
-let text_len = GetWindowTextLengthW(hwnd);
-let mut b = vec![0u16; text_len as usize + 1];
-let actual_len = GetWindowTextW(hwnd, &mut b);
-b.truncate(actual_len as usize);
-⋮----
-let available_w = (width - (h_padding * 2)).max(1);
-⋮----
-let available_h = (height - v_safety_margin).max(1);
-⋮----
-18.min(available_h)
-⋮----
-available_h.max(2).min(150)
-⋮----
-let (h, w) = measure_text_bounds(cache_dc, &mut buf, mid, available_w);
-⋮----
-let old_font = SelectObject(cache_dc, hfont.into());
-⋮----
-let offset_y = ((height - text_h) / 2).max(0);
-⋮----
-DrawTextW(cache_dc, &mut buf, &mut draw_rect as *mut _, draw_flags);
-SelectObject(cache_dc, old_font);
-⋮----
-SelectObject(cache_dc, old_cache_bm);
-⋮----
-let old_cbm = SelectObject(cache_dc, cached_text_bm.into());
-⋮----
-if !scratch_bits.is_null() {
-⋮----
-let cycle = (anim_offset.abs() % 360.0) / 180.0;
-⋮----
-margin + ((t * scan_range as f32) as i32).clamp(0, scan_range - 1);
-⋮----
-if idx < raw_pixels.len() {
-⋮----
-let time_rad = anim_offset.to_radians();
-⋮----
-let d = sd_rounded_box(px, py, bx, by, 12.0);
-⋮----
-let dist = d.abs();
-⋮----
-let angle = py.atan2(px);
-let noise = (angle * 12.0 - time_rad * 2.0).sin() * 0.5;
-⋮----
-let t = (dist / glow_width).clamp(0.0, 1.0);
-let base_intensity = (1.0 - t).powi(3);
-⋮----
-let noise_mod = (1.0 + noise * 0.3).clamp(0.0, 2.0);
-⋮----
-(base_intensity * noise_mod).clamp(0.0, 1.0);
-⋮----
-let deg = angle.to_degrees() + (anim_offset * 2.0);
-⋮----
-let rgb = hsv_to_rgb(hue, 0.85, 1.0);
-⋮----
-let min_x = (d_x - radius - 1.0).floor() as i32;
-let max_x = (d_x + radius + 1.0).ceil() as i32;
-let min_y = (d_y - radius - 1.0).floor() as i32;
-let max_y = (d_y + radius + 1.0).ceil() as i32;
-let start_x = min_x.max(0);
-let end_x = max_x.min(width - 1);
-let start_y = min_y.max(0);
-let end_y = max_y.min(height - 1);
-⋮----
-let dist = (dx * dx + dy * dy).sqrt();
-let aa_edge = (radius + 0.5 - dist).clamp(0.0, 1.0);
-⋮----
-&& should_show_buttons(width, height)
-⋮----
-for y in b_start_y.max(0)..b_end_y.min(height) {
-⋮----
-let dy = (fy - cy).abs();
-⋮----
-let dx = (fx - cx_back).abs();
-⋮----
-let aa = (radius + 0.5 - dist).clamp(0.0, 1.0);
-⋮----
-border_alpha = ((radius + 0.5 - dist).clamp(0.0, 1.0)
-* ((dist - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
-⋮----
-let d_shaft = dist_segment(fx, fy, tip_x, cy, tail_x, cy);
-⋮----
-dist_segment(fx, fy, tip_x, cy, tip_x + 3.0, cy - 3.0);
-⋮----
-dist_segment(fx, fy, tip_x, cy, tip_x + 3.0, cy + 3.0);
-let d_arrow = d_shaft.min(d_wing1).min(d_wing2);
-icon_alpha = (1.3 - d_arrow).clamp(0.0, 1.0);
-⋮----
-let dx = (fx - cx_forward).abs();
-⋮----
-let d_shaft = dist_segment(fx, fy, tail_x, cy, tip_x, cy);
-⋮----
-dist_segment(fx, fy, tip_x, cy, tip_x - 3.0, cy - 3.0);
-⋮----
-dist_segment(fx, fy, tip_x, cy, tip_x - 3.0, cy + 3.0);
-⋮----
-let dx_c = (fx - cx_copy).abs();
-let dist_c = (dx_c * dx_c + dy * dy).sqrt();
-let aa_c = (radius + 0.5 - dist_c).clamp(0.0, 1.0);
-⋮----
-border_alpha = ((radius + 0.5 - dist_c).clamp(0.0, 1.0)
-* ((dist_c - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
-⋮----
-let d1 = dist_segment(
-⋮----
-let d2 = dist_segment(
-⋮----
-icon_alpha = (1.8 - d1.min(d2)).clamp(0.0, 1.0);
-⋮----
-let back_d = sd_box(fx, fy, cx_copy - 2.0, cy - 2.0, 3.0, 4.0);
-let back_outline = (1.25 - back_d.abs()).clamp(0.0, 1.0);
-let front_d = sd_box(fx, fy, cx_copy + 2.0, cy + 2.0, 3.0, 4.0);
-let front_fill = (0.8 - front_d).clamp(0.0, 1.0);
-let mask_d = sd_box(fx, fy, cx_copy + 2.0, cy + 2.0, 4.5, 5.5);
-⋮----
-+ back_outline * mask_d.clamp(0.0, 1.0))
-.clamp(0.0, 1.0);
-⋮----
-let dx_e = (fx - cx_edit).abs();
-let dist_e = (dx_e * dx_e + dy * dy).sqrt();
-let aa_e = (radius + 0.5 - dist_e).clamp(0.0, 1.0);
-⋮----
-border_alpha = ((radius + 0.5 - dist_e).clamp(0.0, 1.0)
-* ((dist_e - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
-⋮----
-let sx = (fx - cx_edit).abs();
-let sy = (fy - cy).abs();
-⋮----
-(sx.powf(0.6) + sy.powf(0.6)).powf(1.0 / 0.6) - 4.5;
-let mut ia = (1.2 - star_dist).clamp(0.0, 1.0);
-let sx2 = (fx - (cx_edit + 4.5)).abs();
-let sy2 = (fy - (cy - 3.5)).abs();
-⋮----
-(sx2.powf(0.6) + sy2.powf(0.6)).powf(1.0 / 0.6) - 2.2;
-ia = ia.max((1.2 - star2_dist).clamp(0.0, 1.0));
-⋮----
-let dx_m = (fx - cx_md).abs();
-let dist_m = (dx_m * dx_m + dy * dy).sqrt();
-let aa_m = (radius + 0.5 - dist_m).clamp(0.0, 1.0);
-⋮----
-border_alpha = ((radius + 0.5 - dist_m).clamp(0.0, 1.0)
-* ((dist_m - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
-⋮----
-let d_m1 = dist_segment(
-⋮----
-let d_m2 = dist_segment(
-⋮----
-let d_m3 = dist_segment(
-⋮----
-let d_m4 = dist_segment(
-⋮----
-let d_m = d_m1.min(d_m2).min(d_m3).min(d_m4);
-icon_alpha = (1.5 - d_m).clamp(0.0, 1.0);
-⋮----
-let dx_dl = (fx - cx_dl).abs();
-let dist_dl = (dx_dl * dx_dl + dy * dy).sqrt();
-let aa_dl = (radius + 0.5 - dist_dl).clamp(0.0, 1.0);
-⋮----
-border_alpha = ((radius + 0.5 - dist_dl).clamp(0.0, 1.0)
-⋮----
-.clamp(0.0, 1.0)))
-⋮----
-dist_segment(fx, fy, cx_dl, cy - 4.0, cx_dl, cy + 2.0);
-let d_arrow1 = dist_segment(
-⋮----
-let d_arrow2 = dist_segment(
-⋮----
-let d_tray = dist_segment(
-⋮----
-let d_icon = d_line.min(d_arrow1).min(d_arrow2).min(d_tray);
-icon_alpha = (1.5 - d_icon).clamp(0.0, 1.0);
-⋮----
-let dx_u = (fx - cx_undo).abs();
-let dist_u = (dx_u * dx_u + dy * dy).sqrt();
-let aa_u = (radius + 0.5 - dist_u).clamp(0.0, 1.0);
-⋮----
-border_alpha = ((radius + 0.5 - dist_u).clamp(0.0, 1.0)
-* ((dist_u - (border_inner_radius - 0.5)).clamp(0.0, 1.0)))
-⋮----
-let dx_rd = (fx - cx_redo).abs();
-let dist_rd = (dx_rd * dx_rd + dy * dy).sqrt();
-let aa_rd = (radius + 0.5 - dist_rd).clamp(0.0, 1.0);
-⋮----
-border_alpha = ((radius + 0.5 - dist_rd).clamp(0.0, 1.0)
-⋮----
-let dx_sp = (fx - cx_speaker).abs();
-let dist_sp = (dx_sp * dx_sp + dy * dy).sqrt();
-let aa_sp = (radius + 0.5 - dist_sp).clamp(0.0, 1.0);
-⋮----
-border_alpha = ((radius + 0.5 - dist_sp).clamp(0.0, 1.0)
-⋮----
-let d_cone = sd_box(
-⋮----
-let d_bell1 = dist_segment(
-⋮----
-let d_bell2 = dist_segment(
-⋮----
-let d_bell3 = dist_segment(
-⋮----
-let d_bell = d_bell1.min(d_bell2).min(d_bell3);
-⋮----
-let angle = py_wave.atan2(px);
-⋮----
-if px > 0.0 && angle.abs() < std::f32::consts::FRAC_PI_3 {
-let dist_from_center = (px * px + py_wave * py_wave).sqrt();
-let d_wave1 = (dist_from_center - 3.5).abs() - 0.8;
-let d_wave2 = (dist_from_center - 6.0).abs() - 0.8;
-d_wave = d_wave1.min(d_wave2);
-⋮----
-let d_speaker = d_cone.min(d_bell).min(d_wave);
-icon_alpha = (1.5 - d_speaker).clamp(0.0, 1.0);
-⋮----
-| ((final_r.min(255.0) as u32) << 16)
-| ((final_g.min(255.0) as u32) << 8)
-| (final_b.min(255.0) as u32);
-⋮----
-let pixels = render_procedural_broom(params);
-let hbm = create_bitmap_from_pixels(&pixels, BROOM_W, BROOM_H);
-Some((bx, by, hbm))
-⋮----
-if !hbm.is_invalid() {
-let broom_dc = CreateCompatibleDC(Some(hdc));
-let old_hbm_broom = SelectObject(broom_dc, hbm.into());
-⋮----
-let _ = GdiAlphaBlend(
-⋮----
-SelectObject(broom_dc, old_hbm_broom);
-let _ = DeleteDC(broom_dc);
-let _ = DeleteObject(hbm.into());
-⋮----
-let _ = BitBlt(hdc, 0, 0, width, height, Some(mem_dc), 0, 0, SRCCOPY).ok();
-SelectObject(mem_dc, old_scratch);
-let _ = DeleteObject(scratch_bitmap.into());
-let _ = DeleteDC(mem_dc);
-let _ = EndPaint(hwnd, &mut ps);
+LRESULT(0)
 </file>
 
 <file path="src/overlay/text_selection_webview/mod.rs">
@@ -11219,6 +10970,13 @@ LRESULT(0)
 _ => DefWindowProcW(hwnd, msg, wparam, lparam),
 ⋮----
 eprintln!("Panic in tag_wnd_proc");
+</file>
+
+<file path="src/config/preset/defaults/text.rs">
+use crate::config::preset::Preset;
+⋮----
+pub fn create_text_presets() -> Vec<Preset> {
+vec![
 </file>
 
 <file path="src/gui/settings_ui/download_manager/mod.rs">
@@ -11520,6 +11278,143 @@ msg.replace("[download]", "").trim().to_string();
 ui.label(egui::RichText::new(clean_msg).small());
 ⋮----
 ui.add(egui::ProgressBar::new(*progress).animate(true));
+</file>
+
+<file path="src/model_config.rs">
+pub enum ModelType {
+⋮----
+pub struct ModelConfig {
+⋮----
+impl ModelConfig {
+pub fn new(
+⋮----
+id: id.to_string(),
+provider: provider.to_string(),
+name_vi: name_vi.to_string(),
+name_ko: name_ko.to_string(),
+name_en: name_en.to_string(),
+full_name: full_name.to_string(),
+⋮----
+quota_limit_vi: quota_limit_vi.to_string(),
+quota_limit_ko: quota_limit_ko.to_string(),
+quota_limit_en: quota_limit_en.to_string(),
+⋮----
+pub fn model_is_non_llm(model_id: &str) -> bool {
+⋮----
+pub fn get_all_models() -> &'static [ModelConfig] {
+⋮----
+pub fn get_model_by_id(id: &str) -> Option<ModelConfig> {
+get_all_models().iter().find(|m| m.id == id).cloned()
+⋮----
+/// Resolve a fallback model for retry logic
+/// Prioritizes:
+⋮----
+/// Prioritizes:
+/// 1. Same provider, same type (Prioritize based on list order - treating list as priority queue)
+⋮----
+/// 1. Same provider, same type (Prioritize based on list order - treating list as priority queue)
+/// 2. Different provider, same type
+⋮----
+/// 2. Different provider, same type
+use crate::config::Config;
+⋮----
+use crate::config::Config;
+⋮----
+/// 2. Different provider, same type
+/// Checks if the provider is actually configured (has API key) before suggesting it.
+⋮----
+/// Checks if the provider is actually configured (has API key) before suggesting it.
+pub fn resolve_fallback_model(
+⋮----
+pub fn resolve_fallback_model(
+⋮----
+let all_models = get_all_models_with_ollama();
+let current_model_opt = get_model_by_id(failed_model_id);
+⋮----
+.as_ref()
+.map(|m| m.provider.as_str())
+.unwrap_or("");
+// Helper to check if a provider is configured
+⋮----
+"groq" => !config.api_key.is_empty(),
+"google" => !config.gemini_api_key.is_empty(),
+"openai" => false, // We don't have openai_api_key in config struct (only openrouter/cerebras) - wait, checking Config struct..
+"openrouter" => !config.openrouter_api_key.is_empty(),
+"cerebras" => !config.cerebras_api_key.is_empty(),
+⋮----
+let must_support_search = model_supports_search_by_id(failed_model_id);
+if !current_provider.is_empty() {
+⋮----
+.iter()
+.filter(|m| {
+⋮----
+&& !failed_model_ids.contains(&m.id)
+&& (!must_support_search || model_supports_search_by_name(&m.full_name))
+⋮----
+.collect();
+if let Some(last) = same_provider_candidates.last() {
+return Some((*last).clone());
+⋮----
+&& is_provider_configured(&m.provider)
+⋮----
+if let Some(last) = diff_provider_candidates.last() {
+⋮----
+pub fn get_all_models_with_ollama() -> Vec<ModelConfig> {
+let mut models: Vec<ModelConfig> = ALL_MODELS.iter().cloned().collect();
+let cached = OLLAMA_MODEL_CACHE.lock().unwrap();
+for ollama_model in cached.iter() {
+models.push(ollama_model.clone());
+⋮----
+pub fn model_supports_search_by_name(full_name: &str) -> bool {
+if full_name.contains("gemma-3-27b-it") {
+⋮----
+if full_name.contains("gemini-3-flash-preview") {
+⋮----
+if full_name.contains("gemini") {
+⋮----
+if full_name.contains("gemma") {
+⋮----
+if full_name.contains("compound") {
+⋮----
+pub fn model_supports_search_by_id(id: &str) -> bool {
+if let Some(conf) = get_model_by_id(id) {
+return model_supports_search_by_name(&conf.full_name);
+⋮----
+if id.contains("compound") {
+⋮----
+pub fn is_ollama_scan_in_progress() -> bool {
+OLLAMA_SCAN_IN_PROGRESS.load(Ordering::SeqCst)
+⋮----
+pub fn trigger_ollama_model_scan() {
+let (use_ollama, base_url) = if let Ok(app) = crate::APP.lock() {
+(app.config.use_ollama, app.config.ollama_base_url.clone())
+⋮----
+let last_scan = OLLAMA_LAST_SCAN.lock().unwrap();
+if last_scan.elapsed().as_secs() < 5 {
+⋮----
+if OLLAMA_SCAN_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+⋮----
+let mut last_scan = OLLAMA_LAST_SCAN.lock().unwrap();
+⋮----
+let model_id = format!(
+⋮----
+let display_name = format!("{} (Local)", ollama_model.name);
+⋮----
+new_models.push(ModelConfig {
+id: format!("{}-vision", model_id),
+provider: "ollama".to_string(),
+name_vi: display_name.clone(),
+name_ko: display_name.clone(),
+name_en: display_name.clone(),
+full_name: ollama_model.name.clone(),
+⋮----
+quota_limit_vi: "Không giới hạn".to_string(),
+quota_limit_ko: "무제한".to_string(),
+quota_limit_en: "Unlimited".to_string(),
+⋮----
+let mut cache = OLLAMA_MODEL_CACHE.lock().unwrap();
+⋮----
+OLLAMA_SCAN_IN_PROGRESS.store(false, Ordering::SeqCst);
 </file>
 
 <file path="src/overlay/continuous_mode.rs">
@@ -12377,6 +12272,320 @@ pub fn get_speaker_btn_rect(window_w: i32, window_h: i32) -> RECT {
 let copy_rect = get_copy_btn_rect(window_w, window_h);
 ⋮----
 pub fn get_resize_edge(width: i32, height: i32, x: i32, y: i32) -> ResizeEdge {
+</file>
+
+<file path="src/overlay/result/mod.rs">
+pub mod button_canvas;
+mod event_handler;
+pub mod layout;
+mod logic;
+pub mod markdown_view;
+pub mod paint;
+pub mod state;
+mod window;
+⋮----
+pub fn is_any_refine_active() -> bool {
+let states = WINDOW_STATES.lock().unwrap();
+states.values().any(|s| s.is_editing)
+⋮----
+pub fn get_active_refine_parent() -> Option<HWND> {
+⋮----
+.iter()
+.find(|(_, s)| s.is_editing)
+.map(|(hwnd, _)| HWND(*hwnd as *mut std::ffi::c_void))
+⋮----
+pub fn set_refine_text(hwnd: HWND, text: &str, is_insert: bool) {
+⋮----
+let mut states = WINDOW_STATES.lock().unwrap();
+if let Some(state) = states.get_mut(&hwnd_key) {
+state.input_text = text.to_string();
+⋮----
+pub fn trigger_copy(hwnd: HWND) {
+⋮----
+.get(&hwnd_key)
+.map(|s| s.full_text.clone())
+.unwrap_or_default()
+⋮----
+if !text.is_empty() {
+⋮----
+if let Some(state) = states.get_mut(&(hwnd_val as isize)) {
+⋮----
+button_canvas::update_window_position(HWND(hwnd_val as *mut std::ffi::c_void));
+⋮----
+pub fn trigger_undo(hwnd: HWND) {
+⋮----
+if let Some(last) = state.text_history.pop() {
+let current = state.full_text.clone();
+state.redo_history.push(current);
+state.full_text = last.clone();
+(Some(last), state.is_markdown_mode)
+⋮----
+windows::core::PCWSTR(wide_text.as_ptr()),
+⋮----
+let _ = PostMessageW(
+Some(hwnd),
+⋮----
+WPARAM(0),
+LPARAM(0),
+⋮----
+pub fn trigger_redo(hwnd: HWND) {
+⋮----
+if let Some(redo) = state.redo_history.pop() {
+⋮----
+state.text_history.push(current);
+state.full_text = redo.clone();
+(Some(redo), state.is_markdown_mode)
+⋮----
+pub fn trigger_edit(hwnd: HWND) {
+⋮----
+state.input_text.clear();
+⋮----
+pub fn trigger_refine_submit(hwnd: HWND, text: &str) {
+if text.trim().is_empty() {
+⋮----
+let text_to_refine = state.full_text.clone();
+state.text_history.push(text_to_refine.clone());
+state.redo_history.clear();
+⋮----
+state.pending_text = Some(String::new());
+⋮----
+start_refinement(hwnd, text);
+⋮----
+pub fn trigger_refine_cancel(hwnd: HWND) {
+⋮----
+fn start_refinement(hwnd: HWND, user_prompt: &str) {
+⋮----
+if let Some(s) = states.get_mut(&hwnd_key) {
+let prev = s.full_text.clone();
+⋮----
+s.context_data.clone(),
+s.model_id.clone(),
+s.provider.clone(),
+⋮----
+s.preset_prompt.clone(),
+⋮----
+let user_input = user_prompt.to_string();
+⋮----
+if prev_text.trim().is_empty() && !preset_prompt.is_empty() {
+⋮----
+let capture_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+⋮----
+let app = crate::APP.lock().unwrap();
+⋮----
+app.config.api_key.clone(),
+app.config.gemini_api_key.clone(),
+⋮----
+&app.config.ui_language.clone()
+⋮----
+if let Some(state) = states.get_mut(&(capture_hwnd.0 as isize)) {
+⋮----
+if chunk.starts_with(crate::api::WIPE_SIGNAL) {
+acc_text.clear();
+acc_text.push_str(&chunk[crate::api::WIPE_SIGNAL.len()..]);
+⋮----
+acc_text.push_str(chunk);
+⋮----
+state.pending_text = Some(acc_text.clone());
+state.full_text = acc_text.clone();
+⋮----
+state.full_text = final_text.clone();
+state.pending_text = Some(final_text);
+⋮----
+.map(|m| m.full_name)
+.unwrap_or_else(|| model_id.to_string());
+(app.config.ui_language.clone(), full_name)
+⋮----
+&e.to_string(),
+⋮----
+Some(&model_full_name),
+⋮----
+state.pending_text = Some(err_msg.clone());
+⋮----
+pub fn trigger_markdown_toggle(hwnd: HWND) {
+⋮----
+.map(|s| !s.is_refining && !s.is_streaming_active)
+.unwrap_or(false)
+⋮----
+pub fn trigger_speaker(hwnd: HWND) {
+⋮----
+.map(|s| (s.full_text.clone(), s.tts_request_id, s.tts_loading))
+⋮----
+if current_tts_id != 0 && crate::api::tts::TTS_MANAGER.is_speaking(current_tts_id) {
+crate::api::tts::TTS_MANAGER.stop();
+⋮----
+} else if !full_text.is_empty() {
+⋮----
+let request_id = crate::api::tts::TTS_MANAGER.speak(&full_text, hwnd_key);
+⋮----
+pub fn trigger_close_all() {
+⋮----
+.keys()
+.map(|&k| HWND(k as *mut std::ffi::c_void))
+.collect()
+⋮----
+if windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool() {
+let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+⋮----
+pub fn trigger_drag_window(hwnd: HWND, dx: i32, dy: i32) {
+⋮----
+if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_ok() {
+</file>
+
+<file path="src/overlay/result/state.rs">
+use std::collections::HashMap;
+⋮----
+use windows::Win32::Graphics::Gdi::HBITMAP;
+pub struct DustParticle {
+⋮----
+pub enum AnimationMode {
+⋮----
+pub enum ResizeEdge {
+⋮----
+pub enum InteractionMode {
+⋮----
+pub struct CursorPhysics {
+⋮----
+impl Default for CursorPhysics {
+fn default() -> Self {
+⋮----
+pub enum RefineContext {
+⋮----
+pub struct WindowState {
+⋮----
+unsafe impl Send for WindowState {}
+unsafe impl Sync for WindowState {}
+⋮----
+pub enum WindowType {
+⋮----
+pub fn link_windows(hwnd1: HWND, hwnd2: HWND) {
+let mut states = WINDOW_STATES.lock().unwrap();
+if let Some(s1) = states.get_mut(&(hwnd1.0 as isize)) {
+s1.linked_window = Some(hwnd2);
+⋮----
+if let Some(s2) = states.get_mut(&(hwnd2.0 as isize)) {
+s2.linked_window = Some(hwnd1);
+⋮----
+pub fn close_windows_with_token(token: &Arc<AtomicBool>) {
+token.store(true, Ordering::SeqCst);
+⋮----
+let states = WINDOW_STATES.lock().unwrap();
+for (&h_val, state) in states.iter() {
+⋮----
+to_close.push(HWND(h_val as *mut std::ffi::c_void));
+⋮----
+if IsWindow(Some(hwnd)).as_bool() {
+⋮----
+let _ = PostMessageW(
+Some(hwnd),
+⋮----
+pub fn get_window_group(hwnd: HWND) -> Vec<(HWND, RECT)> {
+⋮----
+if let Some(state) = states.get(&(hwnd.0 as isize)) {
+token_to_match = state.cancellation_token.clone();
+⋮----
+for (&h_val, s) in states.iter() {
+⋮----
+let h = HWND(h_val as *mut std::ffi::c_void);
+⋮----
+group.push((h, r));
+⋮----
+if group.len() <= 1 {
+group.clear();
+⋮----
+queue.push_back(hwnd);
+visited.insert(hwnd.0);
+while let Some(current) = queue.pop_front() {
+⋮----
+group.push((current, r));
+if let Some(s) = states.get(&(current.0 as isize)) {
+⋮----
+if states.contains_key(&(linked.0 as isize)) && !visited.contains(&linked.0)
+⋮----
+visited.insert(linked.0);
+queue.push_back(linked);
+⋮----
+pub fn set_window_interaction_mode(hwnd: HWND, mode: InteractionMode) {
+⋮----
+if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+</file>
+
+<file path="src/overlay/result/window.rs">
+use std::mem::size_of;
+use std::sync::Once;
+⋮----
+use super::event_handler::result_wnd_proc;
+⋮----
+pub fn get_chain_color(visible_index: usize) -> u32 {
+⋮----
+let cycle_idx = (visible_index - 1) % (palette.len() - 1);
+⋮----
+pub fn create_result_window(
+⋮----
+let instance = GetModuleHandleW(None).unwrap();
+let class_name = w!("TranslationResult");
+REGISTER_RESULT_CLASS.call_once(|| {
+⋮----
+wc.lpfnWndProc = Some(result_wnd_proc);
+wc.hInstance = instance.into();
+wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
+⋮----
+let _ = RegisterClassW(&wc);
+⋮----
+let width = (target_rect.right - target_rect.left).abs();
+let height = (target_rect.bottom - target_rect.top).abs();
+⋮----
+let hwnd = CreateWindowExW(
+⋮----
+w!(""),
+⋮----
+Some(instance.into()),
+⋮----
+.unwrap_or_default();
+// FOR MARKDOWN MODES: Create WebView IMMEDIATELY after window creation
+// See docs/WEBVIEW2_INITIALIZATION.md for why this is necessary
+⋮----
+let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+⋮----
+let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 217, LWA_ALPHA);
+⋮----
+// Initialize physics with current cursor position to prevent (0,0) glitch
+⋮----
+let _ = GetCursorPos(&mut pt);
+let _ = ScreenToClient(hwnd, &mut pt);
+⋮----
+// Get graphics mode from config
+⋮----
+let app = crate::APP.lock().unwrap();
+app.config.graphics_mode.clone()
+⋮----
+let mut states = WINDOW_STATES.lock().unwrap();
+states.insert(
+⋮----
+full_text: initial_text.clone(),
+⋮----
+pending_text: Some(initial_text),
+⋮----
+// Markdown mode state
+⋮----
+let _ = DwmSetWindowAttribute(
+⋮----
+DWMWINDOWATTRIBUTE(33),
+⋮----
+let _ = SetForegroundWindow(hwnd);
+⋮----
+SetTimer(Some(hwnd), 3, 16, None);
+⋮----
+SetTimer(Some(hwnd), 2, 30, None);
+⋮----
+let _ = InvalidateRect(Some(hwnd), None, false);
+let _ = UpdateWindow(hwnd);
+⋮----
+pub fn update_window_text(hwnd: HWND, text: &str) {
+if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
+⋮----
+if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+state.pending_text = Some(text.to_string());
+state.full_text = text.to_string();
 </file>
 
 <file path="src/overlay/utils.rs">
@@ -14317,134 +14526,6 @@ LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
 format!(
 </file>
 
-<file path="src/overlay/result/event_handler/timer_tasks.rs">
-use super::super::logic;
-use crate::overlay::result::markdown_view;
-use crate::overlay::result::state::WINDOW_STATES;
-use crate::overlay::utils::to_wstring;
-⋮----
-use windows::core::PCWSTR;
-⋮----
-use windows::Win32::Graphics::Gdi::InvalidateRect;
-⋮----
-pub unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
-⋮----
-let _ = GetCursorPos(&mut cursor_pos);
-⋮----
-let _ = GetWindowRect(hwnd, &mut window_rect);
-⋮----
-let states = WINDOW_STATES.lock().unwrap();
-if let Some(state) = states.get(&(hwnd.0 as isize)) {
-⋮----
-let mut states = WINDOW_STATES.lock().unwrap();
-if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-⋮----
-let _ = InvalidateRect(Some(hwnd), None, false);
-⋮----
-return LRESULT(0);
-⋮----
-.duration_since(UNIX_EPOCH)
-.map(|d| d.as_millis() as u32)
-.unwrap_or(0);
-⋮----
-if state.pending_text.is_some()
-⋮----
-|| now.wrapping_sub(state.last_text_update_time) > 16)
-⋮----
-pending_update = state.pending_text.take();
-⋮----
-let time_since_last_calc = now.wrapping_sub(state.last_font_calc_time);
-⋮----
-state.full_text = txt.clone();
-⋮----
-Some(state.full_text.clone()),
-⋮----
-now.wrapping_sub(state.last_webview_update_time);
-⋮----
-let wide_text = to_wstring(&txt);
-let _ = SetWindowTextW(hwnd, PCWSTR(wide_text.as_ptr()));
-⋮----
-LRESULT(0)
-</file>
-
-<file path="src/overlay/result/state.rs">
-use std::collections::HashMap;
-⋮----
-use windows::Win32::Graphics::Gdi::HBITMAP;
-pub struct DustParticle {
-⋮----
-pub enum AnimationMode {
-⋮----
-pub enum ResizeEdge {
-⋮----
-pub enum InteractionMode {
-⋮----
-pub struct CursorPhysics {
-⋮----
-impl Default for CursorPhysics {
-fn default() -> Self {
-⋮----
-pub enum RefineContext {
-⋮----
-pub struct WindowState {
-⋮----
-unsafe impl Send for WindowState {}
-unsafe impl Sync for WindowState {}
-⋮----
-pub enum WindowType {
-⋮----
-pub fn link_windows(hwnd1: HWND, hwnd2: HWND) {
-let mut states = WINDOW_STATES.lock().unwrap();
-if let Some(s1) = states.get_mut(&(hwnd1.0 as isize)) {
-s1.linked_window = Some(hwnd2);
-⋮----
-if let Some(s2) = states.get_mut(&(hwnd2.0 as isize)) {
-s2.linked_window = Some(hwnd1);
-⋮----
-pub fn close_windows_with_token(token: &Arc<AtomicBool>) {
-token.store(true, Ordering::SeqCst);
-⋮----
-let states = WINDOW_STATES.lock().unwrap();
-for (&h_val, state) in states.iter() {
-⋮----
-to_close.push(HWND(h_val as *mut std::ffi::c_void));
-⋮----
-if IsWindow(Some(hwnd)).as_bool() {
-⋮----
-let _ = PostMessageW(
-Some(hwnd),
-⋮----
-pub fn get_window_group(hwnd: HWND) -> Vec<(HWND, RECT)> {
-⋮----
-if let Some(state) = states.get(&(hwnd.0 as isize)) {
-token_to_match = state.cancellation_token.clone();
-⋮----
-for (&h_val, s) in states.iter() {
-⋮----
-let h = HWND(h_val as *mut std::ffi::c_void);
-⋮----
-group.push((h, r));
-⋮----
-if group.len() <= 1 {
-group.clear();
-⋮----
-queue.push_back(hwnd);
-visited.insert(hwnd.0);
-while let Some(current) = queue.pop_front() {
-⋮----
-group.push((current, r));
-if let Some(s) = states.get(&(current.0 as isize)) {
-⋮----
-if states.contains_key(&(linked.0 as isize)) && !visited.contains(&linked.0)
-⋮----
-visited.insert(linked.0);
-queue.push_back(linked);
-⋮----
-pub fn set_window_interaction_mode(hwnd: HWND, mode: InteractionMode) {
-⋮----
-if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-</file>
-
 <file path="src/gui/app/rendering.rs">
 use super::types::SettingsApp;
 use crate::gui::locale::LocaleText;
@@ -15669,118 +15750,6 @@ if icon_button_sized(ui, Icon::Delete, 22.0).clicked() {
 *preset_idx_to_delete = Some(idx);
 </file>
 
-<file path="src/overlay/result/window.rs">
-use std::mem::size_of;
-use std::sync::Once;
-⋮----
-use super::event_handler::result_wnd_proc;
-⋮----
-pub fn get_chain_color(visible_index: usize) -> u32 {
-⋮----
-let cycle_idx = (visible_index - 1) % (palette.len() - 1);
-⋮----
-pub fn create_result_window(
-⋮----
-let instance = GetModuleHandleW(None).unwrap();
-let class_name = w!("TranslationResult");
-REGISTER_RESULT_CLASS.call_once(|| {
-⋮----
-wc.lpfnWndProc = Some(result_wnd_proc);
-wc.hInstance = instance.into();
-wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap();
-⋮----
-let _ = RegisterClassW(&wc);
-⋮----
-let width = (target_rect.right - target_rect.left).abs();
-let height = (target_rect.bottom - target_rect.top).abs();
-⋮----
-let hwnd = CreateWindowExW(
-⋮----
-w!(""),
-⋮----
-Some(instance.into()),
-⋮----
-.unwrap_or_default();
-// FOR MARKDOWN MODES: Create WebView IMMEDIATELY after window creation
-// See docs/WEBVIEW2_INITIALIZATION.md for why this is necessary
-⋮----
-let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
-⋮----
-let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 217, LWA_ALPHA);
-⋮----
-// Initialize physics with current cursor position to prevent (0,0) glitch
-⋮----
-let _ = GetCursorPos(&mut pt);
-let _ = ScreenToClient(hwnd, &mut pt);
-⋮----
-// Get graphics mode from config
-⋮----
-let app = crate::APP.lock().unwrap();
-app.config.graphics_mode.clone()
-⋮----
-let mut states = WINDOW_STATES.lock().unwrap();
-states.insert(
-⋮----
-full_text: initial_text.clone(),
-⋮----
-pending_text: Some(initial_text),
-⋮----
-// Markdown mode state
-⋮----
-let _ = DwmSetWindowAttribute(
-⋮----
-DWMWINDOWATTRIBUTE(33),
-⋮----
-let _ = SetForegroundWindow(hwnd);
-⋮----
-SetTimer(Some(hwnd), 3, 16, None);
-⋮----
-SetTimer(Some(hwnd), 2, 30, None);
-⋮----
-let _ = InvalidateRect(Some(hwnd), None, false);
-let _ = UpdateWindow(hwnd);
-⋮----
-pub fn update_window_text(hwnd: HWND, text: &str) {
-if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
-⋮----
-if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-state.pending_text = Some(text.to_string());
-state.full_text = text.to_string();
-</file>
-
-<file path="src/unpack_dlls.rs">
-use std::fs;
-use std::path::PathBuf;
-use windows::Win32::System::LibraryLoader::SetDllDirectoryW;
-pub fn unpack_dlls() {
-let mut bin_dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-bin_dir.push("screen-goated-toolbox");
-bin_dir.push("bin");
-⋮----
-include_bytes!("embed_dlls/vcruntime140.dll"),
-⋮----
-include_bytes!("embed_dlls/vcruntime140_1.dll"),
-⋮----
-("msvcp140.dll", include_bytes!("embed_dlls/msvcp140.dll")),
-⋮----
-include_bytes!("embed_dlls/msvcp140_1.dll"),
-⋮----
-("DirectML.dll", include_bytes!("embed_dlls/DirectML.dll")),
-⋮----
-include_bytes!("embed_dlls/onnxruntime.dll"),
-⋮----
-let path = bin_dir.join(name);
-if !path.exists() {
-⋮----
-.to_string_lossy()
-.encode_utf16()
-.chain(std::iter::once(0))
-.collect();
-let _ = SetDllDirectoryW(windows::core::PCWSTR(path_wide.as_ptr()));
-⋮----
-let new_path = format!("{};{}", bin_dir.to_string_lossy(), current_path);
-</file>
-
 <file path="src/overlay/preset_wheel/window.rs">
 use crate::config::Preset;
 use crate::APP;
@@ -16381,6 +16350,39 @@ let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 blocks.clone(),
 </file>
 
+<file path="src/unpack_dlls.rs">
+use std::fs;
+use std::path::PathBuf;
+use windows::Win32::System::LibraryLoader::SetDllDirectoryW;
+pub fn unpack_dlls() {
+let mut bin_dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+bin_dir.push("screen-goated-toolbox");
+bin_dir.push("bin");
+⋮----
+include_bytes!("embed_dlls/vcruntime140.dll"),
+⋮----
+include_bytes!("embed_dlls/vcruntime140_1.dll"),
+⋮----
+("msvcp140.dll", include_bytes!("embed_dlls/msvcp140.dll")),
+⋮----
+include_bytes!("embed_dlls/msvcp140_1.dll"),
+⋮----
+("DirectML.dll", include_bytes!("embed_dlls/DirectML.dll")),
+⋮----
+include_bytes!("embed_dlls/onnxruntime.dll"),
+⋮----
+let path = bin_dir.join(name);
+if !path.exists() {
+⋮----
+.to_string_lossy()
+.encode_utf16()
+.chain(std::iter::once(0))
+.collect();
+let _ = SetDllDirectoryW(windows::core::PCWSTR(path_wide.as_ptr()));
+⋮----
+let new_path = format!("{};{}", bin_dir.to_string_lossy(), current_path);
+</file>
+
 <file path="src/overlay/tray_popup.rs">
 use crate::APP;
 use std::cell::RefCell;
@@ -16682,6 +16684,73 @@ self.save_and_sync();
 self.render_drop_overlay(ctx);
 ⋮----
 fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+</file>
+
+<file path="src/overlay/mod.rs">
+pub mod auto_copy_badge;
+pub mod broom_assets;
+pub mod continuous_mode;
+pub mod input_history;
+pub mod paint_utils;
+pub mod preset_wheel;
+pub mod process;
+pub mod prompt_dj;
+pub mod recording;
+pub mod result;
+mod selection;
+pub mod text_input;
+pub mod text_selection;
+⋮----
+pub fn is_busy() -> bool {
+IS_BUSY_WITH_OVERLAY.load(Ordering::SeqCst)
+⋮----
+pub fn set_is_busy(busy: bool) {
+IS_BUSY_WITH_OVERLAY.store(busy, Ordering::SeqCst);
+⋮----
+pub mod utils;
+pub mod favorite_bubble;
+pub mod html_components;
+pub mod realtime_egui;
+pub mod realtime_html;
+pub mod realtime_webview;
+pub mod tray_popup;
+⋮----
+pub use text_selection::show_text_selection_tag;
+⋮----
+pub fn get_shared_webview_data_dir(subdir: Option<&str>) -> std::path::PathBuf {
+let mut path = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+path.push("SGT");
+path.push("webview_data");
+⋮----
+path.push(s);
+⋮----
+pub fn clear_webview_permissions() -> bool {
+⋮----
+if !path.exists() {
+⋮----
+println!("WebView data cleared successfully at {:?}", path);
+⋮----
+if e.raw_os_error() == Some(145) {
+eprintln!(
+⋮----
+if delete_directory_contents_recursive(&path) {
+if std::fs::remove_dir(&path).is_ok() {
+println!("WebView data cleared successfully (per-file) at {:?}", path);
+⋮----
+fn delete_directory_contents_recursive(path: &std::path::Path) -> bool {
+⋮----
+for entry in entries.flatten() {
+let entry_path = entry.path();
+if entry_path.is_dir() {
+delete_directory_contents_recursive(&entry_path);
+if std::fs::remove_dir(&entry_path).is_ok() {
+⋮----
+if std::fs::remove_file(&entry_path).is_ok() {
+⋮----
+pub fn is_dark_mode() -> bool {
+⋮----
+if let Ok(app) = crate::APP.lock() {
+app.config.theme_mode.clone()
 </file>
 
 <file path="src/gui/app/init.rs">
@@ -17015,73 +17084,6 @@ PostQuitMessage(0);
 ⋮----
 WM_ERASEBKGND => LRESULT(1),
 _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-</file>
-
-<file path="src/overlay/mod.rs">
-pub mod auto_copy_badge;
-pub mod broom_assets;
-pub mod continuous_mode;
-pub mod input_history;
-pub mod paint_utils;
-pub mod preset_wheel;
-pub mod process;
-pub mod prompt_dj;
-pub mod recording;
-pub mod result;
-mod selection;
-pub mod text_input;
-pub mod text_selection;
-⋮----
-pub fn is_busy() -> bool {
-IS_BUSY_WITH_OVERLAY.load(Ordering::SeqCst)
-⋮----
-pub fn set_is_busy(busy: bool) {
-IS_BUSY_WITH_OVERLAY.store(busy, Ordering::SeqCst);
-⋮----
-pub mod utils;
-pub mod favorite_bubble;
-pub mod html_components;
-pub mod realtime_egui;
-pub mod realtime_html;
-pub mod realtime_webview;
-pub mod tray_popup;
-⋮----
-pub use text_selection::show_text_selection_tag;
-⋮----
-pub fn get_shared_webview_data_dir(subdir: Option<&str>) -> std::path::PathBuf {
-let mut path = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-path.push("SGT");
-path.push("webview_data");
-⋮----
-path.push(s);
-⋮----
-pub fn clear_webview_permissions() -> bool {
-⋮----
-if !path.exists() {
-⋮----
-println!("WebView data cleared successfully at {:?}", path);
-⋮----
-if e.raw_os_error() == Some(145) {
-eprintln!(
-⋮----
-if delete_directory_contents_recursive(&path) {
-if std::fs::remove_dir(&path).is_ok() {
-println!("WebView data cleared successfully (per-file) at {:?}", path);
-⋮----
-fn delete_directory_contents_recursive(path: &std::path::Path) -> bool {
-⋮----
-for entry in entries.flatten() {
-let entry_path = entry.path();
-if entry_path.is_dir() {
-delete_directory_contents_recursive(&entry_path);
-if std::fs::remove_dir(&entry_path).is_ok() {
-⋮----
-if std::fs::remove_file(&entry_path).is_ok() {
-⋮----
-pub fn is_dark_mode() -> bool {
-⋮----
-if let Ok(app) = crate::APP.lock() {
-app.config.theme_mode.clone()
 </file>
 
 <file path="src/overlay/selection.rs">
@@ -17445,6 +17447,289 @@ Some(&blend),
 ⋮----
 SelectObject(mem_dc, old_bmp);
 let _ = DeleteDC(mem_dc);
+</file>
+
+<file path="src/overlay/favorite_bubble/panel.rs">
+use super::render::update_bubble_visual;
+⋮----
+use super::utils::HwndWrapper;
+use crate::APP;
+use std::sync::atomic::Ordering;
+use windows::core::w;
+⋮----
+use windows::Win32::Graphics::Gdi::HBRUSH;
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::MARGINS;
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
+⋮----
+use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+⋮----
+pub fn show_panel(bubble_hwnd: HWND) {
+if IS_EXPANDED.load(Ordering::SeqCst) {
+⋮----
+let fg = GetForegroundWindow();
+if !fg.is_invalid() {
+LAST_FOREGROUND_HWND.store(fg.0 as isize, Ordering::SeqCst);
+⋮----
+let just_created = ensure_panel_created(bubble_hwnd, true);
+let panel_val = PANEL_HWND.load(Ordering::SeqCst);
+⋮----
+let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
+IS_EXPANDED.store(true, Ordering::SeqCst);
+⋮----
+let _ = ShowWindow(panel_hwnd, SW_SHOWNOACTIVATE);
+⋮----
+let _ = PostMessageW(Some(panel_hwnd), WM_REFRESH_PANEL, WPARAM(0), LPARAM(0));
+⋮----
+} else if let Ok(app) = APP.lock() {
+⋮----
+refresh_panel_layout_and_content(
+⋮----
+update_bubble_visual(bubble_hwnd);
+⋮----
+pub fn update_favorites_panel() {
+let bubble_val = BUBBLE_HWND.load(Ordering::SeqCst);
+⋮----
+let bubble_hwnd = HWND(bubble_val as *mut std::ffi::c_void);
+⋮----
+let _ = PostMessageW(Some(bubble_hwnd), WM_FORCE_SHOW_PANEL, WPARAM(0), LPARAM(0));
+⋮----
+pub fn ensure_panel_created(bubble_hwnd: HWND, with_webview: bool) -> bool {
+⋮----
+let panel_exists = PANEL_HWND.load(Ordering::SeqCst) != 0;
+⋮----
+create_panel_window_internal(bubble_hwnd);
+⋮----
+let has_webview = PANEL_WEBVIEW.with(|wv| wv.borrow().is_some());
+⋮----
+create_panel_webview(panel_hwnd);
+⋮----
+pub fn close_panel() {
+if !IS_EXPANDED.swap(false, Ordering::SeqCst) {
+⋮----
+let webview_exists = PANEL_WEBVIEW.with(|wv| {
+if let Some(webview) = wv.borrow().as_ref() {
+let _ = webview.evaluate_script("if(window.closePanel) window.closePanel();");
+⋮----
+close_panel_internal();
+⋮----
+fn close_panel_internal() {
+⋮----
+let _ = ShowWindow(panel_hwnd, SW_HIDE);
+⋮----
+save_bubble_position();
+⋮----
+pub fn destroy_panel() {
+let panel_val = PANEL_HWND.swap(0, Ordering::SeqCst);
+⋮----
+PANEL_WEBVIEW.with(|wv| {
+*wv.borrow_mut() = None;
+⋮----
+let _ = DestroyWindow(panel_hwnd);
+⋮----
+pub fn move_panel_to_bubble(bubble_x: i32, bubble_y: i32) {
+⋮----
+let _ = GetWindowRect(panel_hwnd, &mut panel_rect);
+⋮----
+let screen_w = GetSystemMetrics(SM_CXSCREEN);
+let bubble_size = BUBBLE_SIZE.load(Ordering::SeqCst);
+⋮----
+let _ = SetWindowPos(
+⋮----
+panel_y.max(10),
+⋮----
+fn create_panel_window_internal(_bubble_hwnd: HWND) {
+⋮----
+let instance = GetModuleHandleW(None).unwrap_or_default();
+let class_name = w!("SGTFavoritePanel");
+REGISTER_PANEL_CLASS.call_once(|| {
+⋮----
+lpfnWndProc: Some(panel_wnd_proc),
+hInstance: instance.into(),
+⋮----
+hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+hbrBackground: HBRUSH(std::ptr::null_mut()),
+⋮----
+RegisterClassW(&wc);
+⋮----
+let panel_hwnd = CreateWindowExW(
+⋮----
+w!("FavPanel"),
+⋮----
+Some(instance.into()),
+⋮----
+.unwrap_or_default();
+if !panel_hwnd.is_invalid() {
+PANEL_HWND.store(panel_hwnd.0 as isize, Ordering::SeqCst);
+⋮----
+let _ = DwmSetWindowAttribute(
+⋮----
+let _ = DwmExtendFrameIntoClientArea(panel_hwnd, &margins);
+⋮----
+unsafe fn refresh_panel_layout_and_content(
+⋮----
+let _ = GetWindowRect(bubble_hwnd, &mut bubble_rect);
+⋮----
+.iter()
+.filter(|p| p.is_favorite && !p.is_upcoming)
+.collect();
+let fav_count = favs.len();
+⋮----
+(PANEL_WIDTH as i32 * 2).max(320)
+⋮----
+let panel_height = panel_height.max(50);
+let dpi = unsafe { GetDpiForWindow(panel_hwnd) };
+⋮----
+let panel_width_physical = (panel_width as f32 * scale).ceil() as i32;
+let panel_height_physical = (panel_height as f32 * scale).ceil() as i32;
+⋮----
+let actual_panel_y = panel_y.max(10);
+⋮----
+let _ = webview.set_bounds(Rect {
+⋮----
+let last_dark = LAST_THEME_IS_DARK.load(Ordering::SeqCst);
+⋮----
+let new_css = generate_panel_css(is_dark);
+let escaped_css = escape_js(&new_css);
+⋮----
+let script = format!(
+⋮----
+let _ = webview.evaluate_script(&script);
+⋮----
+LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
+⋮----
+let favorites_html = get_favorite_presets_html(presets, lang, is_dark);
+update_panel_content(&favorites_html, num_cols);
+⋮----
+fn create_panel_webview(panel_hwnd: HWND) {
+⋮----
+let _ = GetClientRect(panel_hwnd, &mut rect);
+⋮----
+let html = if let Ok(app) = APP.lock() {
+⋮----
+generate_panel_html(
+⋮----
+let wrapper = HwndWrapper(panel_hwnd);
+PANEL_WEB_CONTEXT.with(|ctx| {
+if ctx.borrow().is_none() {
+let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
+*ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
+⋮----
+let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+⋮----
+let build_res = PANEL_WEB_CONTEXT.with(|ctx| {
+let mut ctx_ref = ctx.borrow_mut();
+let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+⋮----
+crate::overlay::html_components::font_manager::store_html_page(html.clone())
+.unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
+⋮----
+.with_bounds(Rect {
+⋮----
+.with_url(&page_url)
+.with_transparent(true)
+.with_ipc_handler(move |msg: wry::http::Request<String>| {
+let body = msg.body();
+⋮----
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+let _ = ReleaseCapture();
+SendMessageW(
+⋮----
+Some(WPARAM(HTCAPTION as usize)),
+Some(LPARAM(0)),
+⋮----
+close_panel();
+⋮----
+} else if body.starts_with("trigger:") {
+⋮----
+IS_EXPANDED.store(false, Ordering::SeqCst);
+trigger_preset(idx);
+⋮----
+} else if body.starts_with("trigger_only:") {
+⋮----
+} else if body.starts_with("trigger_continuous:") {
+⋮----
+activate_continuous_from_panel(idx);
+⋮----
+} else if body.starts_with("trigger_continuous_only:") {
+⋮----
+} else if body.starts_with("set_keep_open:") {
+⋮----
+if let Ok(mut app) = APP.lock() {
+⋮----
+} else if body.starts_with("resize:") {
+⋮----
+resize_panel_height(h);
+⋮----
+let new_size = (app.config.favorite_bubble_size + 8).min(80);
+⋮----
+BUBBLE_SIZE.store(new_size as i32, Ordering::SeqCst);
+⋮----
+update_favorites_panel();
+⋮----
+(app.config.favorite_bubble_size.saturating_sub(8)).max(24);
+⋮----
+.with_background_color((0, 0, 0, 0))
+.build(&wrapper)
+⋮----
+*wv.borrow_mut() = Some(webview);
+⋮----
+unsafe extern "system" fn panel_wnd_proc(
+⋮----
+LRESULT(0)
+⋮----
+WM_KILLFOCUS => LRESULT(0),
+⋮----
+let bubble_hwnd = HWND(BUBBLE_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void);
+if let Ok(app) = APP.lock() {
+⋮----
+DefWindowProcW(hwnd, msg, wparam, lparam)
+⋮----
+_ => DefWindowProcW(hwnd, msg, wparam, lparam),
+⋮----
+fn trigger_preset(preset_idx: usize) {
+⋮----
+let saved_fg = LAST_FOREGROUND_HWND.load(Ordering::SeqCst);
+⋮----
+let fg_hwnd = HWND(saved_fg as *mut std::ffi::c_void);
+if !fg_hwnd.is_invalid() {
+let _ = SetForegroundWindow(fg_hwnd);
+let _ = SetFocus(Some(fg_hwnd));
+⋮----
+let class = w!("HotkeyListenerClass");
+let title = w!("Listener");
+let hwnd = FindWindowW(class, title).unwrap_or_default();
+if !hwnd.is_invalid() {
+⋮----
+let _ = PostMessageW(Some(hwnd), WM_HOTKEY, WPARAM(hotkey_id as usize), LPARAM(0));
+⋮----
+fn activate_continuous_from_panel(preset_idx: usize) {
+⋮----
+if let Some(p) = app.config.presets.get(preset_idx) {
+(p.preset_type.clone(), p.id.clone())
+⋮----
+let hotkey_name = "ESC".to_string();
+crate::overlay::continuous_mode::set_pending_start(preset_idx, hotkey_name.clone());
+⋮----
+pub fn save_bubble_position() {
+⋮----
+let _ = GetWindowRect(bubble_hwnd, &mut rect);
+⋮----
+app.config.favorite_bubble_position = Some((rect.left, rect.top));
+⋮----
+fn resize_panel_height(content_height: i32) {
+⋮----
+let dpi = GetDpiForWindow(panel_hwnd);
+⋮----
+let new_height_pixels = (content_height as f32 * scale).ceil() as i32 + 100;
+⋮----
+if (current_height - new_height_pixels).abs() < 4 {
+⋮----
+HWND(bubble_val as *mut std::ffi::c_void)
+⋮----
+fn update_panel_content(html: &str, cols: usize) {
+⋮----
+let escaped = escape_js(html);
 </file>
 
 <file path="src/gui/splash.rs">
@@ -17966,923 +18251,6 @@ painter.rect_filled(fill, 2.0, magenta_color);
 let pulse = (t * 5.0).sin().abs() * 0.7 + 0.3;
 ⋮----
 click_col.linear_multiply(pulse),
-</file>
-
-<file path="src/overlay/favorite_bubble/panel.rs">
-use super::render::update_bubble_visual;
-⋮----
-use super::utils::HwndWrapper;
-use crate::APP;
-use std::sync::atomic::Ordering;
-use windows::core::w;
-⋮----
-use windows::Win32::Graphics::Gdi::HBRUSH;
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Controls::MARGINS;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
-⋮----
-use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
-⋮----
-pub fn show_panel(bubble_hwnd: HWND) {
-if IS_EXPANDED.load(Ordering::SeqCst) {
-⋮----
-let fg = GetForegroundWindow();
-if !fg.is_invalid() {
-LAST_FOREGROUND_HWND.store(fg.0 as isize, Ordering::SeqCst);
-⋮----
-let just_created = ensure_panel_created(bubble_hwnd, true);
-let panel_val = PANEL_HWND.load(Ordering::SeqCst);
-⋮----
-let panel_hwnd = HWND(panel_val as *mut std::ffi::c_void);
-IS_EXPANDED.store(true, Ordering::SeqCst);
-⋮----
-let _ = ShowWindow(panel_hwnd, SW_SHOWNOACTIVATE);
-⋮----
-let _ = PostMessageW(Some(panel_hwnd), WM_REFRESH_PANEL, WPARAM(0), LPARAM(0));
-⋮----
-} else if let Ok(app) = APP.lock() {
-⋮----
-refresh_panel_layout_and_content(
-⋮----
-update_bubble_visual(bubble_hwnd);
-⋮----
-pub fn update_favorites_panel() {
-let bubble_val = BUBBLE_HWND.load(Ordering::SeqCst);
-⋮----
-let bubble_hwnd = HWND(bubble_val as *mut std::ffi::c_void);
-⋮----
-let _ = PostMessageW(Some(bubble_hwnd), WM_FORCE_SHOW_PANEL, WPARAM(0), LPARAM(0));
-⋮----
-pub fn ensure_panel_created(bubble_hwnd: HWND, with_webview: bool) -> bool {
-⋮----
-let panel_exists = PANEL_HWND.load(Ordering::SeqCst) != 0;
-⋮----
-create_panel_window_internal(bubble_hwnd);
-⋮----
-let has_webview = PANEL_WEBVIEW.with(|wv| wv.borrow().is_some());
-⋮----
-create_panel_webview(panel_hwnd);
-⋮----
-pub fn close_panel() {
-if !IS_EXPANDED.swap(false, Ordering::SeqCst) {
-⋮----
-let webview_exists = PANEL_WEBVIEW.with(|wv| {
-if let Some(webview) = wv.borrow().as_ref() {
-let _ = webview.evaluate_script("if(window.closePanel) window.closePanel();");
-⋮----
-close_panel_internal();
-⋮----
-fn close_panel_internal() {
-⋮----
-let _ = ShowWindow(panel_hwnd, SW_HIDE);
-⋮----
-save_bubble_position();
-⋮----
-pub fn destroy_panel() {
-let panel_val = PANEL_HWND.swap(0, Ordering::SeqCst);
-⋮----
-PANEL_WEBVIEW.with(|wv| {
-*wv.borrow_mut() = None;
-⋮----
-let _ = DestroyWindow(panel_hwnd);
-⋮----
-pub fn move_panel_to_bubble(bubble_x: i32, bubble_y: i32) {
-⋮----
-let _ = GetWindowRect(panel_hwnd, &mut panel_rect);
-⋮----
-let screen_w = GetSystemMetrics(SM_CXSCREEN);
-let bubble_size = BUBBLE_SIZE.load(Ordering::SeqCst);
-⋮----
-let _ = SetWindowPos(
-⋮----
-panel_y.max(10),
-⋮----
-fn create_panel_window_internal(_bubble_hwnd: HWND) {
-⋮----
-let instance = GetModuleHandleW(None).unwrap_or_default();
-let class_name = w!("SGTFavoritePanel");
-REGISTER_PANEL_CLASS.call_once(|| {
-⋮----
-lpfnWndProc: Some(panel_wnd_proc),
-hInstance: instance.into(),
-⋮----
-hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-hbrBackground: HBRUSH(std::ptr::null_mut()),
-⋮----
-RegisterClassW(&wc);
-⋮----
-let panel_hwnd = CreateWindowExW(
-⋮----
-w!("FavPanel"),
-⋮----
-Some(instance.into()),
-⋮----
-.unwrap_or_default();
-if !panel_hwnd.is_invalid() {
-PANEL_HWND.store(panel_hwnd.0 as isize, Ordering::SeqCst);
-⋮----
-let _ = DwmSetWindowAttribute(
-⋮----
-let _ = DwmExtendFrameIntoClientArea(panel_hwnd, &margins);
-⋮----
-unsafe fn refresh_panel_layout_and_content(
-⋮----
-let _ = GetWindowRect(bubble_hwnd, &mut bubble_rect);
-⋮----
-.iter()
-.filter(|p| p.is_favorite && !p.is_upcoming)
-.collect();
-let fav_count = favs.len();
-⋮----
-(PANEL_WIDTH as i32 * 2).max(320)
-⋮----
-let panel_height = panel_height.max(50);
-let dpi = unsafe { GetDpiForWindow(panel_hwnd) };
-⋮----
-let panel_width_physical = (panel_width as f32 * scale).ceil() as i32;
-let panel_height_physical = (panel_height as f32 * scale).ceil() as i32;
-⋮----
-let actual_panel_y = panel_y.max(10);
-⋮----
-let _ = webview.set_bounds(Rect {
-⋮----
-let last_dark = LAST_THEME_IS_DARK.load(Ordering::SeqCst);
-⋮----
-let new_css = generate_panel_css(is_dark);
-let escaped_css = escape_js(&new_css);
-⋮----
-let script = format!(
-⋮----
-let _ = webview.evaluate_script(&script);
-⋮----
-LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
-⋮----
-let favorites_html = get_favorite_presets_html(presets, lang, is_dark);
-update_panel_content(&favorites_html, num_cols);
-⋮----
-fn create_panel_webview(panel_hwnd: HWND) {
-⋮----
-let _ = GetClientRect(panel_hwnd, &mut rect);
-⋮----
-let html = if let Ok(app) = APP.lock() {
-⋮----
-generate_panel_html(
-⋮----
-let wrapper = HwndWrapper(panel_hwnd);
-PANEL_WEB_CONTEXT.with(|ctx| {
-if ctx.borrow().is_none() {
-let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
-*ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
-⋮----
-let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
-⋮----
-let build_res = PANEL_WEB_CONTEXT.with(|ctx| {
-let mut ctx_ref = ctx.borrow_mut();
-let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-⋮----
-crate::overlay::html_components::font_manager::store_html_page(html.clone())
-.unwrap_or_else(|| format!("data:text/html,{}", urlencoding::encode(&html)));
-⋮----
-.with_bounds(Rect {
-⋮----
-.with_url(&page_url)
-.with_transparent(true)
-.with_ipc_handler(move |msg: wry::http::Request<String>| {
-let body = msg.body();
-⋮----
-use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
-let _ = ReleaseCapture();
-SendMessageW(
-⋮----
-Some(WPARAM(HTCAPTION as usize)),
-Some(LPARAM(0)),
-⋮----
-close_panel();
-⋮----
-} else if body.starts_with("trigger:") {
-⋮----
-IS_EXPANDED.store(false, Ordering::SeqCst);
-trigger_preset(idx);
-⋮----
-} else if body.starts_with("trigger_only:") {
-⋮----
-} else if body.starts_with("trigger_continuous:") {
-⋮----
-activate_continuous_from_panel(idx);
-⋮----
-} else if body.starts_with("trigger_continuous_only:") {
-⋮----
-} else if body.starts_with("set_keep_open:") {
-⋮----
-if let Ok(mut app) = APP.lock() {
-⋮----
-} else if body.starts_with("resize:") {
-⋮----
-resize_panel_height(h);
-⋮----
-let new_size = (app.config.favorite_bubble_size + 8).min(80);
-⋮----
-BUBBLE_SIZE.store(new_size as i32, Ordering::SeqCst);
-⋮----
-update_favorites_panel();
-⋮----
-(app.config.favorite_bubble_size.saturating_sub(8)).max(24);
-⋮----
-.with_background_color((0, 0, 0, 0))
-.build(&wrapper)
-⋮----
-*wv.borrow_mut() = Some(webview);
-⋮----
-unsafe extern "system" fn panel_wnd_proc(
-⋮----
-LRESULT(0)
-⋮----
-WM_KILLFOCUS => LRESULT(0),
-⋮----
-let bubble_hwnd = HWND(BUBBLE_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void);
-if let Ok(app) = APP.lock() {
-⋮----
-DefWindowProcW(hwnd, msg, wparam, lparam)
-⋮----
-_ => DefWindowProcW(hwnd, msg, wparam, lparam),
-⋮----
-fn trigger_preset(preset_idx: usize) {
-⋮----
-let saved_fg = LAST_FOREGROUND_HWND.load(Ordering::SeqCst);
-⋮----
-let fg_hwnd = HWND(saved_fg as *mut std::ffi::c_void);
-if !fg_hwnd.is_invalid() {
-let _ = SetForegroundWindow(fg_hwnd);
-let _ = SetFocus(Some(fg_hwnd));
-⋮----
-let class = w!("HotkeyListenerClass");
-let title = w!("Listener");
-let hwnd = FindWindowW(class, title).unwrap_or_default();
-if !hwnd.is_invalid() {
-⋮----
-let _ = PostMessageW(Some(hwnd), WM_HOTKEY, WPARAM(hotkey_id as usize), LPARAM(0));
-⋮----
-fn activate_continuous_from_panel(preset_idx: usize) {
-⋮----
-if let Some(p) = app.config.presets.get(preset_idx) {
-(p.preset_type.clone(), p.id.clone())
-⋮----
-let hotkey_name = "ESC".to_string();
-crate::overlay::continuous_mode::set_pending_start(preset_idx, hotkey_name.clone());
-⋮----
-pub fn save_bubble_position() {
-⋮----
-let _ = GetWindowRect(bubble_hwnd, &mut rect);
-⋮----
-app.config.favorite_bubble_position = Some((rect.left, rect.top));
-⋮----
-fn resize_panel_height(content_height: i32) {
-⋮----
-let dpi = GetDpiForWindow(panel_hwnd);
-⋮----
-let new_height_pixels = (content_height as f32 * scale).ceil() as i32 + 100;
-⋮----
-if (current_height - new_height_pixels).abs() < 4 {
-⋮----
-HWND(bubble_val as *mut std::ffi::c_void)
-⋮----
-fn update_panel_content(html: &str, cols: usize) {
-⋮----
-let escaped = escape_js(html);
-</file>
-
-<file path="Cargo.toml">
-[package]
-name = "screen-goated-toolbox"
-version = "4.4.2"
-edition = "2021"
-
-[build-dependencies]
-winres = "0.1"
-image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
-
-[dependencies]
-# Network & Serialization
-ureq = { version = "3.1", features = ["json"] }
-tungstenite = { version = "0.28", features = ["native-tls"] }
-native-tls = "0.2"
-url = "2.5"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1.0"
-base64 = "0.22"
-self_update = { version = "0.42", features = ["archive-zip", "compression-zip-deflate"] }
-zip = "7.0"
-
-# Image Processing (Common formats for drag-and-drop)
-image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg", "gif", "webp", "tiff"] }
-
-# Time
-chrono = { version = "0.4", features = ["serde"] }
-
-# System
-dirs = "6.0"
-lazy_static = "1.5"
-textwrap = "0.16"
-open = "5.3"
-sys-locale = "0.3"
-winreg = "0.55"
-auto-launch = "0.5"
-urlencoding = "2.1"
-
-# Language Data (Kept as requested)
-isolang = { version = "2.4", features = ["serde", "english_names"] }
-whatlang = "0.18"
-
-# GUI & Media
-eframe = { version = "0.33", default-features = false, features = ["glow"] }
-egui-snarl = { path = "libs/egui-snarl", features = ["serde"] }
-tray-icon = "0.21.3"
-cpal = "0.17"
-hound = "3.5"
-wasapi = "0.22"
-minimp3 = "0.6"
-egui_extras = { version = "0.33", features = ["all_loaders"] }
-# Audio file decoding (MP3, FLAC, OGG, WAV, AAC, ALAC)
-symphonia = { version = "0.5", features = ["mp3", "flac", "ogg", "wav", "aac", "alac", "pcm"] }
-
-# Markdown Rendering
-pulldown-cmark = "0.13"
-wry = "0.53.5"
-raw-window-handle = "0.6"
-windows-core = "0.62"
-parakeet-rs = { version = "0.2.7", features = ["directml"] }
-ort = { version = "2.0.0-rc.10", features = ["directml", "load-dynamic"] }
-ringbuf = "0.4.8"
-dark-light = "2.0.0"
-
-[dependencies.windows]
-version = "0.62"
-features = [
-    "Win32_Foundation",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Controls",
-    "Win32_Graphics_Gdi",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_System_LibraryLoader",
-    "Win32_Graphics_Dwm",
-    "Win32_UI_HiDpi",
-    "Win32_System_Threading",
-    "Win32_Security",
-    "Win32_System_Com",
-    "Win32_System_DataExchange",
-    "Win32_System_Memory",
-    "Win32_Media_Audio",
-    "Win32_System_SystemInformation",
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_Common",
-    "Win32_UI_Accessibility",
-]
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = "symbols"  # Keep minimal debug info for AV trust (don't fully strip)
-debug = 1          # Include basic debug info - helps Windows Defender trust the exe
-panic = "unwind"
-</file>
-
-<file path="src/gui/locale.rs">
-pub struct LocaleText {
-⋮----
-pub force_quit: &'static str, // NEW
-⋮----
-// --- NEW TEXT INPUT FIELDS ---
-⋮----
-pub continuous_input_label: &'static str, // Checkbox for continuous input mode
-⋮----
-// --- COMPOUND SEARCH UI ---
-⋮----
-pub search_searching: &'static str,        // "searching" / "tìm kiếm"
-⋮----
-pub search_found_sources: &'static str,    // "FOUND {} SOURCES" / "ĐÃ TÌM THẤY {} NGUỒN"
-⋮----
-pub search_no_title: &'static str,      // "(No title)" / "(Không có tiêu đề)"
-⋮----
-pub search_analyzed_sources: &'static str, // "Analyzed {} sources" / "Đã phân tích {} nguồn"
-⋮----
-pub controller_checkbox_label: &'static str, // "Bộ điều khiển" / "Controller" / "컨트롤러"
-// --- GLOBAL SETTINGS UI HEADERS ---
-⋮----
-// --- MODEL THINKING INDICATOR ---
-⋮----
-// App selection modal
-⋮----
-// --- TRAY MENU ---
-⋮----
-// --- FAVORITE BUBBLE ---
-⋮----
-// --- AUTO COPY BADGE ---
-⋮----
-// --- REALTIME EGUI SPECIFIC ---
-⋮----
-// --- HELP ASSISTANT ---
-⋮----
-// --- PROMPT DJ ---
-⋮----
-// --- PARAKEET DOWNLOAD MODAL ---
-⋮----
-// --- OVERLAY BUTTONS TOOLTIPS ---
-⋮----
-pub download_quality_label_text: &'static str, // NEW
-⋮----
-pub download_scanning_label: &'static str, // NEW
-⋮----
-pub download_show_log_btn: &'static str, // NEW
-⋮----
-// --- CONTINUOUS MODE ---
-⋮----
-impl LocaleText {
-pub fn get(lang_code: &str) -> Self {
-⋮----
-tips_list: vec![
-⋮----
-tts_preview_texts: vec![
-</file>
-
-<file path="src/overlay/result/button_canvas.rs">
-use std::cell::RefCell;
-use std::collections::HashMap;
-⋮----
-use windows::core::w;
-⋮----
-use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
-⋮----
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Controls::MARGINS;
-use windows::Win32::UI::HiDpi::GetDpiForSystem;
-⋮----
-use super::state::WINDOW_STATES;
-fn get_dpi_scale() -> f64 {
-let dpi = unsafe { GetDpiForSystem() };
-⋮----
-thread_local! {
-⋮----
-struct HwndWrapper(HWND);
-unsafe impl Send for HwndWrapper {}
-unsafe impl Sync for HwndWrapper {}
-⋮----
-fn window_handle(
-⋮----
-std::num::NonZeroIsize::new(self.0 .0 as isize).expect("HWND cannot be null"),
-⋮----
-unsafe { Ok(raw_window_handle::WindowHandle::borrow_raw(handle)) }
-⋮----
-/// Register a markdown window for button overlay
-pub fn register_markdown_window(hwnd: HWND) {
-⋮----
-pub fn register_markdown_window(hwnd: HWND) {
-⋮----
-// Initialize on-demand if not warmed up
-if !IS_WARMED_UP.load(Ordering::SeqCst) && CANVAS_HWND.load(Ordering::SeqCst) == 0 {
-if !IS_INITIALIZING.swap(true, Ordering::SeqCst) {
-⋮----
-create_canvas_window();
-⋮----
-// Polling thread to auto-show once ready
-⋮----
-if IS_WARMED_UP.load(Ordering::SeqCst) && CANVAS_HWND.load(Ordering::SeqCst) != 0 {
-update_canvas();
-show_canvas();
-⋮----
-// Get window rect
-⋮----
-let _ = GetWindowRect(hwnd, &mut r);
-⋮----
-let mut windows = MARKDOWN_WINDOWS.lock().unwrap();
-windows.insert(
-⋮----
-// Trigger canvas update
-⋮----
-/// Unregister a markdown window
-pub fn unregister_markdown_window(hwnd: HWND) {
-⋮----
-pub fn unregister_markdown_window(hwnd: HWND) {
-⋮----
-windows.remove(&hwnd_key);
-// If no more markdown windows, hide canvas
-if windows.is_empty() {
-hide_canvas();
-⋮----
-/// Update window position (call when window moves/resizes)
-pub fn update_window_position(hwnd: HWND) {
-⋮----
-pub fn update_window_position(hwnd: HWND) {
-update_window_position_internal(hwnd, true);
-⋮----
-/// Update window position without triggering canvas repaint (for high-frequency drag)
-pub fn update_window_position_silent(hwnd: HWND) {
-⋮----
-pub fn update_window_position_silent(hwnd: HWND) {
-update_window_position_internal(hwnd, false);
-⋮----
-fn update_window_position_internal(hwnd: HWND, notify: bool) {
-⋮----
-if windows.contains_key(&hwnd_key) {
-⋮----
-/// Send update to set the text in the refine input bar
-pub fn send_refine_text_update(hwnd: HWND, text: &str, is_insert: bool) {
-⋮----
-pub fn send_refine_text_update(hwnd: HWND, text: &str, is_insert: bool) {
-⋮----
-// Store in pending updates
-⋮----
-let mut updates = PENDING_REFINE_UPDATES.lock().unwrap();
-updates.insert(hwnd_key, text.to_string());
-⋮----
-// Notify canvas thread
-let canvas_hwnd = CANVAS_HWND.load(Ordering::SeqCst);
-⋮----
-let _ = PostMessageW(
-Some(HWND(canvas_hwnd as *mut _)),
-⋮----
-WPARAM(hwnd_key as usize),
-LPARAM(if is_insert { 1 } else { 0 }),
-⋮----
-/// Set drag mode (temporarily disable region clipping to prevent UI cutoff)
-pub fn set_drag_mode(active: bool) {
-⋮----
-pub fn set_drag_mode(active: bool) {
-⋮----
-let hwnd = HWND(canvas_hwnd as *mut std::ffi::c_void);
-⋮----
-// ENTER DRAG MODE: Remove region (full window visible/interactive)
-IS_DRAGGING_EXTERNAL.store(true, Ordering::SeqCst);
-⋮----
-let _ = SetWindowRgn(hwnd, None, true);
-⋮----
-// EXIT DRAG MODE: Restore regions
-IS_DRAGGING_EXTERNAL.store(false, Ordering::SeqCst);
-update_canvas(); // Trigger recalculation of regions
-⋮----
-/// Update canvas with current window positions
-pub fn update_canvas() {
-⋮----
-pub fn update_canvas() {
-⋮----
-let _ = PostMessageW(Some(hwnd), WM_APP_UPDATE_WINDOWS, WPARAM(0), LPARAM(0));
-⋮----
-/// Show the canvas
-fn show_canvas() {
-⋮----
-fn show_canvas() {
-⋮----
-let _ = PostMessageW(Some(hwnd), WM_APP_SHOW_CANVAS, WPARAM(0), LPARAM(0));
-⋮----
-/// Hide the canvas
-fn hide_canvas() {
-⋮----
-fn hide_canvas() {
-⋮----
-let _ = PostMessageW(Some(hwnd), WM_APP_HIDE_CANVAS, WPARAM(0), LPARAM(0));
-⋮----
-// Track last applied theme to avoid redundant injections
-⋮----
-fn get_canvas_theme_css(is_dark: bool) -> &'static str {
-⋮----
-fn generate_canvas_html() -> String {
-⋮----
-let lang = crate::APP.lock().unwrap().config.ui_language.clone();
-⋮----
-.to_string();
-⋮----
-LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
-let theme_css = get_canvas_theme_css(is_dark);
-⋮----
-crate::overlay::html_components::icons::get_icon_svg(name).to_string()
-⋮----
-format!(
-⋮----
-.replace("#L10N_JSON#", &l10n_json)
-.replace("#ICON_SVGS_JSON#", &icon_svgs_json)
-⋮----
-/// Create the fullscreen transparent canvas window
-fn create_canvas_window() {
-⋮----
-fn create_canvas_window() {
-⋮----
-// Initialize COM for WebView on this thread
-let _ = CoInitialize(None);
-let instance = GetModuleHandleW(None).unwrap_or_default();
-let class_name = w!("SGTButtonCanvas");
-REGISTER_CANVAS_CLASS.call_once(|| {
-⋮----
-lpfnWndProc: Some(canvas_wnd_proc),
-hInstance: instance.into(),
-⋮----
-hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-hbrBackground: HBRUSH(std::ptr::null_mut()),
-⋮----
-RegisterClassW(&wc);
-⋮----
-// Get screen dimensions
-let screen_w = GetSystemMetrics(SM_CXSCREEN);
-let screen_h = GetSystemMetrics(SM_CYSCREEN);
-// Create fullscreen transparent window
-// WS_EX_TOPMOST keeps it above result windows
-// WS_EX_TOOLWINDOW hides from taskbar
-// WS_EX_NOACTIVATE prevents focus stealing
-// WS_EX_TRANSPARENT removed to allow hit-testing (we handle passthrough via WM_NCHITTEST)
-// WS_EX_LAYERED removed - interfering with WebView2 creation when WS_EX_TRANSPARENT is missing?
-let hwnd = CreateWindowExW(
-⋮----
-w!("ButtonCanvas"),
-⋮----
-Some(instance.into()),
-⋮----
-.unwrap_or_default();
-if hwnd.is_invalid() {
-⋮----
-CANVAS_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
-// CRITICAL: DwmExtendFrameIntoClientArea with -1 margins enables
-// transparent background while keeping WebView content visible
-⋮----
-let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
-// Initialize window region to empty (fully click-through)
-let empty_rgn = CreateRectRgn(0, 0, 0, 0);
-let _ = SetWindowRgn(hwnd, Some(empty_rgn), true);
-// Initialize WebContext
-CANVAS_WEB_CONTEXT.with(|ctx| {
-if ctx.borrow().is_none() {
-// Consolidate all minor overlays to 'common' to share one browser process and keep RAM at ~80MB
-let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
-*ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
-⋮----
-let html = generate_canvas_html();
-let wrapper = HwndWrapper(hwnd);
-⋮----
-// LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
-let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
-⋮----
-let build_res = CANVAS_WEB_CONTEXT.with(|ctx| {
-let mut ctx_ref = ctx.borrow_mut();
-let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
-⋮----
-// Store HTML in font server
-⋮----
-crate::overlay::html_components::font_manager::store_html_page(html.clone())
-.unwrap_or_else(|| {
-format!("data:text/html,{}", urlencoding::encode(&html))
-⋮----
-.with_bounds(Rect {
-⋮----
-.with_transparent(true)
-.with_visible(false)
-.with_focused(false)
-.with_url(&page_url)
-.with_ipc_handler(move |msg: wry::http::Request<String>| {
-handle_ipc_message(msg.body());
-⋮----
-.build_as_child(&wrapper)
-⋮----
-CANVAS_WEBVIEW.with(|cell| {
-*cell.borrow_mut() = Some(wv);
-⋮----
-IS_WARMED_UP.store(true, Ordering::SeqCst);
-⋮----
-// CRITICAL: Destroy the window so it doesn't block the screen invisibly
-⋮----
-let _ = DestroyWindow(hwnd);
-CANVAS_HWND.store(0, Ordering::SeqCst);
-CoUninitialize();
-⋮----
-// Message loop
-⋮----
-while GetMessageW(&mut msg, None, 0, 0).into() {
-let _ = TranslateMessage(&msg);
-DispatchMessageW(&msg);
-⋮----
-// Cleanup
-IS_WARMED_UP.store(false, Ordering::SeqCst);
-IS_INITIALIZING.store(false, Ordering::SeqCst);
-⋮----
-*cell.borrow_mut() = None;
-⋮----
-/// Handle IPC messages from the canvas WebView
-fn handle_ipc_message(body: &str) {
-⋮----
-fn handle_ipc_message(body: &str) {
-⋮----
-let action = json.get("action").and_then(|v| v.as_str()).unwrap_or("");
-// Handle clickable regions update (global, not per-window)
-⋮----
-if let Some(regions) = json.get("regions").and_then(|v| v.as_array()) {
-let canvas_hwnd = HWND(CANVAS_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void);
-if canvas_hwnd.0.is_null() {
-⋮----
-// If currently dragging external window, IGNORE region updates
-// We want the window to remain unclipped (full screen) during drag for smoothness
-if IS_DRAGGING_EXTERNAL.load(Ordering::SeqCst) {
-⋮----
-let combined_rgn = CreateRectRgn(0, 0, 0, 0);
-// JavaScript sends logical (CSS) coordinates, but SetWindowRgn expects physical
-let scale = get_dpi_scale();
-⋮----
-// Parse logical coordinates from JavaScript
-let logical_x = r.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-let logical_y = r.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
-let logical_w = r.get("w").and_then(|v| v.as_f64()).unwrap_or(0.0);
-let logical_h = r.get("h").and_then(|v| v.as_f64()).unwrap_or(0.0);
-// Scale to physical coordinates
-⋮----
-let rgn = CreateRectRgn(x, y, x + w, y + h);
-⋮----
-CombineRgn(Some(combined_rgn), Some(combined_rgn), Some(rgn), RGN_OR);
-let _ = DeleteObject(rgn.into()); // Delete localized region after combining
-⋮----
-// Apply the region to the window
-// System owns combined_rgn after this call
-let _ = SetWindowRgn(canvas_hwnd, Some(combined_rgn), true);
-⋮----
-let hwnd_str = json.get("hwnd").and_then(|v| v.as_str()).unwrap_or("0");
-let hwnd_val: isize = hwnd_str.parse().unwrap_or(0);
-⋮----
-let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-// Ensure canvas window is foreground for keyboard focus (Ctrl+A etc) - REMOVED to prevent focus stealing from games
-// Only specific actions like 'edit' might need focus, handled locally in their logic if needed.
-⋮----
-Some(hwnd),
-⋮----
-WPARAM(0),
-LPARAM(0),
-⋮----
-// Close window
-⋮----
-let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-⋮----
-// Middle-click = close all
-⋮----
-// Initiate manual Rust-side drag (more robust than system drag)
-⋮----
-use windows::Win32::UI::Input::KeyboardAndMouse::SetCapture;
-use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-⋮----
-if GetCursorPos(&mut pt).is_ok() {
-use std::sync::atomic::Ordering;
-ACTIVE_DRAG_TARGET.store(hwnd.0 as isize, Ordering::SeqCst);
-DRAG_IS_GROUP.store(false, Ordering::SeqCst);
-let mut last = LAST_DRAG_POS.lock().unwrap();
-⋮----
-let mut start = START_DRAG_POS.lock().unwrap();
-⋮----
-let canvas_val = CANVAS_HWND.load(Ordering::SeqCst);
-⋮----
-let canvas_hwnd = HWND(canvas_val as *mut std::ffi::c_void);
-let _ = SetCapture(canvas_hwnd);
-// Hide all buttons immediately
-⋮----
-// Initiate mass drag for linked windows (Right-click drag)
-⋮----
-DRAG_IS_GROUP.store(true, Ordering::SeqCst);
-// Collect the entire group once at start
-⋮----
-let mut snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
-*snapshot = group.into_iter().map(|(h, _)| h.0 as isize).collect();
-⋮----
-if let Some(value) = json.get("value").and_then(|v| v.as_f64()) {
-⋮----
-// Update state so it persists across button canvas refreshes
-⋮----
-let mut states = WINDOW_STATES.lock().unwrap();
-if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
-⋮----
-let _ = SetLayeredWindowAttributes(
-⋮----
-// Legacy JS-driven drag (unused now but kept for compatibility)
-⋮----
-(json.get("dx").and_then(|v| v.as_f64()).unwrap_or(0.0) * scale).round() as i32;
-⋮----
-(json.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0) * scale).round() as i32;
-⋮----
-let text = json.get("text").and_then(|v| v.as_str()).unwrap_or("");
-⋮----
-let current = json.get("text").and_then(|v| v.as_str()).unwrap_or("");
-⋮----
-// Send back to JS
-send_refine_text_update(hwnd, &text, false);
-⋮----
-// Trigger transcription preset
-⋮----
-let app = crate::APP.lock().unwrap();
-⋮----
-.iter()
-.position(|p| p.id == "preset_transcribe")
-⋮----
-let canvas_hwnd = HWND(canvas_val as *mut _);
-let _ = SetForegroundWindow(canvas_hwnd);
-⋮----
-/// Send updated window data to the canvas
-fn send_windows_update() {
-⋮----
-fn send_windows_update() {
-// Check if theme has changed and inject new CSS if needed
-⋮----
-let last_dark = LAST_THEME_IS_DARK.load(Ordering::SeqCst);
-⋮----
-let new_css = get_canvas_theme_css(is_dark);
-// Escape content safely for JS string
-let content_escaped = new_css.replace('`', "\\`").replace('\\', "\\\\");
-let script = format!(
-⋮----
-if let Some(webview) = cell.borrow().as_ref() {
-let _ = webview.evaluate_script(&script);
-⋮----
-let states = WINDOW_STATES.lock().unwrap();
-let windows = MARKDOWN_WINDOWS.lock().unwrap();
-⋮----
-// Check for any active native interaction (Resizing/Moving)
-let any_interacting = states.values().any(|s| {
-matches!(
-⋮----
-// If ANY drag (custom or native) or resize is active, hide ALL buttons
-let dragging_target = ACTIVE_DRAG_TARGET.load(std::sync::atomic::Ordering::SeqCst);
-⋮----
-// Send empty data -> Hides all
-let json = serde_json::to_string(&data).unwrap_or_default();
-⋮----
-let script = format!("window.updateWindows({});", json);
-⋮----
-for (&hwnd_key, &(x, y, w, h)) in windows.iter() {
-let state = states.get(&hwnd_key);
-⋮----
-data.insert(
-hwnd_key.to_string(),
-⋮----
-let script = format!("window.updateWindows({});", windows_data);
-⋮----
-unsafe extern "system" fn canvas_wnd_proc(
-⋮----
-let _ = SetWindowPos(
-⋮----
-Some(HWND_TOPMOST),
-⋮----
-send_windows_update();
-LRESULT(0)
-⋮----
-let foreground = GetForegroundWindow();
-let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-⋮----
-let _ = webview.set_visible(true);
-⋮----
-if !foreground.0.is_null() && IsWindow(Some(foreground)).as_bool() {
-let _ = SetForegroundWindow(foreground);
-⋮----
-let _ = SetTimer(Some(hwnd), CURSOR_POLL_TIMER_ID, 100, None);
-⋮----
-let _ = webview.set_visible(false);
-⋮----
-let _ = ShowWindow(hwnd, SW_HIDE);
-let _ = KillTimer(Some(hwnd), CURSOR_POLL_TIMER_ID);
-⋮----
-updates.remove(&hwnd_key)
-⋮----
-.replace('\\', "\\\\")
-.replace('`', "\\`")
-.replace("${", "\\${")
-.replace('\r', "");
-⋮----
-LRESULT(windows::Win32::UI::WindowsAndMessaging::MA_NOACTIVATE as isize)
-⋮----
-let target_val = ACTIVE_DRAG_TARGET.load(Ordering::SeqCst);
-⋮----
-if DRAG_IS_GROUP.load(Ordering::SeqCst) {
-let snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
-for &h_val in snapshot.iter() {
-let h = HWND(h_val as *mut std::ffi::c_void);
-⋮----
-let target_hwnd = HWND(target_val as *mut std::ffi::c_void);
-⋮----
-return LRESULT(0);
-⋮----
-DefWindowProcW(hwnd, msg, wparam, lparam)
-⋮----
-use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
-ACTIVE_DRAG_TARGET.store(0, Ordering::SeqCst);
-⋮----
-let _ = ReleaseCapture();
-⋮----
-let _ = GetCursorPos(&mut pt);
-let start = START_DRAG_POS.lock().unwrap();
-let dist_sq = ((pt.x - start.x).pow(2) + (pt.y - start.y).pow(2)) as f64;
-if dist_sq.sqrt() < 5.0 {
-⋮----
-let _ = PostMessageW(Some(target_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-⋮----
-format!("window.updateCursorPosition({}, {});", logical_x, logical_y);
-⋮----
-if ACTIVE_DRAG_TARGET.load(Ordering::SeqCst) == 0 {
-⋮----
-let _ = webview.set_bounds(Rect {
-⋮----
-PostQuitMessage(0);
-⋮----
-_ => DefWindowProcW(hwnd, msg, wparam, lparam),
 </file>
 
 <file path="src/overlay/result/markdown_view.rs">
@@ -19464,6 +18832,668 @@ Some(hwnd),
 ⋮----
 WPARAM(0xF012),
 LPARAM(0),
+</file>
+
+<file path="Cargo.toml">
+[package]
+name = "screen-goated-toolbox"
+version = "4.5.0"
+edition = "2021"
+
+[build-dependencies]
+winres = "0.1"
+image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
+
+[dependencies]
+# Network & Serialization
+ureq = { version = "3.1", features = ["json"] }
+tungstenite = { version = "0.28", features = ["native-tls"] }
+native-tls = "0.2"
+url = "2.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+base64 = "0.22"
+self_update = { version = "0.42", features = ["archive-zip", "compression-zip-deflate"] }
+zip = "7.0"
+
+# Image Processing (Common formats for drag-and-drop)
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg", "gif", "webp", "tiff"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# System
+dirs = "6.0"
+lazy_static = "1.5"
+textwrap = "0.16"
+open = "5.3"
+sys-locale = "0.3"
+winreg = "0.55"
+auto-launch = "0.5"
+urlencoding = "2.1"
+
+# Language Data (Kept as requested)
+isolang = { version = "2.4", features = ["serde", "english_names"] }
+whatlang = "0.18"
+
+# GUI & Media
+eframe = { version = "0.33", default-features = false, features = ["glow"] }
+egui-snarl = { path = "libs/egui-snarl", features = ["serde"] }
+tray-icon = "0.21.3"
+cpal = "0.17"
+hound = "3.5"
+wasapi = "0.22"
+minimp3 = "0.6"
+egui_extras = { version = "0.33", features = ["all_loaders"] }
+# Audio file decoding (MP3, FLAC, OGG, WAV, AAC, ALAC)
+symphonia = { version = "0.5", features = ["mp3", "flac", "ogg", "wav", "aac", "alac", "pcm"] }
+
+# Markdown Rendering
+pulldown-cmark = "0.13"
+wry = "0.53.5"
+raw-window-handle = "0.6"
+windows-core = "0.62"
+parakeet-rs = { version = "0.2.7", features = ["directml"] }
+ort = { version = "2.0.0-rc.10", features = ["directml", "load-dynamic"] }
+ringbuf = "0.4.8"
+dark-light = "2.0.0"
+
+[dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Controls",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_HiDpi",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_Media_Audio",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Accessibility",
+]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"  # Keep minimal debug info for AV trust (don't fully strip)
+debug = 1          # Include basic debug info - helps Windows Defender trust the exe
+panic = "unwind"
+</file>
+
+<file path="src/gui/locale.rs">
+pub struct LocaleText {
+⋮----
+pub force_quit: &'static str, // NEW
+⋮----
+// --- NEW TEXT INPUT FIELDS ---
+⋮----
+pub continuous_input_label: &'static str, // Checkbox for continuous input mode
+⋮----
+// --- COMPOUND SEARCH UI ---
+⋮----
+pub search_searching: &'static str,        // "searching" / "tìm kiếm"
+⋮----
+pub search_found_sources: &'static str,    // "FOUND {} SOURCES" / "ĐÃ TÌM THẤY {} NGUỒN"
+⋮----
+pub search_no_title: &'static str,      // "(No title)" / "(Không có tiêu đề)"
+⋮----
+pub search_analyzed_sources: &'static str, // "Analyzed {} sources" / "Đã phân tích {} nguồn"
+⋮----
+pub controller_checkbox_label: &'static str, // "Bộ điều khiển" / "Controller" / "컨트롤러"
+// --- GLOBAL SETTINGS UI HEADERS ---
+⋮----
+// --- MODEL THINKING INDICATOR ---
+⋮----
+// App selection modal
+⋮----
+// --- TRAY MENU ---
+⋮----
+// --- FAVORITE BUBBLE ---
+⋮----
+// --- AUTO COPY BADGE ---
+⋮----
+// --- REALTIME EGUI SPECIFIC ---
+⋮----
+// --- HELP ASSISTANT ---
+⋮----
+// --- PROMPT DJ ---
+⋮----
+// --- PARAKEET DOWNLOAD MODAL ---
+⋮----
+// --- OVERLAY BUTTONS TOOLTIPS ---
+⋮----
+pub download_quality_label_text: &'static str, // NEW
+⋮----
+pub download_scanning_label: &'static str, // NEW
+⋮----
+pub download_show_log_btn: &'static str, // NEW
+⋮----
+// --- CONTINUOUS MODE ---
+⋮----
+impl LocaleText {
+pub fn get(lang_code: &str) -> Self {
+⋮----
+tips_list: vec![
+⋮----
+tts_preview_texts: vec![
+</file>
+
+<file path="src/overlay/result/button_canvas.rs">
+use std::cell::RefCell;
+use std::collections::HashMap;
+⋮----
+use windows::core::w;
+⋮----
+use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
+⋮----
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::MARGINS;
+use windows::Win32::UI::HiDpi::GetDpiForSystem;
+⋮----
+use super::state::WINDOW_STATES;
+fn get_dpi_scale() -> f64 {
+let dpi = unsafe { GetDpiForSystem() };
+⋮----
+thread_local! {
+⋮----
+struct HwndWrapper(HWND);
+unsafe impl Send for HwndWrapper {}
+unsafe impl Sync for HwndWrapper {}
+⋮----
+fn window_handle(
+⋮----
+std::num::NonZeroIsize::new(self.0 .0 as isize).expect("HWND cannot be null"),
+⋮----
+unsafe { Ok(raw_window_handle::WindowHandle::borrow_raw(handle)) }
+⋮----
+/// Register a markdown window for button overlay
+pub fn register_markdown_window(hwnd: HWND) {
+⋮----
+pub fn register_markdown_window(hwnd: HWND) {
+⋮----
+// Initialize on-demand if not warmed up
+if !IS_WARMED_UP.load(Ordering::SeqCst) && CANVAS_HWND.load(Ordering::SeqCst) == 0 {
+if !IS_INITIALIZING.swap(true, Ordering::SeqCst) {
+⋮----
+create_canvas_window();
+⋮----
+// Polling thread to auto-show once ready
+⋮----
+if IS_WARMED_UP.load(Ordering::SeqCst) && CANVAS_HWND.load(Ordering::SeqCst) != 0 {
+update_canvas();
+show_canvas();
+⋮----
+// Get window rect
+⋮----
+let _ = GetWindowRect(hwnd, &mut r);
+⋮----
+let mut windows = MARKDOWN_WINDOWS.lock().unwrap();
+windows.insert(
+⋮----
+// Trigger canvas update
+⋮----
+/// Unregister a markdown window
+pub fn unregister_markdown_window(hwnd: HWND) {
+⋮----
+pub fn unregister_markdown_window(hwnd: HWND) {
+⋮----
+windows.remove(&hwnd_key);
+// If no more markdown windows, hide canvas
+if windows.is_empty() {
+hide_canvas();
+⋮----
+/// Update window position (call when window moves/resizes)
+pub fn update_window_position(hwnd: HWND) {
+⋮----
+pub fn update_window_position(hwnd: HWND) {
+update_window_position_internal(hwnd, true);
+⋮----
+fn update_window_position_internal(hwnd: HWND, notify: bool) {
+⋮----
+if windows.contains_key(&hwnd_key) {
+⋮----
+/// Update window position directly in the register (skips GetWindowRect, faster for bulk)
+pub fn update_window_position_direct(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
+⋮----
+pub fn update_window_position_direct(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
+⋮----
+windows.insert(hwnd_key, (x, y, w, h));
+⋮----
+/// Send update to set the text in the refine input bar
+pub fn send_refine_text_update(hwnd: HWND, text: &str, is_insert: bool) {
+⋮----
+pub fn send_refine_text_update(hwnd: HWND, text: &str, is_insert: bool) {
+⋮----
+// Store in pending updates
+⋮----
+let mut updates = PENDING_REFINE_UPDATES.lock().unwrap();
+updates.insert(hwnd_key, text.to_string());
+⋮----
+// Notify canvas thread
+let canvas_hwnd = CANVAS_HWND.load(Ordering::SeqCst);
+⋮----
+let _ = PostMessageW(
+Some(HWND(canvas_hwnd as *mut _)),
+⋮----
+WPARAM(hwnd_key as usize),
+LPARAM(if is_insert { 1 } else { 0 }),
+⋮----
+/// Set drag mode (temporarily disable region clipping to prevent UI cutoff)
+pub fn set_drag_mode(active: bool) {
+⋮----
+pub fn set_drag_mode(active: bool) {
+⋮----
+let hwnd = HWND(canvas_hwnd as *mut std::ffi::c_void);
+⋮----
+// ENTER DRAG MODE: Remove region (full window visible/interactive)
+IS_DRAGGING_EXTERNAL.store(true, Ordering::SeqCst);
+⋮----
+let _ = SetWindowRgn(hwnd, None, true);
+⋮----
+// EXIT DRAG MODE: Restore regions
+IS_DRAGGING_EXTERNAL.store(false, Ordering::SeqCst);
+update_canvas(); // Trigger recalculation of regions
+⋮----
+/// Update canvas with current window positions
+pub fn update_canvas() {
+⋮----
+pub fn update_canvas() {
+⋮----
+let _ = PostMessageW(Some(hwnd), WM_APP_UPDATE_WINDOWS, WPARAM(0), LPARAM(0));
+⋮----
+/// Show the canvas
+fn show_canvas() {
+⋮----
+fn show_canvas() {
+⋮----
+let _ = PostMessageW(Some(hwnd), WM_APP_SHOW_CANVAS, WPARAM(0), LPARAM(0));
+⋮----
+/// Hide the canvas
+fn hide_canvas() {
+⋮----
+fn hide_canvas() {
+⋮----
+let _ = PostMessageW(Some(hwnd), WM_APP_HIDE_CANVAS, WPARAM(0), LPARAM(0));
+⋮----
+// Track last applied theme to avoid redundant injections
+⋮----
+fn get_canvas_theme_css(is_dark: bool) -> &'static str {
+⋮----
+fn generate_canvas_html() -> String {
+⋮----
+let lang = crate::APP.lock().unwrap().config.ui_language.clone();
+⋮----
+.to_string();
+⋮----
+LAST_THEME_IS_DARK.store(is_dark, Ordering::SeqCst);
+let theme_css = get_canvas_theme_css(is_dark);
+⋮----
+crate::overlay::html_components::icons::get_icon_svg(name).to_string()
+⋮----
+format!(
+⋮----
+.replace("#L10N_JSON#", &l10n_json)
+.replace("#ICON_SVGS_JSON#", &icon_svgs_json)
+⋮----
+/// Create the fullscreen transparent canvas window
+fn create_canvas_window() {
+⋮----
+fn create_canvas_window() {
+⋮----
+// Initialize COM for WebView on this thread
+let _ = CoInitialize(None);
+let instance = GetModuleHandleW(None).unwrap_or_default();
+let class_name = w!("SGTButtonCanvas");
+REGISTER_CANVAS_CLASS.call_once(|| {
+⋮----
+lpfnWndProc: Some(canvas_wnd_proc),
+hInstance: instance.into(),
+⋮----
+hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+hbrBackground: HBRUSH(std::ptr::null_mut()),
+⋮----
+RegisterClassW(&wc);
+⋮----
+// Get screen dimensions
+let screen_w = GetSystemMetrics(SM_CXSCREEN);
+let screen_h = GetSystemMetrics(SM_CYSCREEN);
+// Create fullscreen transparent window
+// WS_EX_TOPMOST keeps it above result windows
+// WS_EX_TOOLWINDOW hides from taskbar
+// WS_EX_NOACTIVATE prevents focus stealing
+// WS_EX_TRANSPARENT removed to allow hit-testing (we handle passthrough via WM_NCHITTEST)
+// WS_EX_LAYERED removed - interfering with WebView2 creation when WS_EX_TRANSPARENT is missing?
+let hwnd = CreateWindowExW(
+⋮----
+w!("ButtonCanvas"),
+⋮----
+Some(instance.into()),
+⋮----
+.unwrap_or_default();
+if hwnd.is_invalid() {
+⋮----
+CANVAS_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
+// CRITICAL: DwmExtendFrameIntoClientArea with -1 margins enables
+// transparent background while keeping WebView content visible
+⋮----
+let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+// Initialize window region to empty (fully click-through)
+let empty_rgn = CreateRectRgn(0, 0, 0, 0);
+let _ = SetWindowRgn(hwnd, Some(empty_rgn), true);
+// Initialize WebContext
+CANVAS_WEB_CONTEXT.with(|ctx| {
+if ctx.borrow().is_none() {
+// Consolidate all minor overlays to 'common' to share one browser process and keep RAM at ~80MB
+let shared_data_dir = crate::overlay::get_shared_webview_data_dir(Some("common"));
+*ctx.borrow_mut() = Some(WebContext::new(Some(shared_data_dir)));
+⋮----
+let html = generate_canvas_html();
+let wrapper = HwndWrapper(hwnd);
+⋮----
+// LOCK SCOPE: Only one WebView builds at a time to prevent "Not enough quota"
+let _init_lock = crate::overlay::GLOBAL_WEBVIEW_MUTEX.lock().unwrap();
+⋮----
+let build_res = CANVAS_WEB_CONTEXT.with(|ctx| {
+let mut ctx_ref = ctx.borrow_mut();
+let builder = if let Some(web_ctx) = ctx_ref.as_mut() {
+⋮----
+// Store HTML in font server
+⋮----
+crate::overlay::html_components::font_manager::store_html_page(html.clone())
+.unwrap_or_else(|| {
+format!("data:text/html,{}", urlencoding::encode(&html))
+⋮----
+.with_bounds(Rect {
+⋮----
+.with_transparent(true)
+.with_visible(false)
+.with_focused(false)
+.with_url(&page_url)
+.with_ipc_handler(move |msg: wry::http::Request<String>| {
+handle_ipc_message(msg.body());
+⋮----
+.build_as_child(&wrapper)
+⋮----
+CANVAS_WEBVIEW.with(|cell| {
+*cell.borrow_mut() = Some(wv);
+⋮----
+IS_WARMED_UP.store(true, Ordering::SeqCst);
+⋮----
+// CRITICAL: Destroy the window so it doesn't block the screen invisibly
+⋮----
+let _ = DestroyWindow(hwnd);
+CANVAS_HWND.store(0, Ordering::SeqCst);
+CoUninitialize();
+⋮----
+// Message loop
+⋮----
+while GetMessageW(&mut msg, None, 0, 0).into() {
+let _ = TranslateMessage(&msg);
+DispatchMessageW(&msg);
+⋮----
+// Cleanup
+IS_WARMED_UP.store(false, Ordering::SeqCst);
+IS_INITIALIZING.store(false, Ordering::SeqCst);
+⋮----
+*cell.borrow_mut() = None;
+⋮----
+/// Handle IPC messages from the canvas WebView
+fn handle_ipc_message(body: &str) {
+⋮----
+fn handle_ipc_message(body: &str) {
+⋮----
+let action = json.get("action").and_then(|v| v.as_str()).unwrap_or("");
+// Handle clickable regions update (global, not per-window)
+⋮----
+if let Some(regions) = json.get("regions").and_then(|v| v.as_array()) {
+let canvas_hwnd = HWND(CANVAS_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void);
+if canvas_hwnd.0.is_null() {
+⋮----
+// If currently dragging external window, IGNORE region updates
+// We want the window to remain unclipped (full screen) during drag for smoothness
+if IS_DRAGGING_EXTERNAL.load(Ordering::SeqCst) {
+⋮----
+let combined_rgn = CreateRectRgn(0, 0, 0, 0);
+// JavaScript sends logical (CSS) coordinates, but SetWindowRgn expects physical
+let scale = get_dpi_scale();
+⋮----
+// Parse logical coordinates from JavaScript
+let logical_x = r.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+let logical_y = r.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+let logical_w = r.get("w").and_then(|v| v.as_f64()).unwrap_or(0.0);
+let logical_h = r.get("h").and_then(|v| v.as_f64()).unwrap_or(0.0);
+// Scale to physical coordinates
+⋮----
+let rgn = CreateRectRgn(x, y, x + w, y + h);
+⋮----
+CombineRgn(Some(combined_rgn), Some(combined_rgn), Some(rgn), RGN_OR);
+let _ = DeleteObject(rgn.into()); // Delete localized region after combining
+⋮----
+// Apply the region to the window
+// System owns combined_rgn after this call
+let _ = SetWindowRgn(canvas_hwnd, Some(combined_rgn), true);
+⋮----
+let hwnd_str = json.get("hwnd").and_then(|v| v.as_str()).unwrap_or("0");
+let hwnd_val: isize = hwnd_str.parse().unwrap_or(0);
+⋮----
+let hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+// Ensure canvas window is foreground for keyboard focus (Ctrl+A etc) - REMOVED to prevent focus stealing from games
+// Only specific actions like 'edit' might need focus, handled locally in their logic if needed.
+⋮----
+Some(hwnd),
+⋮----
+WPARAM(0),
+LPARAM(0),
+⋮----
+// Close window
+⋮----
+let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+⋮----
+// Right-click: close linked windows (via group)
+⋮----
+let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
+⋮----
+// Middle-click = close all
+⋮----
+// Initiate manual Rust-side drag (more robust than system drag)
+⋮----
+use windows::Win32::UI::Input::KeyboardAndMouse::SetCapture;
+use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+⋮----
+if GetCursorPos(&mut pt).is_ok() {
+use std::sync::atomic::Ordering;
+ACTIVE_DRAG_TARGET.store(hwnd.0 as isize, Ordering::SeqCst);
+DRAG_IS_GROUP.store(false, Ordering::SeqCst);
+let mut last = LAST_DRAG_POS.lock().unwrap();
+⋮----
+let mut start = START_DRAG_POS.lock().unwrap();
+⋮----
+let canvas_val = CANVAS_HWND.load(Ordering::SeqCst);
+⋮----
+let canvas_hwnd = HWND(canvas_val as *mut std::ffi::c_void);
+let _ = SetCapture(canvas_hwnd);
+// Hide all buttons immediately
+⋮----
+// Initiate mass drag for linked windows (Right-click drag)
+⋮----
+DRAG_IS_GROUP.store(true, Ordering::SeqCst);
+// Collect the entire group once at start
+⋮----
+let mut snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
+*snapshot = group.into_iter().map(|(h, _)| h.0 as isize).collect();
+⋮----
+// Initiate mass drag for ALL windows (Middle-click drag)
+⋮----
+// Collect ALL registered markdown windows
+let windows = MARKDOWN_WINDOWS.lock().unwrap();
+⋮----
+*snapshot = windows.keys().cloned().collect();
+⋮----
+if let Some(value) = json.get("value").and_then(|v| v.as_f64()) {
+⋮----
+// Update state so it persists across button canvas refreshes
+⋮----
+let mut states = WINDOW_STATES.lock().unwrap();
+if let Some(state) = states.get_mut(&(hwnd.0 as isize)) {
+⋮----
+let _ = SetLayeredWindowAttributes(
+⋮----
+// Legacy JS-driven drag (unused now but kept for compatibility)
+⋮----
+(json.get("dx").and_then(|v| v.as_f64()).unwrap_or(0.0) * scale).round() as i32;
+⋮----
+(json.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0) * scale).round() as i32;
+⋮----
+let text = json.get("text").and_then(|v| v.as_str()).unwrap_or("");
+⋮----
+let current = json.get("text").and_then(|v| v.as_str()).unwrap_or("");
+⋮----
+// Send back to JS
+send_refine_text_update(hwnd, &text, false);
+⋮----
+// Trigger transcription preset
+⋮----
+let app = crate::APP.lock().unwrap();
+⋮----
+.iter()
+.position(|p| p.id == "preset_transcribe")
+⋮----
+let canvas_hwnd = HWND(canvas_val as *mut _);
+let _ = SetForegroundWindow(canvas_hwnd);
+⋮----
+/// Send updated window data to the canvas
+fn send_windows_update() {
+⋮----
+fn send_windows_update() {
+// Check if theme has changed and inject new CSS if needed
+⋮----
+let last_dark = LAST_THEME_IS_DARK.load(Ordering::SeqCst);
+⋮----
+let new_css = get_canvas_theme_css(is_dark);
+// Escape content safely for JS string
+let content_escaped = new_css.replace('`', "\\`").replace('\\', "\\\\");
+let script = format!(
+⋮----
+if let Some(webview) = cell.borrow().as_ref() {
+let _ = webview.evaluate_script(&script);
+⋮----
+let states = WINDOW_STATES.lock().unwrap();
+⋮----
+// Check for any active native interaction (Resizing/Moving)
+let any_interacting = states.values().any(|s| {
+matches!(
+⋮----
+// If ANY drag (custom or native) or resize is active, hide ALL buttons
+let dragging_target = ACTIVE_DRAG_TARGET.load(std::sync::atomic::Ordering::SeqCst);
+⋮----
+// Send empty data -> Hides all
+let json = serde_json::to_string(&data).unwrap_or_default();
+⋮----
+let script = format!("window.updateWindows({});", json);
+⋮----
+for (&hwnd_key, &(x, y, w, h)) in windows.iter() {
+let state = states.get(&hwnd_key);
+⋮----
+data.insert(
+hwnd_key.to_string(),
+⋮----
+let script = format!("window.updateWindows({});", windows_data);
+⋮----
+unsafe extern "system" fn canvas_wnd_proc(
+⋮----
+let _ = SetWindowPos(
+⋮----
+Some(HWND_TOPMOST),
+⋮----
+send_windows_update();
+LRESULT(0)
+⋮----
+let foreground = GetForegroundWindow();
+let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+⋮----
+let _ = webview.set_visible(true);
+⋮----
+if !foreground.0.is_null() && IsWindow(Some(foreground)).as_bool() {
+let _ = SetForegroundWindow(foreground);
+⋮----
+let _ = SetTimer(Some(hwnd), CURSOR_POLL_TIMER_ID, 100, None);
+⋮----
+let _ = webview.set_visible(false);
+⋮----
+let _ = ShowWindow(hwnd, SW_HIDE);
+let _ = KillTimer(Some(hwnd), CURSOR_POLL_TIMER_ID);
+⋮----
+updates.remove(&hwnd_key)
+⋮----
+.replace('\\', "\\\\")
+.replace('`', "\\`")
+.replace("${", "\\${")
+.replace('\r', "");
+⋮----
+LRESULT(windows::Win32::UI::WindowsAndMessaging::MA_NOACTIVATE as isize)
+⋮----
+let target_val = ACTIVE_DRAG_TARGET.load(Ordering::SeqCst);
+⋮----
+if DRAG_IS_GROUP.load(Ordering::SeqCst) {
+let snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
+let mut updates = Vec::with_capacity(snapshot.len());
+⋮----
+if let Ok(mut hdwp) = BeginDeferWindowPos(snapshot.len() as i32) {
+for &h_val in snapshot.iter() {
+let h = HWND(h_val as *mut std::ffi::c_void);
+⋮----
+if GetWindowRect(h, &mut r).is_ok() {
+⋮----
+hdwp = DeferWindowPos(
+⋮----
+.unwrap_or(hdwp);
+updates.push((h_val, (nx, ny, nw, nh)));
+⋮----
+let _ = EndDeferWindowPos(hdwp);
+⋮----
+if !updates.is_empty() {
+⋮----
+if windows.contains_key(&key) {
+windows.insert(key, rect);
+⋮----
+let target_hwnd = HWND(target_val as *mut std::ffi::c_void);
+⋮----
+return LRESULT(0);
+⋮----
+DefWindowProcW(hwnd, msg, wparam, lparam)
+⋮----
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+ACTIVE_DRAG_TARGET.store(0, Ordering::SeqCst);
+⋮----
+let _ = ReleaseCapture();
+⋮----
+let _ = GetCursorPos(&mut pt);
+let start = START_DRAG_POS.lock().unwrap();
+let dist_sq = ((pt.x - start.x).pow(2) + (pt.y - start.y).pow(2)) as f64;
+if dist_sq.sqrt() < 5.0 {
+⋮----
+let _ = PostMessageW(Some(target_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+⋮----
+format!("window.updateCursorPosition({}, {});", logical_x, logical_y);
+⋮----
+if ACTIVE_DRAG_TARGET.load(Ordering::SeqCst) == 0 {
+⋮----
+let _ = webview.set_bounds(Rect {
+⋮----
+PostQuitMessage(0);
+⋮----
+_ => DefWindowProcW(hwnd, msg, wparam, lparam),
 </file>
 
 <file path="src/overlay/text_selection.rs">

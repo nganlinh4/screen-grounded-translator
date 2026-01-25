@@ -28,6 +28,7 @@ pub unsafe extern "system" fn result_wnd_proc(
         WM_RBUTTONDOWN => mouse_input::handle_rbutton_down(hwnd, lparam),
 
         WM_MOUSEMOVE => mouse_input::handle_mouse_move(hwnd, lparam),
+        WM_MBUTTONDOWN => mouse_input::handle_mbutton_down(hwnd, lparam),
 
         0x02A3 => mouse_input::handle_mouse_leave(hwnd), // WM_MOUSELEAVE
 
@@ -35,7 +36,7 @@ pub unsafe extern "system" fn result_wnd_proc(
 
         WM_RBUTTONUP => click_actions::handle_rbutton_up(hwnd),
 
-        WM_MBUTTONUP => click_actions::handle_mbutton_up(),
+        WM_MBUTTONUP => click_actions::handle_mbutton_up(hwnd),
 
         WM_TIMER => timer_tasks::handle_timer(hwnd, wparam),
 
