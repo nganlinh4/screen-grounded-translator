@@ -149,11 +149,6 @@ pub fn update_window_position(hwnd: HWND) {
     update_window_position_internal(hwnd, true);
 }
 
-/// Update window position without triggering canvas repaint (for high-frequency drag)
-pub fn update_window_position_silent(hwnd: HWND) {
-    update_window_position_internal(hwnd, false);
-}
-
 fn update_window_position_internal(hwnd: HWND, notify: bool) {
     let hwnd_key = hwnd.0 as isize;
 
@@ -181,6 +176,15 @@ fn update_window_position_internal(hwnd: HWND, notify: bool) {
     if notify {
         update_canvas();
         update_canvas();
+    }
+}
+
+/// Update window position directly in the register (skips GetWindowRect, faster for bulk)
+pub fn update_window_position_direct(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
+    let hwnd_key = hwnd.0 as isize;
+    let mut windows = MARKDOWN_WINDOWS.lock().unwrap();
+    if windows.contains_key(&hwnd_key) {
+        windows.insert(hwnd_key, (x, y, w, h));
     }
 }
 
@@ -1007,10 +1011,8 @@ function generateButtonsHTML(hwnd, state, isVertical) {{
     
     // Broom (close/drag) - always visible
     buttons += `<div class="btn broom"
-        onclick="action('${{hwnd}}', 'broom_click')"
-        oncontextmenu="action('${{hwnd}}', 'broom_right'); return false;"
         onmousedown="handleBroomDrag(event, '${{hwnd}}')"
-        onauxclick="if(event.button===1) action('${{hwnd}}', 'broom_middle')"
+        oncontextmenu="return false;"
         title="${{window.L10N.broom}}">
         ${{window.iconSvgs.cleaning_services}}
     </div>`;
@@ -1021,7 +1023,7 @@ function generateButtonsHTML(hwnd, state, isVertical) {{
 // Handle broom drag
 // Handle broom drag - NATIVE IMPLEMENTATION
 function handleBroomDrag(e, hwnd) {{
-    if (e.button !== 0 && e.button !== 2) return; // Allow left (0) or right (2) click
+    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return; // Left, Middle, Right
     
     // 1. Hide the button group immediately (it will reappear after drag via updateWindows)
     const group = document.querySelector('.button-group[data-hwnd="' + hwnd + '"]');
@@ -1034,7 +1036,10 @@ function handleBroomDrag(e, hwnd) {{
     }}
 
     // 2. Trigger native drag immediately
-    const action = e.button === 2 ? 'broom_group_drag_start' : 'broom_drag_start';
+    let action = 'broom_drag_start';
+    if (e.button === 1) action = 'broom_all_drag_start';
+    else if (e.button === 2) action = 'broom_group_drag_start';
+
     window.ipc.postMessage(JSON.stringify({{
         action: action,
         hwnd: hwnd
@@ -1652,14 +1657,15 @@ fn handle_ipc_message(body: &str) {
                     let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
             }
-            "broom_right" => unsafe {
-                let _ = PostMessageW(
-                    Some(hwnd),
-                    super::event_handler::misc::WM_COPY_CLICK,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
-            },
+            "broom_right" => {
+                // Right-click: close linked windows (via group)
+                let group = crate::overlay::result::state::get_window_group(hwnd);
+                for (h, _) in group {
+                    unsafe {
+                        let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    }
+                }
+            }
             "broom_middle" => {
                 // Middle-click = close all
                 crate::overlay::result::trigger_close_all();
@@ -1710,6 +1716,41 @@ fn handle_ipc_message(body: &str) {
                         let group = crate::overlay::result::state::get_window_group(hwnd);
                         let mut snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
                         *snapshot = group.into_iter().map(|(h, _)| h.0 as isize).collect();
+
+                        let mut last = LAST_DRAG_POS.lock().unwrap();
+                        last.x = pt.x;
+                        last.y = pt.y;
+
+                        let mut start = START_DRAG_POS.lock().unwrap();
+                        start.x = pt.x;
+                        start.y = pt.y;
+
+                        let canvas_val = CANVAS_HWND.load(Ordering::SeqCst);
+                        if canvas_val != 0 {
+                            let canvas_hwnd = HWND(canvas_val as *mut std::ffi::c_void);
+                            let _ = SetCapture(canvas_hwnd);
+                            // Hide all buttons immediately
+                            update_canvas();
+                        }
+                    }
+                }
+            }
+            "broom_all_drag_start" => {
+                // Initiate mass drag for ALL windows (Middle-click drag)
+                unsafe {
+                    use windows::Win32::UI::Input::KeyboardAndMouse::SetCapture;
+                    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+                    let mut pt = windows::Win32::Foundation::POINT::default();
+                    if GetCursorPos(&mut pt).is_ok() {
+                        use std::sync::atomic::Ordering;
+                        ACTIVE_DRAG_TARGET.store(hwnd.0 as isize, Ordering::SeqCst);
+                        DRAG_IS_GROUP.store(true, Ordering::SeqCst);
+
+                        // Collect ALL registered markdown windows
+                        let windows = MARKDOWN_WINDOWS.lock().unwrap();
+                        let mut snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
+                        *snapshot = windows.keys().cloned().collect();
 
                         let mut last = LAST_DRAG_POS.lock().unwrap();
                         last.x = pt.x;
@@ -2035,9 +2076,44 @@ unsafe extern "system" fn canvas_wnd_proc(
                     if dx != 0 || dy != 0 {
                         if DRAG_IS_GROUP.load(Ordering::SeqCst) {
                             let snapshot = ACTIVE_DRAG_SNAPSHOT.lock().unwrap();
-                            for &h_val in snapshot.iter() {
-                                let h = HWND(h_val as *mut std::ffi::c_void);
-                                crate::overlay::result::trigger_drag_window(h, dx, dy);
+                            let mut updates = Vec::with_capacity(snapshot.len());
+
+                            unsafe {
+                                use windows::Win32::UI::WindowsAndMessaging::*;
+                                if let Ok(mut hdwp) = BeginDeferWindowPos(snapshot.len() as i32) {
+                                    for &h_val in snapshot.iter() {
+                                        let h = HWND(h_val as *mut std::ffi::c_void);
+                                        let mut r = RECT::default();
+                                        if GetWindowRect(h, &mut r).is_ok() {
+                                            let (nx, ny) = (r.left + dx, r.top + dy);
+                                            let (nw, nh) = (r.right - r.left, r.bottom - r.top);
+
+                                            hdwp = DeferWindowPos(
+                                                hdwp,
+                                                h,
+                                                None,
+                                                nx,
+                                                ny,
+                                                0,
+                                                0,
+                                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                                            )
+                                            .unwrap_or(hdwp);
+                                            updates.push((h_val, (nx, ny, nw, nh)));
+                                        }
+                                    }
+                                    let _ = EndDeferWindowPos(hdwp);
+                                }
+                            }
+
+                            // Batch update internal registry without extra GetWindowRect calls or lock flapping
+                            if !updates.is_empty() {
+                                let mut windows = MARKDOWN_WINDOWS.lock().unwrap();
+                                for (key, rect) in updates {
+                                    if windows.contains_key(&key) {
+                                        windows.insert(key, rect);
+                                    }
+                                }
                             }
                         } else {
                             let target_hwnd = HWND(target_val as *mut std::ffi::c_void);
@@ -2055,7 +2131,8 @@ unsafe extern "system" fn canvas_wnd_proc(
         }
 
         windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP
-        | windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP => {
+        | windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP
+        | windows::Win32::UI::WindowsAndMessaging::WM_MBUTTONUP => {
             let target_val = ACTIVE_DRAG_TARGET.load(Ordering::SeqCst);
             if target_val != 0 {
                 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
@@ -2076,13 +2153,21 @@ unsafe extern "system" fn canvas_wnd_proc(
                     // Treating as CLICK
                     let is_right_click =
                         msg == windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP;
+                    let is_middle_click =
+                        msg == windows::Win32::UI::WindowsAndMessaging::WM_MBUTTONUP;
                     let target_hwnd = HWND(target_val as *mut std::ffi::c_void);
 
                     if is_right_click {
-                        // Right-click broom click: perform copy (standard broom right-click behavior)
-                        crate::overlay::result::trigger_copy(target_hwnd);
+                        // Right-click: Close linked windows
+                        let group = crate::overlay::result::state::get_window_group(target_hwnd);
+                        for (h, _) in group {
+                            let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
+                        }
+                    } else if is_middle_click {
+                        // Middle-click: Close all
+                        crate::overlay::result::trigger_close_all();
                     } else {
-                        // Left-click broom click: perform close
+                        // Left-click: Close single
                         let _ = PostMessageW(Some(target_hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                     }
                 }

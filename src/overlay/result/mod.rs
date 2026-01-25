@@ -569,20 +569,24 @@ pub fn trigger_close_all() {
 pub fn trigger_drag_window(hwnd: HWND, dx: i32, dy: i32) {
     unsafe {
         let mut rect = windows::Win32::Foundation::RECT::default();
-        let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect);
+        if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_ok() {
+            let (nx, ny) = (rect.left + dx, rect.top + dy);
+            let (nw, nh) = (rect.right - rect.left, rect.bottom - rect.top);
 
-        let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
-            hwnd,
-            None,
-            rect.left + dx,
-            rect.top + dy,
-            0,
-            0,
-            windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
-                | windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER,
-        );
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                hwnd,
+                None,
+                nx,
+                ny,
+                0,
+                0,
+                windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
+                    | windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER
+                    | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+            );
+
+            // Update canvas with new position WITHOUT calling GetWindowRect again
+            button_canvas::update_window_position_direct(hwnd, nx, ny, nw, nh);
+        }
     }
-
-    // Update canvas with new position
-    button_canvas::update_window_position_silent(hwnd);
 }
