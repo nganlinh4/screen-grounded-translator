@@ -8,6 +8,7 @@ pub mod process;
 pub mod prompt_dj;
 pub mod recording;
 pub mod result;
+pub mod screen_record;
 mod selection;
 pub mod text_input; // NEW MODULE
 pub mod text_selection;

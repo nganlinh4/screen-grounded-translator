@@ -229,6 +229,8 @@ pub struct LocaleText {
     // --- PROMPT DJ ---
     pub prompt_dj_btn: &'static str,
     pub prompt_dj_title: &'static str,
+    pub screen_record_btn: &'static str,
+    pub screen_record_title: &'static str,
     // --- PARAKEET DOWNLOAD MODAL ---
     pub parakeet_downloading_title: &'static str,
     pub parakeet_downloading_message: &'static str,
@@ -587,6 +589,8 @@ impl LocaleText {
                  help_assistant_hint: "Nhập câu hỏi về cách sử dụng SGT và nhấn Enter hoặc nút Hỏi",
                   prompt_dj_btn: "Góc chill chill",
                   prompt_dj_title: "PromptDJ - Góc chill chill",
+                  screen_record_btn: "Quay màn hình",
+                  screen_record_title: "Screen Record - Quay màn hình",
                   // --- PARAKEET DOWNLOAD MODAL VI ---
                   parakeet_downloading_title: "Đang tải mô hình Parakeet (0.6 GB)",
                   parakeet_downloading_message: "Vui lòng đợi...",
@@ -995,6 +999,8 @@ impl LocaleText {
                  help_assistant_hint: "SGT 사용법에 대한 질문을 입력하고 Enter 또는 질문 버튼을 누르세요",
                   prompt_dj_btn: "힐링 공간",
                   prompt_dj_title: "PromptDJ - 힐링 공간",
+                  screen_record_btn: "화면 녹화",
+                  screen_record_title: "Screen Record - 화면 녹화",
                   // --- PARAKEET DOWNLOAD MODAL KO ---
                   parakeet_downloading_title: "Parakeet 모델 다운로드 중 (0.6 GB)",
                   parakeet_downloading_message: "잠시만 기다려주세요...",
@@ -1289,6 +1295,8 @@ impl LocaleText {
                  help_assistant_hint: "Enter a question about using SGT and press Enter or click Ask",
                   prompt_dj_btn: "Chill Corner",
                   prompt_dj_title: "PromptDJ - Chill Corner",
+                  screen_record_btn: "Screen Record",
+                  screen_record_title: "Screen Record",
                   // --- PARAKEET DOWNLOAD MODAL EN ---
                   parakeet_downloading_title: "Downloading Parakeet (0.6 GB)",
                   parakeet_downloading_message: "Please wait...",

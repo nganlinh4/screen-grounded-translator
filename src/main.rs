@@ -554,6 +554,17 @@ fn register_all_hotkeys(hwnd: HWND) {
         }
     }
     app.registered_hotkey_ids = registered_ids;
+
+    // Register Global Screen Record Hotkey (ID: 9999)
+    let sr_hotkey = &app.config.screen_record_hotkey;
+    unsafe {
+        let _ = RegisterHotKey(
+            Some(hwnd),
+            9999,
+            HOT_KEY_MODIFIERS(sr_hotkey.modifiers),
+            sr_hotkey.code,
+        );
+    }
 }
 
 fn unregister_all_hotkeys(hwnd: HWND) {
@@ -563,6 +574,10 @@ fn unregister_all_hotkeys(hwnd: HWND) {
             let _ = UnregisterHotKey(Some(hwnd), id);
         }
     }
+    // Unregister Global SR Hotkey
+    unsafe {
+        let _ = UnregisterHotKey(Some(hwnd), 9999);
+    }
 }
 
 // Low-Level Mouse Hook Procedure
@@ -570,8 +585,23 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
     if code >= 0 {
         let msg = wparam.0 as u32;
         let vk_code = match msg {
-            WM_MBUTTONDOWN => Some(0x04), // VK_MBUTTON
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+                crate::overlay::screen_record::engine::IS_MOUSE_CLICKED
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                if msg == WM_MBUTTONDOWN {
+                    Some(0x04)
+                } else {
+                    None
+                }
+            }
+            WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP => {
+                crate::overlay::screen_record::engine::IS_MOUSE_CLICKED
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                None
+            }
             WM_XBUTTONDOWN => {
+                crate::overlay::screen_record::engine::IS_MOUSE_CLICKED
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 let info = *(lparam.0 as *const MSLLHOOKSTRUCT);
                 let xbutton = (info.mouseData >> 16) & 0xFFFF;
                 if xbutton == 1 {
@@ -585,6 +615,11 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                 else {
                     None
                 }
+            }
+            WM_XBUTTONUP => {
+                crate::overlay::screen_record::engine::IS_MOUSE_CLICKED
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                None
             }
             _ => None,
         };
@@ -620,6 +655,14 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                     }
                     if found_id.is_some() {
                         break;
+                    }
+                }
+
+                // Check Global Screen Record Hotkey
+                if found_id.is_none() {
+                    let sr_hk = &app.config.screen_record_hotkey;
+                    if sr_hk.code == vk && sr_hk.modifiers == mods {
+                        found_id = Some(9999);
                     }
                 }
             }
@@ -778,6 +821,11 @@ unsafe extern "system" fn hotkey_proc(
         }
         WM_HOTKEY => {
             let id = wparam.0 as i32;
+            if id == 9999 {
+                // Toggle Screen Recording
+                crate::overlay::screen_record::toggle_recording();
+                return LRESULT(0);
+            }
             if id > 0 {
                 // debounce logic
                 static mut LAST_HOTKEY_TIMESTAMP: Option<std::time::Instant> = None;

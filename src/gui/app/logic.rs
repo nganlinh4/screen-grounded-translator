@@ -436,6 +436,101 @@ impl SettingsApp {
         }
     }
 
+    pub(crate) fn update_sr_hotkey_recording(&mut self, ctx: &egui::Context) {
+        if self.recording_sr_hotkey {
+            let mut key_recorded: Option<(u32, u32, String)> = None;
+            let mut cancel = false;
+
+            ctx.input(|i| {
+                if i.key_pressed(egui::Key::Escape) {
+                    cancel = true;
+                } else {
+                    let mut modifiers_bitmap = 0;
+                    if i.modifiers.ctrl {
+                        modifiers_bitmap |= MOD_CONTROL;
+                    }
+                    if i.modifiers.alt {
+                        modifiers_bitmap |= MOD_ALT;
+                    }
+                    if i.modifiers.shift {
+                        modifiers_bitmap |= MOD_SHIFT;
+                    }
+                    if i.modifiers.command {
+                        modifiers_bitmap |= MOD_WIN;
+                    }
+
+                    // Check Keyboard Events
+                    for event in &i.events {
+                        if let egui::Event::Key {
+                            key, pressed: true, ..
+                        } = event
+                        {
+                            if let Some(vk) = egui_key_to_vk(key) {
+                                if !matches!(vk, 16 | 17 | 18 | 91 | 92) {
+                                    let key_name =
+                                        format!("{:?}", key).trim_start_matches("Key").to_string();
+                                    key_recorded = Some((vk, modifiers_bitmap, key_name));
+                                }
+                            }
+                        }
+                    }
+
+                    // Check Mouse Events
+                    if key_recorded.is_none() {
+                        let mouse_buttons = [
+                            egui::PointerButton::Middle,
+                            egui::PointerButton::Extra1,
+                            egui::PointerButton::Extra2,
+                        ];
+
+                        for btn in mouse_buttons {
+                            if i.pointer.button_pressed(btn) {
+                                if let Some(vk) = egui_pointer_to_vk(&btn) {
+                                    let name = match btn {
+                                        egui::PointerButton::Middle => "Middle Click",
+                                        egui::PointerButton::Extra1 => "Mouse Back",
+                                        egui::PointerButton::Extra2 => "Mouse Forward",
+                                        _ => "Mouse",
+                                    }
+                                    .to_string();
+                                    key_recorded = Some((vk, modifiers_bitmap, name));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            if cancel {
+                self.recording_sr_hotkey = false;
+            } else if let Some((vk, mods, key_name)) = key_recorded {
+                let mut name_parts = Vec::new();
+                if (mods & MOD_CONTROL) != 0 {
+                    name_parts.push("Ctrl".to_string());
+                }
+                if (mods & MOD_ALT) != 0 {
+                    name_parts.push("Alt".to_string());
+                }
+                if (mods & MOD_SHIFT) != 0 {
+                    name_parts.push("Shift".to_string());
+                }
+                if (mods & MOD_WIN) != 0 {
+                    name_parts.push("Win".to_string());
+                }
+                name_parts.push(key_name);
+
+                self.config.screen_record_hotkey = Hotkey {
+                    code: vk,
+                    modifiers: mods,
+                    name: name_parts.join(" + "),
+                };
+                self.save_and_sync();
+                self.recording_sr_hotkey = false;
+            }
+        }
+    }
+
     pub(crate) fn handle_events(&mut self, ctx: &egui::Context) {
         // --- Event Handling ---
         while let Ok(event) = self.event_rx.try_recv() {

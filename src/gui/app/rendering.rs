@@ -312,6 +312,22 @@ impl SettingsApp {
                         self.download_manager.show_window = true;
                     }
 
+                    // Screen Record
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(format!("🎥 {}", text.screen_record_btn))
+                                    .color(egui::Color32::WHITE)
+                                    .size(12.0),
+                            )
+                            .fill(egui::Color32::from_rgb(60, 140, 100))
+                            .corner_radius(6.0),
+                        )
+                        .clicked()
+                    {
+                        crate::overlay::screen_record::show_screen_record();
+                    }
+
                     // Help Assistant
                     let help_bg = if is_dark {
                         egui::Color32::from_rgb(80, 60, 120)
@@ -583,6 +599,7 @@ impl SettingsApp {
                                     ) {
                                         self.save_and_sync();
                                     }
+                                    self.update_sr_hotkey_recording(ctx);
                                 });
                         },
                     );
@@ -619,6 +636,7 @@ impl SettingsApp {
                                         &mut self.show_tools_modal,
                                         &mut self.download_manager,
                                         &self.cached_audio_devices,
+                                        &mut self.recording_sr_hotkey,
                                     ) {
                                         self.save_and_sync();
                                     }

@@ -53,6 +53,7 @@ pub struct SettingsApp {
     pub(crate) view_mode: ViewMode,
     pub(crate) recording_hotkey_for_preset: Option<usize>,
     pub(crate) hotkey_conflict_msg: Option<String>,
+    pub(crate) recording_sr_hotkey: bool,
     pub(crate) splash: Option<crate::gui::splash::SplashScreen>,
     pub(crate) fade_in_start: Option<f64>,
 

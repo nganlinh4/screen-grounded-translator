@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::preset::{get_default_presets, Preset};
 use crate::config::types::{
-    default_tts_language_conditions, get_system_ui_language, EdgeTtsSettings, ThemeMode,
+    default_tts_language_conditions, get_system_ui_language, EdgeTtsSettings, Hotkey, ThemeMode,
     TtsLanguageCondition, TtsMethod, DEFAULT_HISTORY_LIMIT,
 };
 
@@ -254,6 +254,18 @@ pub struct Config {
     /// Clear WebView data on next startup (for MIDI permission reset)
     #[serde(default)]
     pub clear_webview_on_startup: bool,
+
+    /// Global hotkey for screen recording start/stop
+    #[serde(default = "default_screen_record_hotkey")]
+    pub screen_record_hotkey: Hotkey,
+}
+
+fn default_screen_record_hotkey() -> Hotkey {
+    Hotkey {
+        code: 0x7B, // F12
+        name: "F12".to_string(),
+        modifiers: 0,
+    }
 }
 
 // ============================================================================
@@ -322,6 +334,9 @@ impl Default for Config {
 
             // Maintenance
             clear_webview_on_startup: false,
+
+            // Screen Record
+            screen_record_hotkey: default_screen_record_hotkey(),
         }
     }
 }

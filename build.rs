@@ -82,8 +82,20 @@ fn main() {
 }
 
 fn create_multi_size_ico(png_path: &Path, ico_path: &Path) {
-    let img = image::open(png_path).expect("Failed to open PNG");
-    let mut file = fs::File::create(ico_path).expect("Failed to create ICO");
+    let img = match image::open(png_path) {
+        Ok(i) => i,
+        Err(e) => {
+            println!("cargo:warning=Failed to open PNG for ICO creation: {}", e);
+            return;
+        }
+    };
+    let mut file = match fs::File::create(ico_path) {
+        Ok(f) => f,
+        Err(e) => {
+            println!("cargo:warning=Failed to create ICO file: {}", e);
+            return;
+        }
+    };
 
     // Reduced sizes to save space: 16, 32, 48, 256 (Removed 64)
     let sizes = [16, 32, 48, 256];

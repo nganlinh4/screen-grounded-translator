@@ -40,6 +40,7 @@ pub fn render_global_settings(
     show_tools_modal: &mut bool,
     download_manager: &mut DownloadManager,
     _cached_audio_devices: &std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    _recording_sr_hotkey: &mut bool,
 ) -> bool {
     let mut changed = false;
 
@@ -514,8 +515,6 @@ pub fn render_global_settings(
 
             // Graphics Mode + Reset button on same row
             ui.horizontal(|ui| {
-                ui.label(text.graphics_mode_label);
-
                 let current_label = match config.ui_language.as_str() {
                     "vi" => {
                         if config.graphics_mode == "minimal" {
@@ -647,6 +646,10 @@ pub fn render_global_settings(
                 }
             });
         });
+
+    ui.add_space(10.0);
+
+    ui.add_space(10.0);
 
     changed
 }

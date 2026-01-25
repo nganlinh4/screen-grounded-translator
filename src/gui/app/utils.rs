@@ -89,6 +89,14 @@ impl SettingsApp {
                 }
             }
         }
+        // Check global screen record hotkey
+        let sr_hk = &self.config.screen_record_hotkey;
+        if sr_hk.code == vk && sr_hk.modifiers == mods {
+            return Some(format!(
+                "Conflict with global hotkey '{}' (Screen Record)",
+                sr_hk.name
+            ));
+        }
         None
     }
 }

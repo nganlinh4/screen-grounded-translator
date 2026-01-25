@@ -20,3 +20,10 @@ src/overlay/prompt_dj/dist/
 
 # Agent specific files
 .agent/
+
+# General web artifacts
+node_modules/
+dist/
+
+# Screen Record artifacts
+src/overlay/screen_record/dist/

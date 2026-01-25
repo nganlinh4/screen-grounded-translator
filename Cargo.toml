@@ -61,6 +61,11 @@ parakeet-rs = { version = "0.2.7", features = ["directml"] }
 ort = { version = "2.0.0-rc.10", features = ["directml", "load-dynamic"] }
 ringbuf = "0.4.8"
 dark-light = "2.0.0"
+windows-capture = "1.5.0"
+rdev = "0.5.3"
+tiny_http = "0.12"
+memmap2 = "0.5.10"
+parking_lot = "0.12"
 
 [dependencies.windows]
 version = "0.62"
@@ -83,6 +88,8 @@ features = [
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_Accessibility",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
 ]
 
 [profile.release]

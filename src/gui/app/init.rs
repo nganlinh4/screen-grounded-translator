@@ -312,6 +312,7 @@ impl SettingsApp {
             view_mode,
             recording_hotkey_for_preset: None,
             hotkey_conflict_msg: None,
+            recording_sr_hotkey: false,
             splash: None, // DELAYED CREATION to stage 35 for perfect $t=0$ timing
             fade_in_start: None,
             startup_stage: 0,

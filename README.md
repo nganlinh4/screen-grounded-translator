@@ -72,6 +72,14 @@ To rebuild and run during development (builds PromptDJ frontend, then runs the a
 cd promptdj-midi; npm install; npm run build; cd ..; New-Item -ItemType Directory -Path src\overlay\prompt_dj\dist -Force | Out-Null; Copy-Item promptdj-midi\dist\* -Destination src\overlay\prompt_dj\dist -Recurse -Force; cargo run
 ```
 
+### Quick Screen Record Build
+
+To rebuild and run during development (builds Screen Record frontend, then runs the app):
+
+```powershell
+cd screen-record; npm install; npm run build; cd ..; New-Item -ItemType Directory -Path src\overlay\screen_record\dist -Force | Out-Null; Copy-Item screen-record\dist\* -Destination src\overlay\screen_record\dist -Recurse -Force; cargo run
+```
+
 ## Getting Started
 
 1. **Launch SGT:** Run the executable.
