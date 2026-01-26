@@ -527,7 +527,7 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-fn register_all_hotkeys(hwnd: HWND) {
+pub fn register_all_hotkeys(hwnd: HWND) {
     let mut app = APP.lock().unwrap();
     let presets = &app.config.presets;
 
@@ -555,28 +555,35 @@ fn register_all_hotkeys(hwnd: HWND) {
     }
     app.registered_hotkey_ids = registered_ids;
 
-    // Register Global Screen Record Hotkey (ID: 9999)
-    let sr_hotkey = &app.config.screen_record_hotkey;
-    unsafe {
-        let _ = RegisterHotKey(
-            Some(hwnd),
-            9999,
-            HOT_KEY_MODIFIERS(sr_hotkey.modifiers),
-            sr_hotkey.code,
-        );
+    // Register Global Screen Record Hotkeys (IDs: 9900-9999)
+    for (idx, sr_hotkey) in app.config.screen_record_hotkeys.iter().enumerate() {
+        if idx >= 100 {
+            break;
+        } // Max 100 SR hotkeys
+        let id = 9900 + idx as i32;
+        unsafe {
+            let _ = RegisterHotKey(
+                Some(hwnd),
+                id,
+                HOT_KEY_MODIFIERS(sr_hotkey.modifiers),
+                sr_hotkey.code,
+            );
+        }
     }
 }
 
-fn unregister_all_hotkeys(hwnd: HWND) {
+pub fn unregister_all_hotkeys(hwnd: HWND) {
     let app = APP.lock().unwrap();
     for &id in &app.registered_hotkey_ids {
         unsafe {
             let _ = UnregisterHotKey(Some(hwnd), id);
         }
     }
-    // Unregister Global SR Hotkey
-    unsafe {
-        let _ = UnregisterHotKey(Some(hwnd), 9999);
+    // Unregister Global SR Hotkeys
+    for idx in 0..100 {
+        unsafe {
+            let _ = UnregisterHotKey(Some(hwnd), 9900 + idx);
+        }
     }
 }
 
@@ -658,11 +665,13 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                     }
                 }
 
-                // Check Global Screen Record Hotkey
+                // Check Global Screen Record Hotkeys
                 if found_id.is_none() {
-                    let sr_hk = &app.config.screen_record_hotkey;
-                    if sr_hk.code == vk && sr_hk.modifiers == mods {
-                        found_id = Some(9999);
+                    for (idx, sr_hk) in app.config.screen_record_hotkeys.iter().enumerate() {
+                        if sr_hk.code == vk && sr_hk.modifiers == mods {
+                            found_id = Some(9900 + idx as i32);
+                            break;
+                        }
                     }
                 }
             }
@@ -688,6 +697,8 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
 
 const WM_RELOAD_HOTKEYS: u32 = WM_USER + 101;
 const WM_APP_PROCESS_PENDING_FILE: u32 = WM_USER + 102;
+const WM_UNREGISTER_HOTKEYS: u32 = WM_USER + 103;
+const WM_REGISTER_HOTKEYS: u32 = WM_USER + 104;
 
 fn run_hotkey_listener() {
     unsafe {
@@ -783,6 +794,10 @@ fn run_hotkey_listener() {
                     if let Ok(mut app) = APP.lock() {
                         app.hotkeys_updated = false;
                     }
+                } else if msg.message == WM_UNREGISTER_HOTKEYS {
+                    unregister_all_hotkeys(hwnd);
+                } else if msg.message == WM_REGISTER_HOTKEYS {
+                    register_all_hotkeys(hwnd);
                 } else {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
@@ -821,7 +836,7 @@ unsafe extern "system" fn hotkey_proc(
         }
         WM_HOTKEY => {
             let id = wparam.0 as i32;
-            if id == 9999 {
+            if id >= 9900 && id <= 9999 {
                 // Toggle Screen Recording
                 crate::overlay::screen_record::toggle_recording();
                 return LRESULT(0);

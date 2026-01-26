@@ -76,28 +76,8 @@ impl SettingsApp {
         mods: u32,
         current_preset_idx: usize,
     ) -> Option<String> {
-        for (idx, preset) in self.config.presets.iter().enumerate() {
-            if idx == current_preset_idx {
-                continue;
-            }
-            for hk in &preset.hotkeys {
-                if hk.code == vk && hk.modifiers == mods {
-                    return Some(format!(
-                        "Conflict with '{}' in preset '{}'",
-                        hk.name, preset.name
-                    ));
-                }
-            }
-        }
-        // Check global screen record hotkey
-        let sr_hk = &self.config.screen_record_hotkey;
-        if sr_hk.code == vk && sr_hk.modifiers == mods {
-            return Some(format!(
-                "Conflict with global hotkey '{}' (Screen Record)",
-                sr_hk.name
-            ));
-        }
-        None
+        self.config
+            .check_hotkey_conflict(vk, mods, Some(current_preset_idx))
     }
 }
 

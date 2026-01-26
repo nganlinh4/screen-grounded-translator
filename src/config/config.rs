@@ -255,16 +255,57 @@ pub struct Config {
     #[serde(default)]
     pub clear_webview_on_startup: bool,
 
-    /// Global hotkey for screen recording start/stop
-    #[serde(default = "default_screen_record_hotkey")]
-    pub screen_record_hotkey: Hotkey,
+    /// Global hotkeys for screen recording start/stop
+    #[serde(default = "default_screen_record_hotkeys")]
+    pub screen_record_hotkeys: Vec<Hotkey>,
 }
 
-fn default_screen_record_hotkey() -> Hotkey {
-    Hotkey {
+fn default_screen_record_hotkeys() -> Vec<Hotkey> {
+    vec![Hotkey {
         code: 0x7B, // F12
         name: "F12".to_string(),
         modifiers: 0,
+    }]
+}
+
+// ============================================================================
+// CONFIG STRUCT METHODS
+// ============================================================================
+
+impl Config {
+    /// Checks if a hotkey combination conflicts with any existing hotkeys.
+    /// Returns the name of the conflicting item if found.
+    pub fn check_hotkey_conflict(
+        &self,
+        vk: u32,
+        mods: u32,
+        exclude_preset_idx: Option<usize>,
+    ) -> Option<String> {
+        // Check global screen record hotkeys
+        for h in &self.screen_record_hotkeys {
+            if h.code == vk && h.modifiers == mods {
+                return Some(format!(
+                    "Conflict with global hotkey '{}' (Screen Record)",
+                    h.name
+                ));
+            }
+        }
+
+        // Check all presets
+        for (idx, preset) in self.presets.iter().enumerate() {
+            if Some(idx) == exclude_preset_idx {
+                continue;
+            }
+            for h in &preset.hotkeys {
+                if h.code == vk && h.modifiers == mods {
+                    return Some(format!(
+                        "Conflict with '{}' in preset '{}'",
+                        h.name, preset.name
+                    ));
+                }
+            }
+        }
+        None
     }
 }
 
@@ -336,7 +377,7 @@ impl Default for Config {
             clear_webview_on_startup: false,
 
             // Screen Record
-            screen_record_hotkey: default_screen_record_hotkey(),
+            screen_record_hotkeys: default_screen_record_hotkeys(),
         }
     }
 }

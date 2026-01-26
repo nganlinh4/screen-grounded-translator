@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Play, Pause, Video, StopCircle, Plus, Trash2, Search, Download, Loader2, Save, FolderOpen, Upload, Wand2, Type, Keyboard } from "lucide-react";
+import { Play, Pause, Video, Plus, Trash2, Search, Download, Loader2, Save, FolderOpen, Upload, Wand2, Type, Keyboard, X, Minus, Square, Copy } from "lucide-react";
 import "./App.css";
 import { Button } from "@/components/ui/button";
 import { videoRenderer } from '@/lib/videoRenderer';
 import { BackgroundConfig, VideoSegment, ZoomKeyframe, MousePosition, ExportOptions, Project, TextSegment } from '@/types/video';
 import { videoExporter, EXPORT_PRESETS, DIMENSION_PRESETS } from '@/lib/videoExporter';
 import { createVideoController } from '@/lib/videoController';
-import logo from '@/assets/logo.svg';
+
 import { projectManager } from '@/lib/projectManager';
 import { autoZoomGenerator } from '@/lib/autoZoom';
 import { Timeline } from '@/components/Timeline';
@@ -177,6 +177,12 @@ function App() {
     };
   }, [segment, backgroundConfig, mousePositions]);
 
+  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>('is_maximized').then(setIsWindowMaximized).catch(console.error);
+  }, []);
+
   // Update other places where drawFrame was used to use renderFrame instead
   useEffect(() => {
     if (videoRef.current && !videoRef.current.paused) return;
@@ -203,17 +209,41 @@ function App() {
     }
   };
 
-  const [hotkey, setHotkey] = useState<Hotkey | null>(null);
+  const [hotkeys, setHotkeys] = useState<Hotkey[]>([]);
   const [showHotkeyDialog, setShowHotkeyDialog] = useState(false);
   const [listeningForKey, setListeningForKey] = useState(false);
 
   useEffect(() => {
-    invoke<Hotkey>('get_hotkey').then(setHotkey).catch(console.error);
+    invoke<Hotkey[]>('get_hotkeys').then(setHotkeys).catch(console.error);
   }, []);
+
+  const handleRemoveHotkey = async (index: number) => {
+    try {
+      await invoke('remove_hotkey', { index });
+      setHotkeys(prev => prev.filter((_, i) => i !== index));
+    } catch (err) {
+      console.error("Failed to remove hotkey:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (showHotkeyDialog && listeningForKey) {
+      console.log("Hotkeys unregistering...");
+      invoke('unregister_hotkeys').catch(console.error);
+      window.focus();
+    } else {
+      console.log("Hotkeys registering...");
+      invoke('register_hotkeys').catch(console.error);
+    }
+    return () => {
+      invoke('register_hotkeys').catch(console.error);
+    };
+  }, [showHotkeyDialog, listeningForKey]);
 
   useEffect(() => {
     if (showHotkeyDialog && listeningForKey) {
       const handleKeyDown = async (e: KeyboardEvent) => {
+        console.log("Key pressed in dialog:", e.key, e.code);
         e.preventDefault();
 
         // Ignore modifier-only presses
@@ -231,12 +261,12 @@ function App() {
             modifiers,
             key: e.key
           });
-          setHotkey(newHotkey);
+          setHotkeys(prev => [...prev, newHotkey]);
           setListeningForKey(false);
           setShowHotkeyDialog(false);
         } catch (err) {
           console.error("Failed to set hotkey:", err);
-          setError("Failed to set hotkey");
+          setError(err as string || "Failed to set hotkey");
           setListeningForKey(false);
         }
       };
@@ -245,6 +275,23 @@ function App() {
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
   }, [showHotkeyDialog, listeningForKey]);
+
+  useEffect(() => {
+    const handleToggle = () => {
+      if (showHotkeyDialog) {
+        console.log("Toggle recording ignored: Hotkey dialog is open");
+        return;
+      }
+      console.log("Toggle recording requested via hotkey/IPC");
+      if (isRecording) {
+        handleStopRecording();
+      } else {
+        handleStartRecording();
+      }
+    };
+    window.addEventListener('toggle-recording', handleToggle);
+    return () => window.removeEventListener('toggle-recording', handleToggle);
+  }, [isRecording, currentVideo, showHotkeyDialog]);
 
   // Update handleStartRecording
   async function handleStartRecording() {
@@ -857,79 +904,119 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#1a1a1b]">
-      <header className="bg-[#1a1a1b] border-b border-[#343536]">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <img src={logo} alt="Screen Demo Logo" className="w-8 h-8" />
-              <h1 className="text-2xl font-bold text-[#d7dadc]">Screen Demo</h1>
-            </div>
-            <a
-              href="https://github.com/njraladdin"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[#818384] hover:text-[#d7dadc] transition-colors text-sm underline"
+      <header
+        className="bg-[#1a1a1b] border-b border-[#343536] select-none h-11 flex items-center justify-between cursor-default"
+        onMouseDown={() => {
+          (window as any).ipc.postMessage('drag_window');
+        }}
+      >
+        <div className="flex items-center gap-4 px-4 h-full pointer-events-none">
+          <Video className="w-5 h-5 text-[#0079d3]" />
+          <span className="text-[#d7dadc] text-sm font-medium">Screen Record</span>
+        </div>
+
+        <div className="flex items-center gap-3 h-full px-2">
+          <div className="flex items-center gap-2 flex-wrap max-w-[300px] justify-end">
+            {hotkeys.map((h, i) => (
+              <Button
+                key={i}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => handleRemoveHotkey(i)}
+                className="bg-[#272729] hover:bg-red-500/20 text-[#d7dadc] hover:text-red-400 px-2 h-7 text-xs border border-transparent hover:border-red-500/30 flex-shrink-0"
+                title="Click to remove"
+              >
+                <span className="truncate max-w-[80px]">{h.name}</span>
+                <X className="w-3 h-3 ml-1 flex-shrink-0" />
+              </Button>
+            ))}
+            <Button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => { setShowHotkeyDialog(true); setListeningForKey(true); }}
+              className="bg-[#0079d3] hover:bg-[#0079d3]/90 text-white px-2 h-7 text-xs flex-shrink-0"
+              title="Add Global Hotkey"
             >
-              dev: @njraladdin
-            </a>
+              <Keyboard className="w-3 h-3 mr-1" />
+              Add Hotkey
+            </Button>
+            {isRecording && <span className="text-red-500 font-medium ml-2">{formatTime(recordingDuration)}</span>}
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={() => { setShowHotkeyDialog(true); setListeningForKey(false); }}
-                className="bg-[#272729] hover:bg-[#343536] text-[#d7dadc] px-3 max-w-[150px] overflow-hidden truncate"
-                title="Global Hotkey"
-              >
-                <Keyboard className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span className="truncate">{hotkey ? hotkey.name : "Set Hotkey"}</span>
-              </Button>
-              <Button
-                onClick={isRecording ? handleStopRecording : handleStartRecording}
-                disabled={isProcessing || isLoadingVideo}
-                className={`flex items-center px-4 py-2 h-9 text-sm font-medium transition-colors ${isRecording
-                  ? 'bg-red-500 hover:bg-red-600 text-white'
-                  : 'bg-[#FF26BE] hover:bg-[#FF26BE]/90 text-white'
-                  }`}
-              >
-                {isRecording ? (
-                  <><StopCircle className="w-4 h-4 mr-2" />Stop Recording</>
-                ) : isLoadingVideo ? (
-                  <div className="flex items-center">
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Loading Video...
-                  </div>
-                ) : (
-                  <><Video className="w-4 h-4 mr-2" />{currentVideo ? 'New Recording' : 'Start Recording'}</>
-                )}
-              </Button>
-              {isRecording && <span className="text-red-500 font-medium">{formatTime(recordingDuration)}</span>}
-            </div>
+
+          <div className="flex items-center gap-2">
             {currentVideo && (
               <Button
+                onMouseDown={(e) => e.stopPropagation()}
                 onClick={handleExport}
                 disabled={isProcessing}
-                className={`flex items-center px-4 py-2 h-9 text-sm font-medium ${isProcessing
+                className={`flex items-center px-4 py-2 h-8 text-xs font-medium ${isProcessing
                   ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                   : 'bg-[#9C17FF] hover:bg-[#9C17FF]/90 text-white'
                   }`}
               >
-                <Download className="w-4 h-4 mr-2" />Export Video
-              </Button>
-            )}
-            {currentVideo && (
-              <Button
-                onClick={handleSaveProject}
-                className="bg-[#272729] hover:bg-[#343536] text-[#d7dadc]"
-              >
-                <Save className="w-4 h-4 mr-2" />Save Project
+                <Download className="w-4 h-4 mr-2" />Export
               </Button>
             )}
             <Button
-              onClick={() => setShowProjectsDialog(true)}
-              className="bg-[#272729] hover:bg-[#343536] text-[#d7dadc]"
+              variant="ghost"
+              size="sm"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={handleSaveProject}
+              className="h-8 text-xs text-[#d7dadc] hover:bg-[#272729]"
             >
-              <FolderOpen className="w-4 h-4 mr-2" />Recent Projects
+              <Save className="w-4 h-4 mr-2" />Save
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => setShowProjectsDialog(true)}
+              className="h-8 text-xs text-[#d7dadc] hover:bg-[#272729]"
+            >
+              <FolderOpen className="w-4 h-4 mr-2" />Projects
+            </Button>
+          </div>
+
+          <div className="flex items-center h-full ml-4">
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                console.log("[SR] Button Click: minimize_window");
+                (window as any).ipc.postMessage('minimize_window');
+              }}
+              className="px-3 h-full text-[#d7dadc] hover:bg-[#272729] transition-colors flex items-center"
+              title="Minimize"
+            >
+              <Minus className="w-4 h-4" />
+            </button>
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={async (e) => {
+                e.stopPropagation();
+                console.log("[SR] Button Click: toggle_maximize");
+                (window as any).ipc.postMessage('toggle_maximize');
+                // Small delay to let the state settle before checking
+                setTimeout(async () => {
+                  const maximized = await invoke<boolean>('is_maximized');
+                  setIsWindowMaximized(maximized);
+                }, 50);
+              }}
+              className="px-3 h-full text-[#d7dadc] hover:bg-[#272729] transition-colors flex items-center"
+              title={isWindowMaximized ? "Restore" : "Maximize"}
+            >
+              {isWindowMaximized ? <Copy className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                console.log("[SR] Button Click: close_window");
+                (window as any).ipc.postMessage('close_window');
+              }}
+              className="px-3 h-full text-[#d7dadc] hover:bg-[#e81123] hover:text-white transition-colors flex items-center"
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </header>
@@ -1636,40 +1723,20 @@ function App() {
           <div className="bg-[#1a1a1b] p-6 rounded-lg border border-[#343536] max-w-sm w-full mx-4 text-center">
             <Keyboard className="w-12 h-12 text-[#0079d3] mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-[#d7dadc] mb-2">
-              {listeningForKey ? "Press Keys..." : "Configure Hotkey"}
+              Press Keys...
             </h3>
             <p className="text-[#818384] mb-6">
-              {listeningForKey
-                ? "Press the combination of keys you want to use."
-                : "Current hotkey: " + (hotkey ? hotkey.name : "None")}
+              Press the combination of keys you want to use.
             </p>
 
             <div className="flex justify-center gap-3">
-              {!listeningForKey ? (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowHotkeyDialog(false)}
-                    className="bg-transparent border-[#343536] text-[#d7dadc] hover:bg-[#272729]"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={() => setListeningForKey(true)}
-                    className="bg-[#0079d3] hover:bg-[#0079d3]/90 text-white"
-                  >
-                    Record New
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="ghost"
-                  onClick={() => setListeningForKey(false)}
-                  className="text-[#d7dadc] hover:bg-[#272729]"
-                >
-                  Cancel
-                </Button>
-              )}
+              <Button
+                variant="ghost"
+                onClick={() => { setListeningForKey(false); setShowHotkeyDialog(false); }}
+                className="text-[#d7dadc] hover:bg-[#272729]"
+              >
+                Cancel
+              </Button>
             </div>
           </div>
         </div>

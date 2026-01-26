@@ -24,7 +24,7 @@ const MOD_SHIFT: u32 = 0x0004;
 const MOD_WIN: u32 = 0x0008;
 
 pub mod engine;
-use engine::{CaptureHandler, get_monitors, MOUSE_POSITIONS, SHOULD_STOP, ENCODING_FINISHED, ENCODER_ACTIVE, VIDEO_PATH};
+use engine::{CaptureHandler, get_monitors, MOUSE_POSITIONS, SHOULD_STOP, ENCODING_FINISHED, VIDEO_PATH};
 use windows_capture::capture::GraphicsCaptureApiHandler;
 use windows_capture::settings::{
     ColorFormat, CursorCaptureSettings, DrawBorderSettings, Settings,
@@ -43,12 +43,17 @@ static mut SR_HWND: SendHwnd = SendHwnd(HWND(std::ptr::null_mut()));
 static mut IS_WARMED_UP: bool = false;
 static mut IS_INITIALIZING: bool = false;
 const WM_APP_SHOW: u32 = WM_USER + 110;
+const WM_APP_TOGGLE: u32 = WM_USER + 111;
+const WM_APP_RUN_SCRIPT: u32 = WM_USER + 112;
+const WM_UNREGISTER_HOTKEYS: u32 = WM_USER + 103;
+const WM_REGISTER_HOTKEYS: u32 = WM_USER + 104;
 
 // Thread-local storage for WebView
 thread_local! {
-    static SR_WEBVIEW: std::cell::RefCell<Option<Arc<wry::WebView>>> = std::cell::RefCell::new(None);
+    static SR_WEBVIEW: std::cell::RefCell<Option<std::sync::Arc<wry::WebView>>> = std::cell::RefCell::new(None);
     static SR_WEB_CONTEXT: std::cell::RefCell<Option<WebContext>> = std::cell::RefCell::new(None);
 }
+
 
 lazy_static::lazy_static! {
     static ref SERVER_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
@@ -92,12 +97,40 @@ unsafe extern "system" fn sr_wnd_proc(
             LRESULT(0)
         }
         WM_ERASEBKGND => LRESULT(1),
-        WM_NCCALCSIZE => {
-            if wparam.0 != 0 {
-                LRESULT(0)
-            } else {
-                DefWindowProcW(hwnd, msg, wparam, lparam)
+        WM_NCCALCSIZE => LRESULT(0),
+        WM_NCHITTEST => {
+            let mut rect = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut rect);
+            let x = (lparam.0 & 0xFFFF) as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i32;
+            
+            let border = 8;
+            let title_height = 44; // Matches header h-11 (44px)
+
+            // Resize borders
+            if y < rect.top + border {
+                if x < rect.left + border { return LRESULT(HTTOPLEFT as isize); }
+                if x > rect.right - border { return LRESULT(HTTOPRIGHT as isize); }
+                return LRESULT(HTTOP as isize);
             }
+            if y > rect.bottom - border {
+                if x < rect.left + border { return LRESULT(HTBOTTOMLEFT as isize); }
+                if x > rect.right - border { return LRESULT(HTBOTTOMRIGHT as isize); }
+                return LRESULT(HTBOTTOM as isize);
+            }
+            if x < rect.left + border { return LRESULT(HTLEFT as isize); }
+            if x > rect.right - border { return LRESULT(HTRIGHT as isize); }
+
+            // Title bar region (Drag region)
+            if y < rect.top + title_height {
+                // We let the IPC handler or DefWindowProc handle it if needed?
+                // Actually, if we return HTCAPTION here, Windows handles dragging.
+                // But we want React to handle clicks on buttons.
+                // So we return HTCLIENT and let React send "drag_window" IPC.
+                return LRESULT(HTCLIENT as isize);
+            }
+
+            LRESULT(HTCLIENT as isize)
         }
         WM_SIZE => {
             SR_WEBVIEW.with(|wv| {
@@ -107,16 +140,39 @@ unsafe extern "system" fn sr_wnd_proc(
                     let width = r.right - r.left;
                     let height = r.bottom - r.top;
                     let _ = webview.set_bounds(Rect {
-                        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(
-                            0, 0,
-                        )),
-                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(
-                            width as u32,
-                            height as u32,
-                        )),
+                        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
+                        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(width as u32, height as u32)),
                     });
                 }
             });
+            LRESULT(0)
+        }
+        WM_APP_TOGGLE => {
+            SR_WEBVIEW.with(|wv| {
+                if let Some(webview) = wv.borrow().as_ref() {
+                    let _ = webview.evaluate_script("window.dispatchEvent(new CustomEvent('toggle-recording'));");
+                }
+            });
+            LRESULT(0)
+        }
+        WM_SETFOCUS => {
+            SR_WEBVIEW.with(|wv| {
+                if let Some(webview) = wv.borrow().as_ref() {
+                    let _ = webview.focus();
+                }
+            });
+            LRESULT(0)
+        }
+        WM_APP_RUN_SCRIPT => {
+            let script_ptr = lparam.0 as *mut String;
+            if !script_ptr.is_null() {
+                let script = unsafe { Box::from_raw(script_ptr) };
+                SR_WEBVIEW.with(|wv| {
+                    if let Some(webview) = wv.borrow().as_ref() {
+                        let _ = webview.evaluate_script(&script);
+                    }
+                });
+            }
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -193,12 +249,22 @@ pub fn show_screen_record() {
 }
 
 pub fn toggle_recording() {
-    if ENCODER_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
-        // Stop recording
-        SHOULD_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
-    } else {
-        // Show overlay to start recording
-        show_screen_record();
+    unsafe {
+        let hwnd_wrapper = std::ptr::addr_of!(SR_HWND).read();
+        
+        if hwnd_wrapper.is_invalid() {
+            // Window is not created/valid -> Show it (creates it)
+            show_screen_record();
+        } else {
+            // Window exists
+            // If it is visible, we signal the toggle event to the frontend
+            if IsWindowVisible(hwnd_wrapper.0).as_bool() {
+                let _ = PostMessageW(Some(hwnd_wrapper.0), WM_APP_TOGGLE, WPARAM(0), LPARAM(0));
+            } else {
+                // If hidden, show it
+                show_screen_record();
+            }
+        }
     }
 }
 
@@ -219,8 +285,8 @@ unsafe fn internal_create_sr_loop() {
     let screen_w = GetSystemMetrics(SM_CXSCREEN);
     let screen_h = GetSystemMetrics(SM_CYSCREEN);
 
-    let width = 1000;
-    let height = 700;
+    let width = 1300;
+    let height = 850;
     let x = (screen_w - width) / 2;
     let y = (screen_h - height) / 2;
 
@@ -228,7 +294,7 @@ unsafe fn internal_create_sr_loop() {
         WS_EX_APPWINDOW,
         class_name,
         windows::core::w!("Screen Record"),
-        WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_SYSMENU,
+        WS_POPUP | WS_THICKFRAME | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
         x,
         y,
         width,
@@ -318,38 +384,63 @@ unsafe fn internal_create_sr_loop() {
                         };
                     })();
                 "#)
-                .with_ipc_handler(move |msg: wry::http::Request<String>| {
-                    let body = msg.body().as_str();
-                    if body == "drag_window" {
-                        let _ = ReleaseCapture();
-                        let _ = SendMessageW(
-                            hwnd,
-                            WM_NCLBUTTONDOWN,
-                            Some(WPARAM(HTCAPTION as usize)),
-                            Some(LPARAM(0)),
-                        );
-                    } else if body == "close_window" {
-                        let _ = ShowWindow(hwnd, SW_HIDE);
-                    } else if let Ok(req) = serde_json::from_str::<IpcRequest>(body) {
-                        let id = req.id.clone();
-                        let cmd = req.cmd.clone();
-                        
-                        thread::spawn(move || {
-                            let result = handle_ipc_command(cmd, req.args);
-                            SR_WEBVIEW.with(|wv| {
-                                if let Some(webview) = wv.borrow().as_ref() {
-                                    let json_res = match result {
-                                        Ok(res) => serde_json::json!({ "id": id, "result": res }),
-                                        Err(err) => serde_json::json!({ "id": id, "error": err }),
-                                    };
-                                    let script = format!(
-                                        "window.dispatchEvent(new CustomEvent('ipc-reply', {{ detail: {} }}))",
-                                        json_res.to_string()
+                .with_ipc_handler({
+                    let send_hwnd = SendHwnd(hwnd);
+                    move |msg: wry::http::Request<String>| {
+                        let body = msg.body().as_str();
+                        let hwnd = send_hwnd.0;
+                        if body == "drag_window" {
+                            println!("[SR] IPC: drag_window");
+                            let _ = ReleaseCapture();
+                            let _ = SendMessageW(
+                                hwnd,
+                                WM_NCLBUTTONDOWN,
+                                Some(WPARAM(HTCAPTION as usize)),
+                                Some(LPARAM(0)),
+                            );
+                        } else if body == "minimize_window" {
+                            println!("[SR] IPC: minimize_window");
+                            let _ = ShowWindow(hwnd, SW_MINIMIZE);
+                        } else if body == "toggle_maximize" {
+                            println!("[SR] IPC: toggle_maximize");
+                            if unsafe { IsZoomed(hwnd).as_bool() } {
+                                let _ = ShowWindow(hwnd, SW_RESTORE);
+                            } else {
+                                let _ = ShowWindow(hwnd, SW_MAXIMIZE);
+                            }
+                        } else if body == "close_window" {
+                            println!("[SR] IPC: close_window");
+                            let _ = ShowWindow(hwnd, SW_HIDE);
+                        } else if let Ok(req) = serde_json::from_str::<IpcRequest>(body) {
+                            println!("[SR] IPC command: {}", req.cmd);
+                            let id = req.id;
+                            let cmd = req.cmd;
+                            let args = req.args;
+                            let target_hwnd_val = send_hwnd.as_isize();
+                            
+                            thread::spawn(move || {
+                                let result = handle_ipc_command(cmd, args);
+                                let json_res = match result {
+                                    Ok(res) => serde_json::json!({ "id": id, "result": res }),
+                                    Err(err) => serde_json::json!({ "id": id, "error": err }),
+                                };
+                                let script = format!(
+                                    "window.dispatchEvent(new CustomEvent('ipc-reply', {{ detail: {} }}))",
+                                    json_res.to_string()
+                                );
+                                
+                                // Send to main thread
+                                let script_ptr = Box::into_raw(Box::new(script));
+                                unsafe {
+                                    let _ = PostMessageW(
+                                        Some(HWND(target_hwnd_val as *mut std::ffi::c_void)), 
+                                        WM_APP_RUN_SCRIPT, 
+                                        WPARAM(0), 
+                                        LPARAM(script_ptr as isize)
                                     );
-                                    let _ = webview.evaluate_script(&script);
                                 }
                             });
-                        });
+                        }
                     }
                 })
                 .with_url("screenrecord://localhost/index.html");
@@ -384,20 +475,26 @@ unsafe fn internal_create_sr_loop() {
         *wv.borrow_mut() = Some(webview_arc);
     });
 
-    IS_WARMED_UP = true;
+    unsafe {
+        IS_WARMED_UP = true;
+    }
 
     let mut msg = MSG::default();
-    while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-        let _ = TranslateMessage(&msg);
-        let _ = DispatchMessageW(&msg);
+    unsafe {
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            let _ = DispatchMessageW(&msg);
+        }
     }
 
     SR_WEBVIEW.with(|wv| {
         *wv.borrow_mut() = None;
     });
-    SR_HWND = SendHwnd::default();
-    IS_WARMED_UP = false;
-    IS_INITIALIZING = false;
+    unsafe {
+        SR_HWND = SendHwnd::default();
+        IS_WARMED_UP = false;
+        IS_INITIALIZING = false;
+    }
 }
 
 fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -465,9 +562,21 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
             
             Ok(serde_json::json!([url, mouse_positions]))
         }
-        "get_hotkey" => {
+        "get_hotkeys" => {
             let app = APP.lock().unwrap();
-            Ok(serde_json::to_value(&app.config.screen_record_hotkey).unwrap())
+            Ok(serde_json::to_value(&app.config.screen_record_hotkeys).unwrap())
+        }
+        "remove_hotkey" => {
+            let index = args["index"].as_u64().ok_or("Missing index")? as usize;
+            {
+                let mut app = APP.lock().unwrap();
+                if index < app.config.screen_record_hotkeys.len() {
+                    app.config.screen_record_hotkeys.remove(index);
+                    crate::config::save_config(&app.config);
+                }
+            }
+            trigger_hotkey_reload();
+            Ok(serde_json::Value::Null)
         }
         "set_hotkey" => {
             let code_str = args["code"].as_str().ok_or("Missing code")?;
@@ -484,6 +593,14 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
                     Some("Shift") => modifiers |= MOD_SHIFT,
                     Some("Meta") => modifiers |= MOD_WIN,
                     _ => {}
+                }
+            }
+
+            // Conflict check
+            {
+                let app = APP.lock().unwrap();
+                if let Some(msg) = app.config.check_hotkey_conflict(vk_code, modifiers, None) {
+                    return Err(msg);
                 }
             }
 
@@ -513,14 +630,76 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
 
             {
                 let mut app = APP.lock().unwrap();
-                app.config.screen_record_hotkey = hotkey.clone();
+                app.config.screen_record_hotkeys.push(hotkey.clone());
                 crate::config::save_config(&app.config);
             }
 
-            // Trigger reload
+            // Trigger reload (outside lock)
             trigger_hotkey_reload();
 
             Ok(serde_json::to_value(&hotkey).unwrap())
+        }
+        "unregister_hotkeys" => {
+            unsafe {
+                if let Ok(hwnd) = FindWindowW(windows::core::w!("HotkeyListenerClass"), windows::core::w!("Listener")) {
+                    if !hwnd.is_invalid() {
+                        let _ = PostMessageW(Some(hwnd), WM_UNREGISTER_HOTKEYS, WPARAM(0), LPARAM(0));
+                    }
+                }
+            }
+            Ok(serde_json::Value::Null)
+        }
+        "register_hotkeys" => {
+            unsafe {
+                if let Ok(hwnd) = FindWindowW(windows::core::w!("HotkeyListenerClass"), windows::core::w!("Listener")) {
+                    if !hwnd.is_invalid() {
+                        let _ = PostMessageW(Some(hwnd), WM_REGISTER_HOTKEYS, WPARAM(0), LPARAM(0));
+                    }
+                }
+            }
+            Ok(serde_json::Value::Null)
+        }
+        "minimize_window" => {
+            unsafe {
+                let hwnd = std::ptr::addr_of!(SR_HWND).read();
+                if !hwnd.is_invalid() {
+                    let _ = ShowWindow(hwnd.0, SW_MINIMIZE);
+                }
+            }
+            Ok(serde_json::Value::Null)
+        }
+        "toggle_maximize" => {
+            unsafe {
+                let hwnd = std::ptr::addr_of!(SR_HWND).read();
+                if !hwnd.is_invalid() {
+                    if IsZoomed(hwnd.0).as_bool() {
+                        let _ = ShowWindow(hwnd.0, SW_RESTORE);
+                    } else {
+                        let _ = ShowWindow(hwnd.0, SW_MAXIMIZE);
+                    }
+                }
+            }
+            Ok(serde_json::Value::Null)
+        }
+        "close_window" => {
+            unsafe {
+                let hwnd = std::ptr::addr_of!(SR_HWND).read();
+                if !hwnd.is_invalid() {
+                    let _ = ShowWindow(hwnd.0, SW_HIDE);
+                }
+            }
+            Ok(serde_json::Value::Null)
+        }
+        "is_maximized" => {
+            unsafe {
+                let hwnd = std::ptr::addr_of!(SR_HWND).read();
+                let maximized = if !hwnd.is_invalid() {
+                    IsZoomed(hwnd.0).as_bool()
+                } else {
+                    false
+                };
+                Ok(serde_json::json!(maximized))
+            }
         }
         _ => Err(format!("Unknown command: {}", cmd)),
     }
@@ -580,6 +759,12 @@ fn js_code_to_vk(code: &str) -> Option<u32> {
         "Comma" => Some(0xBC),
         "Period" => Some(0xBE),
         "Slash" => Some(0xBF),
+        c if c.starts_with("Numpad") => {
+            let chars: Vec<char> = c.chars().collect();
+            if chars.len() == 7 {
+                Some(chars[6] as u32 + 0x30) // Numpad0 -> '0' + 0x30 = 0x60
+            } else { None }
+        },
         _ => None,
     }
 }

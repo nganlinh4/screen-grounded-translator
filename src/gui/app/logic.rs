@@ -520,12 +520,18 @@ impl SettingsApp {
                 }
                 name_parts.push(key_name);
 
-                self.config.screen_record_hotkey = Hotkey {
+                let new_hotkey = Hotkey {
                     code: vk,
                     modifiers: mods,
                     name: name_parts.join(" + "),
                 };
-                self.save_and_sync();
+
+                if let Some(msg) = self.config.check_hotkey_conflict(vk, mods, None) {
+                    crate::log_info!("Hotkey conflict: {}", msg);
+                } else {
+                    self.config.screen_record_hotkeys.push(new_hotkey);
+                    self.save_and_sync();
+                }
                 self.recording_sr_hotkey = false;
             }
         }
