@@ -369,7 +369,17 @@ function App() {
       setLoadingProgress(0);
       setThumbnails([]);
 
-      const [videoUrl, mouseData] = await invoke<[string, MousePosition[]]>("stop_recording");
+      const [videoUrl, rawMouseData] = await invoke<[string, any[]]>("stop_recording");
+
+      // Explicitly map fields to handle potential camelCase vs snake_case mismatches
+      const mouseData: MousePosition[] = rawMouseData.map(p => ({
+        x: p.x,
+        y: p.y,
+        timestamp: p.timestamp,
+        isClicked: p.isClicked !== undefined ? p.isClicked : p.is_clicked, // Handle both casing
+        cursor_type: p.cursor_type || 'default'
+      }));
+
       setMousePositions(mouseData);
 
       // Use the new centralized video loading
@@ -382,6 +392,8 @@ function App() {
         setCurrentVideo(objectUrl);
         setIsVideoReady(true);
         generateThumbnails();
+
+        console.log(`[App] Received recording data. Video URL: ${videoUrl}, Mouse Points: ${mouseData.length}, Clicks: ${mouseData.filter(p => p.isClicked).length}`);
 
         // Auto-save the initial project
         const response = await fetch(objectUrl);

@@ -593,6 +593,7 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
         let msg = wparam.0 as u32;
         let vk_code = match msg {
             WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+                println!("DEBUG: Mouse DOWN detected via Hook");
                 crate::overlay::screen_record::engine::IS_MOUSE_CLICKED
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 if msg == WM_MBUTTONDOWN {
@@ -602,6 +603,7 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                 }
             }
             WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP => {
+                // crate::log_info!("Mouse UP"); // Verify hook activity
                 crate::overlay::screen_record::engine::IS_MOUSE_CLICKED
                     .store(false, std::sync::atomic::Ordering::SeqCst);
                 None
@@ -775,6 +777,7 @@ fn run_hotkey_listener() {
         if let Ok(hhook) =
             SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), Some(instance.into()), 0)
         {
+            println!("DEBUG: Mouse hook installed successfully");
             if let Ok(mut hook_guard) = MOUSE_HOOK.lock() {
                 *hook_guard = SendHhook(hhook);
             }

@@ -162,6 +162,9 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
                 let mut point = POINT::default();
                 if GetCursorPos(&mut point).is_ok() {
                     let is_clicked = IS_MOUSE_CLICKED.load(Ordering::SeqCst);
+                    if is_clicked {
+                        println!("DEBUG: Engine captured CLICK at frame {}", self.frame_count);
+                    }
                     let cursor_type = get_cursor_type();
 
                     let mouse_pos = MousePosition {

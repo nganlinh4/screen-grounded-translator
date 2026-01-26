@@ -558,6 +558,11 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
             let port = start_video_server(video_path)?;
             
             let mouse_positions = MOUSE_POSITIONS.lock().drain(..).collect::<Vec<_>>();
+            
+            let total_points = mouse_positions.len();
+            let clicked_points = mouse_positions.iter().filter(|p| p.is_clicked).count();
+            crate::log_info!("Backend: Recording stopped. Total points: {}, Clicked points: {}", total_points, clicked_points);
+            
             let url = format!("http://localhost:{}", port);
             
             Ok(serde_json::json!([url, mouse_positions]))
