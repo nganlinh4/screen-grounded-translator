@@ -40,6 +40,7 @@ export interface BackgroundConfig {
   cursorScale?: number;
   cursorSmoothness?: number;
   customBackground?: string;
+  cropBottom?: number; // 0-100 percentage
 }
 
 export interface MousePosition {

@@ -136,9 +136,10 @@ export class VideoRenderer {
 
     try {
       // Calculate dimensions once
+      const crop = (backgroundConfig.cropBottom || 0) / 100;
       const scale = backgroundConfig.scale / 100;
       const scaledWidth = canvas.width * scale;
-      const scaledHeight = canvas.height * scale;
+      const scaledHeight = (canvas.height * (1 - crop)) * scale;
       const x = (canvas.width - scaledWidth) / 2;
       const y = (canvas.height - scaledHeight) / 2;
       const zoomState = this.calculateCurrentZoomState(video.currentTime, segment);
@@ -229,9 +230,13 @@ export class VideoRenderer {
       tempCtx.quadraticCurveTo(x + offset, y + offset, x + radius + offset, y + offset);
       tempCtx.closePath();
 
-      // Clip and draw the video
+      // Clip and draw the video (using 9-arg version to crop bottom)
       tempCtx.clip();
-      tempCtx.drawImage(video, x, y, scaledWidth, scaledHeight);
+      tempCtx.drawImage(
+        video,
+        0, 0, video.videoWidth, video.videoHeight * (1 - crop), // sx, sy, sWidth, sHeight
+        x, y, scaledWidth, scaledHeight                      // dx, dy, dWidth, dHeight
+      );
 
       // Add a subtle border to smooth out edges
       tempCtx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
@@ -254,29 +259,38 @@ export class VideoRenderer {
         // Reset the transform before drawing cursor
         ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-        // Calculate cursor position in original video space first
-        let cursorX = x + (interpolatedPosition.x * scaledWidth / video.videoWidth);
-        let cursorY = y + (interpolatedPosition.y * scaledHeight / video.videoHeight);
+        // Map mouse position to the cropped video space
+        // original normalized mouse pos (0-1) on the UNcropped video
+        // We need to check if mouse is within the uncropped Y range
+        const mouseNormY = interpolatedPosition.y / video.videoHeight;
 
-        // If there's zoom, adjust cursor position
-        if (zoomState && zoomState.zoomFactor !== 1) {
-          // Apply the same zoom transformation to cursor position
-          cursorX = cursorX * zoomState.zoomFactor + (canvas.width - canvas.width * zoomState.zoomFactor) * zoomState.positionX;
-          cursorY = cursorY * zoomState.zoomFactor + (canvas.height - canvas.height * zoomState.zoomFactor) * zoomState.positionY;
+        // If mouse is below crop line, it disappears
+        if (mouseNormY <= (1 - crop)) {
+          // Re-calculate cursor position in terms of the cropped video frame drawn at (x, y)
+          let cursorX = x + (interpolatedPosition.x * scaledWidth / video.videoWidth);
+          // For Y, we scale it relative to the CROPPED height
+          let cursorY = y + (interpolatedPosition.y * scaledHeight / (video.videoHeight * (1 - crop)));
+
+          // If there's zoom, adjust cursor position
+          if (zoomState && zoomState.zoomFactor !== 1) {
+            // Apply the same zoom transformation to cursor position
+            cursorX = cursorX * zoomState.zoomFactor + (canvas.width - canvas.width * zoomState.zoomFactor) * zoomState.positionX;
+            cursorY = cursorY * zoomState.zoomFactor + (canvas.height - canvas.height * zoomState.zoomFactor) * zoomState.positionY;
+          }
+
+          // Scale cursor size based on video dimensions ratio and zoom
+          const sizeRatio = Math.min(targetWidth / video.videoWidth, targetHeight / video.videoHeight);
+          const cursorScale = (backgroundConfig.cursorScale || 2) * sizeRatio * (zoomState?.zoomFactor || 1);
+
+          this.drawMouseCursor(
+            ctx,
+            cursorX,
+            cursorY,
+            interpolatedPosition.isClicked || false,
+            cursorScale,
+            interpolatedPosition.cursor_type || 'default'
+          );
         }
-
-        // Scale cursor size based on video dimensions ratio and zoom
-        const sizeRatio = Math.min(targetWidth / video.videoWidth, targetHeight / video.videoHeight);
-        const cursorScale = (backgroundConfig.cursorScale || 2) * sizeRatio * (zoomState?.zoomFactor || 1);
-
-        this.drawMouseCursor(
-          ctx,
-          cursorX,
-          cursorY,
-          interpolatedPosition.isClicked || false,
-          cursorScale,
-          interpolatedPosition.cursor_type || 'default'
-        );
 
         // Restore transform
         ctx.restore();
