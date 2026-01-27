@@ -136,7 +136,9 @@ export class VideoController {
       }
 
       this.setCurrentTime(currentTime);
-      this.renderFrame();
+      // Removed renderFrame here - allow animation loop to handle updates during playback
+      // If paused, handlePause triggers renderFrame.
+      // If playing, startAnimation loop handles it.
     }
   };
 
@@ -258,7 +260,7 @@ export class VideoController {
   public play() {
     // Reset seeking state to ensure play works after seek
     this.setSeeking(false);
-    
+
     if (!this.state.isReady) {
       console.warn('[VideoController] Play ignored: not ready');
       return;
@@ -289,6 +291,10 @@ export class VideoController {
     this.setSeeking(true);
     this.video.currentTime = time;
     if (this.audio) this.audio.currentTime = time;
+
+    // IMPORTANT: Do NOT call renderFrame() here. 
+    // Let the 'seeked' event trigger it to avoid drawing frames mid-seek
+    // which can cause artifacts/corruption.
   }
 
   public togglePlayPause() {
@@ -513,4 +519,4 @@ export class VideoController {
 
 export const createVideoController = (options: VideoControllerOptions) => {
   return new VideoController(options);
-}; 
+};

@@ -1,439 +1,164 @@
 import { videoRenderer } from './videoRenderer';
 import type {
   ExportOptions,
-  ExportQuality,
-  DimensionPreset,
-  VideoSegment,
-  BackgroundConfig,
-  MousePosition
+  BackgroundConfig
 } from '@/types/video';
 
-interface QualityPreset {
-  bitrate: number;
-  label: string;
-}
+export const EXPORT_PRESETS: Record<string, { label: string; quality: number }> = {
+  balanced: { label: 'Balanced (Recommended)', quality: 0.8 },
+  original: { label: 'Original Quality', quality: 1.0 },
+};
 
-interface OriginalDimensionPreset {
-  type: 'original';
-  label: string;
-}
+export const DIMENSION_PRESETS: Record<string, { label: string; width: number; height: number }> = {
+  original: { label: 'Original Size', width: 0, height: 0 },
+  '1080p': { label: 'Full HD (1080p)', width: 1920, height: 1080 },
+  '720p': { label: 'HD (720p)', width: 1280, height: 720 },
+};
 
-interface FixedDimensionPreset {
-  type: 'fixed';
-  width: number;
-  height: number;
-  label: string;
-}
-
-type DimensionPresetConfig = OriginalDimensionPreset | FixedDimensionPreset;
-
-export const EXPORT_PRESETS: Record<ExportQuality, QualityPreset> = {
-  balanced: {
-    bitrate: 10000000,   // 10Mbps
-    label: 'Balanced Quality'
-  },
-  original: {
-    bitrate: 20000000,  // 20Mbps
-    label: 'Maximum Quality'
-  }
-} as const;
-
-export const DIMENSION_PRESETS: Record<DimensionPreset, DimensionPresetConfig> = {
-  original: {
-    type: 'original',
-    label: 'Original Size'
-  },
-  '1080p': {
-    type: 'fixed',
-    width: 1920,
-    height: 1080,
-    label: '1080p'
-  },
-  '720p': {
-    type: 'fixed',
-    width: 1280,
-    height: 720,
-    label: '720p'
-  }
-} as const;
+const DEFAULT_BACKGROUND_CONFIG: BackgroundConfig = {
+  scale: 100,
+  borderRadius: 0,
+  backgroundType: 'solid',
+  shadow: 0,
+  cursorScale: 1
+};
 
 export class VideoExporter {
   private isExporting = false;
+  private shouldStop = false;
 
-  private setupMediaRecorder(stream: MediaStream, quality: ExportQuality): MediaRecorder {
-    // Try different MIME types in order of preference
-    const mimeTypes = [
-      'video/mp4;codecs=hevc,mp4a.40.2',  // Try H.265/HEVC first
-      'video/mp4;codecs=h264',            // Fallback to H.264
-      'video/mp4',                        // Let browser choose MP4 codec
-      'video/webm;codecs=h264',           // WebM with H.264 as last resort
-      'video/webm'                        // Default WebM
-    ];
-
-    let selectedMimeType = '';
-    for (const mimeType of mimeTypes) {
-      if (MediaRecorder.isTypeSupported(mimeType)) {
-        selectedMimeType = mimeType;
-        break;
-      }
-    }
-
-    if (!selectedMimeType) {
-      console.warn('[VideoExporter] No supported video MIME types found, falling back to default');
-    }
-
-    const options = {
-      videoBitsPerSecond: EXPORT_PRESETS[quality].bitrate,
-      mimeType: selectedMimeType || 'video/mp4;codecs=h264',
-      videoConstraints: {
-        frameRate: 60,
-        width: { ideal: stream.getVideoTracks()[0].getSettings().width },
-        height: { ideal: stream.getVideoTracks()[0].getSettings().height }
-      }
-    };
-
-    console.log('[VideoExporter] Using MIME type:', options.mimeType);
-    const mediaRecorder = new MediaRecorder(stream, options);
-
-    // Force keyframe insertion every 2 seconds for better seeking
-    const keyframeInterval = setInterval(() => {
-      if (mediaRecorder.state === 'recording') {
-        // @ts-ignore - forceKeyframe is a non-standard but widely supported feature
-        if (mediaRecorder.requestData) mediaRecorder.requestData();
-      }
-    }, 2000);
-
-    mediaRecorder.addEventListener('stop', () => clearInterval(keyframeInterval));
-
-    return mediaRecorder;
-  }
-
-  async exportVideo(options: ExportOptions & {
-    video: HTMLVideoElement;
-    canvas: HTMLCanvasElement;
-    tempCanvas: HTMLCanvasElement;
-    segment: VideoSegment;
-    backgroundConfig: BackgroundConfig;
-    mousePositions: MousePosition[];
-    onProgress?: (progress: number) => void;
-    speed: number;
-    audio?: HTMLAudioElement;
-  }): Promise<Blob> {
+  async exportAndDownload(options: ExportOptions & { audioFilePath: string }) {
     if (this.isExporting) {
-      return Promise.reject('Export already in progress');
+      throw new Error('Export already in progress');
     }
+    this.isExporting = true;
+    this.shouldStop = false;
 
-    console.log('[VideoExporter] Starting export with options:', {
-      trimStart: options.segment.trimStart,
-      trimEnd: options.segment.trimEnd,
-      videoDuration: options.video.duration
+    const { video: sourceVideo, segment, canvas, tempCanvas, backgroundConfig, mousePositions, speed = 1, audioFilePath } = options;
+    if (!sourceVideo || !segment || !canvas || !tempCanvas) throw new Error('Missing required elements');
+
+    // 1. Setup Offscreen Rendering
+    const exportVideo = document.createElement('video');
+    exportVideo.muted = true;
+    exportVideo.playsInline = true;
+    exportVideo.src = sourceVideo.src;
+    exportVideo.crossOrigin = "anonymous";
+    exportVideo.style.display = 'none';
+    document.body.appendChild(exportVideo);
+
+    await new Promise<void>((resolve, reject) => {
+      exportVideo.onloadeddata = () => resolve();
+      exportVideo.onerror = (e) => reject(e);
+      exportVideo.load();
     });
 
-    this.isExporting = true;
-    let hasReachedEnd = false;
-    const { video, canvas, tempCanvas, segment } = options;
+    // 2. Start FFmpeg Server via Rust
+    const preset = DIMENSION_PRESETS[options.dimensions] || DIMENSION_PRESETS['1080p'];
+    let width = preset.width;
+    let height = preset.height;
 
-    // Store original video state
-    const originalTime = video.currentTime;
-    const originalPaused = video.paused;
-
-    // Use higher framerate for capture
-    const canvasStream = canvas.captureStream(60);
-    let finalStream = canvasStream;
-
-    // Handle audio integration
-    let audioContext: AudioContext | null = null;
-    let audioSource: MediaElementAudioSourceNode | null = null;
-    let audioDestination: MediaStreamAudioDestinationNode | null = null;
-
-    if (options.audio) {
-      try {
-        audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioSource = audioContext.createMediaElementSource(options.audio);
-        audioDestination = audioContext.createMediaStreamDestination();
-
-        // Add gain node for volume control
-        const gainNode = audioContext.createGain();
-        gainNode.gain.value = options.backgroundConfig.volume ?? 1;
-
-        if (audioSource) {
-          audioSource.connect(gainNode);
-          gainNode.connect(audioDestination);
-          gainNode.connect(audioContext.destination); // Also connect to physical output for monitoring if needed
-        }
-
-        // Combine canvas video track with audio destination tracks
-        const audioTracks = audioDestination.stream.getAudioTracks();
-        if (audioTracks.length > 0) {
-          finalStream = new MediaStream([
-            ...canvasStream.getVideoTracks(),
-            ...audioTracks
-          ]);
-        }
-      } catch (e) {
-        console.error('[VideoExporter] Failed to setup audio export:', e);
-      }
+    if (width === 0 || height === 0) {
+      width = sourceVideo.videoWidth;
+      height = sourceVideo.videoHeight;
+      // Ensure even dimensions
+      if (width % 2 !== 0) width--;
+      if (height % 2 !== 0) height--;
     }
 
-    // Calculate output dimensions
-    let outputWidth = video.videoWidth;
-    let outputHeight = video.videoHeight;
+    const fps = 60;
 
-    if (options.dimensions !== 'original') {
-      const preset = DIMENSION_PRESETS[options.dimensions];
-      if (preset.type === 'fixed') {
-        const aspectRatio = video.videoWidth / video.videoHeight;
+    // @ts-ignore
+    const { invoke } = window.__TAURI__.core;
 
-        outputWidth = preset.width;
-        outputHeight = Math.round(preset.width / aspectRatio);
-
-        // Ensure height doesn't exceed target
-        if (outputHeight > preset.height) {
-          outputHeight = preset.height;
-          outputWidth = Math.round(preset.height * aspectRatio);
-        }
-      }
-    }
-
-    // Set canvas size to output dimensions
-    canvas.width = outputWidth;
-    canvas.height = outputHeight;
-
-    const ctx = canvas.getContext('2d', {
-      alpha: false,
-      desynchronized: false,
-      willReadFrequently: false,
-    }) as CanvasRenderingContext2D | null;  // Explicitly type as CanvasRenderingContext2D
-
-    if (ctx) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-
-      // Use only standard compositing operation
-      ctx.globalCompositeOperation = 'copy';  // Faster compositing
-    }
-
-    // Set default quality to 'balanced' if not specified
-    const quality = options.quality || 'balanced';
-    const mediaRecorder = this.setupMediaRecorder(finalStream, quality);
-    const chunks: Blob[] = [];
-    let recordingComplete = false;
+    let port = 0;
 
     try {
-      const recordingPromise = new Promise<Blob>((resolve) => {
-        mediaRecorder.ondataavailable = (e) => {
-          console.log('[VideoExporter] Data available:', {
-            size: e.data.size,
-            state: mediaRecorder.state,
-            currentTime: video.currentTime
-          });
-          if (e.data.size > 0) chunks.push(e.data);
-        };
-
-        mediaRecorder.onstop = () => {
-          console.log('[VideoExporter] MediaRecorder stopped', {
-            chunksCount: chunks.length,
-            totalSize: chunks.reduce((acc, chunk) => acc + chunk.size, 0),
-            hasReachedEnd,
-            recordingComplete
-          });
-          recordingComplete = true;
-          const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
-          resolve(blob);
-        };
-
-        mediaRecorder.addEventListener('dataavailable', (e) => {
-          console.log('[VideoExporter] Data chunk received:', {
-            size: e.data.size,
-            state: mediaRecorder.state,
-            videoTime: video.currentTime,
-            hasReachedEnd
-          });
-        });
-
-        mediaRecorder.addEventListener('stop', () => {
-          console.log('[VideoExporter] MediaRecorder stop event:', {
-            finalTime: video.currentTime,
-            recordingState: mediaRecorder.state,
-            hasReachedEnd
-          });
-        });
+      const res = await invoke('start_export_server', {
+        width,
+        height,
+        framerate: fps,
+        audioPath: audioFilePath,
+        trimStart: segment.trimStart,
+        duration: (segment.trimEnd - segment.trimStart),
+        speed: speed
       });
-
-      console.log('[VideoExporter] Starting MediaRecorder');
-      mediaRecorder.start(1000);
-
-      console.log('[VideoExporter] Setting video to start position:', segment.trimStart);
-      video.currentTime = segment.trimStart;
-
-      // Set the playback rate before starting playback
-      video.playbackRate = options.speed;
-
-      if (options.audio) {
-        options.audio.playbackRate = options.speed;
-        options.audio.currentTime = segment.trimStart;
-      }
-
-      await video.play();
-      if (options.audio) {
-        options.audio.play().catch(() => { });
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        const timeUpdateHandler = () => {
-          console.log('[VideoExporter] Frame update:', {
-            currentTime: video.currentTime,
-            trimStart: segment.trimStart,
-            trimEnd: segment.trimEnd,
-            readyState: video.readyState,
-            duration: video.duration,
-            paused: video.paused,
-            playbackRate: video.playbackRate,
-            seeking: video.seeking,
-            ended: video.ended,
-            error: video.error,
-            networkState: video.networkState,
-          });
-
-          if (recordingComplete || hasReachedEnd) {
-            console.log('[VideoExporter] Skipping frame - recording complete or ended');
-            return;
-          }
-
-          // Make the trim end check more precise and add more logging
-          if (Math.abs(video.currentTime - segment.trimEnd) < 0.1) {
-            console.log('[VideoExporter] Reached trim end (precise check):', {
-              currentTime: video.currentTime,
-              trimEnd: segment.trimEnd,
-              delta: video.currentTime - segment.trimEnd,
-              recordingState: mediaRecorder.state
-            });
-
-            hasReachedEnd = true;
-            video.pause();
-            if (options.audio) options.audio.pause();
-            video.removeEventListener('timeupdate', timeUpdateHandler);
-
-            // Force final data collection before stopping
-            if (mediaRecorder.state === 'recording') {
-              mediaRecorder.requestData();
-              setTimeout(() => {
-                console.log('[VideoExporter] Stopping MediaRecorder after final data');
-                mediaRecorder.stop();
-              }, 100);
-            }
-
-            resolve();
-            return;
-          }
-
-          const renderContext = {
-            video,
-            canvas,
-            tempCanvas,
-            segment,
-            backgroundConfig: options.backgroundConfig,
-            mousePositions: options.mousePositions,
-            currentTime: video.currentTime
-          };
-
-          requestAnimationFrame(() => {
-            if (video.readyState >= 2) {
-              videoRenderer.drawFrame(renderContext, { exportMode: true });
-            } else {
-              console.log('[VideoExporter] Skipping draw - video not ready', {
-                readyState: video.readyState,
-                currentTime: video.currentTime
-              });
-            }
-
-            const duration = segment.trimEnd - segment.trimStart;
-            const elapsed = video.currentTime - segment.trimStart;
-            const currentProgress = (elapsed / duration) * 100;
-
-            options.onProgress?.(Math.min(currentProgress, 99.9));
-          });
-        };
-
-        video.addEventListener('timeupdate', timeUpdateHandler);
-        video.addEventListener('ended', () => {
-          console.log('[VideoExporter] Video ended event fired');
-        });
-        video.addEventListener('error', (e) => {
-          console.error('[VideoExporter] Video error:', e);
-          reject(e);
-        });
-      });
-
-      const finalBlob = await recordingPromise;
-      if (audioContext) {
-        audioContext.close();
-      }
-      console.log('[VideoExporter] Export completed successfully', {
-        size: finalBlob.size,
-        type: finalBlob.type
-      });
-      return finalBlob;
-
-    } catch (error) {
-      console.error('[VideoExporter] Export failed:', error);
-      throw error;
-    } finally {
-      if (!recordingComplete && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-      }
-
-      finalStream.getTracks().forEach(track => track.stop());
-      canvasStream.getTracks().forEach(track => track.stop());
+      port = res.port;
+    } catch (e) {
+      console.error("Failed to start FFmpeg server:", e);
       this.isExporting = false;
+      document.body.removeChild(exportVideo);
+      throw e;
+    }
 
-      // Restore video state
-      video.currentTime = originalTime;
-      if (originalPaused) video.pause();
+    // 3. Render Loop
+    const dt = 1 / fps; // Source step
+    const step = dt * speed;
 
-      // Reset playback rate in cleanup
-      video.playbackRate = 1;
-      if (options.audio) options.audio.playbackRate = 1;
+    let currentTime = segment.trimStart;
+    const endTime = segment.trimEnd;
+    const serverUrl = `http://127.0.0.1:${port}`;
+
+    // Resize canvas for export
+    canvas.width = width;
+    canvas.height = height;
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+
+    try {
+      while (currentTime < endTime && !this.shouldStop) {
+        // Seek
+        exportVideo.currentTime = currentTime;
+        await new Promise<void>(r => {
+          const h = () => {
+            exportVideo.removeEventListener('seeked', h);
+            r();
+          };
+          exportVideo.addEventListener('seeked', h);
+        });
+
+        // Render
+        const renderContext = {
+          video: exportVideo,
+          canvas,
+          tempCanvas,
+          segment,
+          backgroundConfig: backgroundConfig || DEFAULT_BACKGROUND_CONFIG,
+          mousePositions: mousePositions || [],
+          currentTime: currentTime
+        };
+
+        await videoRenderer.drawFrame(renderContext, { exportMode: true });
+
+        // Compress to JPEG (High quality, fast)
+        const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/jpeg', 0.95));
+
+        if (blob) {
+          // Upload to Rust
+          await fetch(serverUrl, {
+            method: 'POST',
+            body: blob
+          });
+        }
+
+        currentTime += step;
+        const progress = ((currentTime - segment.trimStart) / (endTime - segment.trimStart)) * 100;
+        options.onProgress?.(Math.min(progress, 99));
+      }
+
+      // Finish
+      await fetch(`${serverUrl}/finish`, { method: 'POST' });
+
+    } catch (e) {
+      console.error("Export loop failed:", e);
+    } finally {
+      this.isExporting = false;
+      document.body.removeChild(exportVideo);
     }
   }
 
-  async exportAndDownload(options: ExportOptions) {
-    // Validate required options
-    if (!options.video || !options.canvas || !options.segment) {
-      throw new Error('Missing required export options');
-    }
-
-    try {
-      const blob = await this.exportVideo({
-        ...options,
-        video: options.video,
-        canvas: options.canvas,
-        tempCanvas: options.tempCanvas!,
-        segment: options.segment,
-        backgroundConfig: options.backgroundConfig!,
-        mousePositions: options.mousePositions || [],
-        speed: options.speed || 1,
-        audio: options.audio
-      });
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-
-      // Get extension from actual MIME type
-      const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
-      a.download = `processed_video_${Date.now()}.${extension}`;
-
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-    } catch (error) {
-      console.error('[VideoExporter] Download failed:', error);
-      throw error;
-    }
+  cancel() {
+    this.shouldStop = true;
   }
 }
 
-export const videoExporter = new VideoExporter(); 
+export const videoExporter = new VideoExporter();

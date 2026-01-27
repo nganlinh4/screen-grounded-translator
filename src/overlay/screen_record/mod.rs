@@ -16,6 +16,10 @@ use wry::{Rect, WebContext, WebViewBuilder};
 use serde::Deserialize;
 use crate::APP;
 use crate::config::Hotkey;
+use std::process::{Command, Stdio, Child};
+use std::io::Write;
+use std::sync::Mutex;
+use std::path::PathBuf;
 
 const WM_RELOAD_HOTKEYS: u32 = WM_USER + 101;
 const MOD_ALT: u32 = 0x0001;
@@ -59,9 +63,10 @@ thread_local! {
     static SR_WEB_CONTEXT: std::cell::RefCell<Option<WebContext>> = std::cell::RefCell::new(None);
 }
 
-
 lazy_static::lazy_static! {
     static ref SERVER_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    // Store the active FFmpeg process
+    static ref FFMPEG_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 }
 
 #[derive(Deserialize)]
@@ -128,10 +133,6 @@ unsafe extern "system" fn sr_wnd_proc(
 
             // Title bar region (Drag region)
             if y < rect.top + title_height {
-                // We let the IPC handler or DefWindowProc handle it if needed?
-                // Actually, if we return HTCAPTION here, Windows handles dragging.
-                // But we want React to handle clicks on buttons.
-                // So we return HTCLIENT and let React send "drag_window" IPC.
                 return LRESULT(HTCLIENT as isize);
             }
 
@@ -258,15 +259,11 @@ pub fn toggle_recording() {
         let hwnd_wrapper = std::ptr::addr_of!(SR_HWND).read();
         
         if hwnd_wrapper.is_invalid() {
-            // Window is not created/valid -> Show it (creates it)
             show_screen_record();
         } else {
-            // Window exists
-            // If it is visible, we signal the toggle event to the frontend
             if IsWindowVisible(hwnd_wrapper.0).as_bool() {
                 let _ = PostMessageW(Some(hwnd_wrapper.0), WM_APP_TOGGLE, WPARAM(0), LPARAM(0));
             } else {
-                // If hidden, show it
                 show_screen_record();
             }
         }
@@ -429,7 +426,6 @@ unsafe fn internal_create_sr_loop() {
                                     json_res.to_string()
                                 );
                                 
-                                // Send to main thread
                                 let script_ptr = Box::into_raw(Box::new(script));
                                 unsafe {
                                     let _ = PostMessageW(
@@ -497,8 +493,143 @@ unsafe fn internal_create_sr_loop() {
     }
 }
 
+fn get_ffmpeg_path() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("screen-goated-toolbox")
+        .join("bin")
+        .join("ffmpeg.exe")
+}
+
 fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json::Value, String> {
     match cmd.as_str() {
+        "start_export_server" => {
+            let width = args["width"].as_u64().unwrap_or(1920) as u32;
+            let height = args["height"].as_u64().unwrap_or(1080) as u32;
+            let fps = args["framerate"].as_u64().unwrap_or(60) as u32;
+            let audio_path = args["audioPath"].as_str().ok_or("No audio path provided")?;
+            let audio_path_buf = PathBuf::from(audio_path);
+
+            if !audio_path_buf.exists() {
+                 return Err(format!("Audio file not found: {}", audio_path));
+            }
+
+            // Audio settings for mixing
+            let trim_start = args["trimStart"].as_f64().unwrap_or(0.0);
+            let duration = args["duration"].as_f64().unwrap_or(10.0);
+            let speed = args["speed"].as_f64().unwrap_or(1.0);
+            
+            // Output path
+            let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            let output_path = dirs::download_dir()
+                .unwrap_or_else(|| std::env::temp_dir())
+                .join(format!("SGT_Export_{}.mp4", timestamp));
+
+            let ffmpeg_path = get_ffmpeg_path();
+            if !ffmpeg_path.exists() {
+                return Err("FFmpeg not found. Please install via Download Manager.".to_string());
+            }
+
+            // Filter complex: sync audio trim and speed
+            let audio_filter = format!("[1:a]atrim=start={}:duration={},asetpts=PTS-STARTPTS,atempo={}[aout]", trim_start, duration, speed);
+
+            let mut command = Command::new(ffmpeg_path);
+            command
+                .args(&[
+                    "-y",
+                    "-f", "image2pipe",
+                    "-vcodec", "mjpeg",
+                    "-r", &fps.to_string(),
+                    "-i", "-", // Input from stdin
+                    "-i", audio_path,
+                    "-filter_complex", &audio_filter,
+                    "-map", "0:v",
+                    "-map", "[aout]",
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "20",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-shortest",
+                    output_path.to_str().unwrap()
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+                
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+
+            let mut child = command.spawn().map_err(|e| e.to_string())?;
+            let stdin = child.stdin.take().ok_or("Failed to open FFmpeg stdin")?;
+
+            *FFMPEG_PROCESS.lock().unwrap() = Some(child);
+
+            // Start HTTP server to receive frames
+            let server_addr = "127.0.0.1:0";
+            let server = Server::http(server_addr).map_err(|e| e.to_string())?;
+            let port = server.server_addr().to_string()
+                .split(':')
+                .last()
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(0);
+
+            std::thread::spawn(move || {
+                let mut ffmpeg_in = stdin;
+                for mut request in server.incoming_requests() {
+                    // Handle CORS Preflight
+                    if request.method() == &tiny_http::Method::Options {
+                        let mut res = Response::empty(204);
+                        res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
+                        res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"POST, OPTIONS"[..]).unwrap());
+                        res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"Content-Type"[..]).unwrap());
+                        let _ = request.respond(res);
+                        continue;
+                    }
+
+                    // Check if it's the "FINISH" signal
+                    if request.url() == "/finish" {
+                        let mut res = Response::empty(200);
+                        res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
+                        let _ = request.respond(res);
+                        break;
+                    }
+                    
+                    // Read body (JPEG data)
+                    let mut buffer = Vec::new();
+                    if let Err(_) = request.as_reader().read_to_end(&mut buffer) {
+                        continue;
+                    }
+
+                    // Write to FFmpeg stdin
+                    if let Err(e) = ffmpeg_in.write_all(&buffer) {
+                        eprintln!("Error writing to FFmpeg: {}", e);
+                        break;
+                    }
+
+                    let mut res = Response::empty(200);
+                    res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
+                    let _ = request.respond(res);
+                }
+                
+                // Close stdin to signal EOF to FFmpeg
+                drop(ffmpeg_in);
+                
+                // Wait for FFmpeg to finish
+                if let Some(mut child) = FFMPEG_PROCESS.lock().unwrap().take() {
+                    let _ = child.wait();
+                }
+            });
+
+            Ok(serde_json::json!({
+                "port": port,
+                "outputPath": output_path.to_string_lossy()
+            }))
+        }
         "get_monitors" => {
             let monitors = get_monitors();
             Ok(serde_json::to_value(monitors).unwrap())
@@ -526,7 +657,6 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
             let monitor_id = args["monitorId"].as_str().unwrap_or("0");
             let monitor_index = monitor_id.parse::<usize>().unwrap_or(0);
             
-            // RESET ALL RECORDING STATES
             SHOULD_STOP.store(false, std::sync::atomic::Ordering::SeqCst);
             crate::overlay::screen_record::engine::IS_MOUSE_CLICKED.store(false, std::sync::atomic::Ordering::SeqCst);
             crate::overlay::screen_record::engine::CLICK_CAPTURED.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -534,7 +664,6 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
             
             let monitor = Monitor::from_index(monitor_index + 1).map_err(|e| e.to_string())?;
 
-            // Set monitor coordinates for mouse tracking
             unsafe {
                 let mut monitors: Vec<windows::Win32::Graphics::Gdi::HMONITOR> = Vec::new();
                 let _ = windows::Win32::Graphics::Gdi::EnumDisplayMonitors(
@@ -564,7 +693,6 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
                 monitor_id.to_string(),
             );
 
-            // Start Keyviz if enabled
             let _ = keyviz::start();
 
             std::thread::spawn(move || {
@@ -577,7 +705,6 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
             SHOULD_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
             let _ = keyviz::stop();
             
-            // Wait for both video and audio encoding to finish
             let start = std::time::Instant::now();
             while (!ENCODING_FINISHED.load(std::sync::atomic::Ordering::SeqCst) || 
                    !AUDIO_ENCODING_FINISHED.load(std::sync::atomic::Ordering::SeqCst)) && 
@@ -588,22 +715,20 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
             let video_path = unsafe { VIDEO_PATH.clone() }.ok_or("No video path")?;
             let audio_path = unsafe { AUDIO_PATH.clone() }.ok_or("No audio path")?;
             
-            let port = start_media_server(video_path, audio_path)?;
+            let port = start_media_server(video_path, audio_path.clone())?;
             
             let mouse_positions = MOUSE_POSITIONS.lock().drain(..).collect::<Vec<_>>();
             
-            let total_points = mouse_positions.len();
-            let clicked_points = mouse_positions.iter().filter(|p| p.is_clicked).count();
-            crate::log_info!("Backend: Recording stopped. Total points: {}, Clicked points: {}, Video: {}, Audio: {}", 
-                total_points, clicked_points, 
-                ENCODING_FINISHED.load(std::sync::atomic::Ordering::SeqCst),
-                AUDIO_ENCODING_FINISHED.load(std::sync::atomic::Ordering::SeqCst)
-            );
-            
             let video_url = format!("http://localhost:{}/video", port);
+            
+            // Use the raw file path for audio to pass back to frontend for local use or display
+            // But frontend needs URL or blob. We serve it via HTTP.
             let audio_url = format!("http://localhost:{}/audio", port);
             
-            Ok(serde_json::json!([video_url, audio_url, mouse_positions]))
+            // Return actual local path for FFmpeg use later
+            let audio_file_path = audio_path; 
+
+            Ok(serde_json::json!([video_url, audio_url, mouse_positions, audio_file_path]))
         }
         "get_hotkeys" => {
             let app = APP.lock().unwrap();
@@ -639,7 +764,6 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
                 }
             }
 
-            // Conflict check
             {
                 let app = APP.lock().unwrap();
                 if let Some(msg) = app.config.check_hotkey_conflict(vk_code, modifiers, None) {
@@ -647,14 +771,12 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
                 }
             }
 
-            // Construct pretty name
             let mut name_parts = Vec::new();
             if (modifiers & MOD_CONTROL) != 0 { name_parts.push("Ctrl"); }
             if (modifiers & MOD_ALT) != 0 { name_parts.push("Alt"); }
             if (modifiers & MOD_SHIFT) != 0 { name_parts.push("Shift"); }
             if (modifiers & MOD_WIN) != 0 { name_parts.push("Win"); }
             
-            // Format key name (uppercase if single letter)
             let formatted_key = if key_name.len() == 1 {
                 key_name.to_uppercase()
             } else {
@@ -677,7 +799,6 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
                 crate::config::save_config(&app.config);
             }
 
-            // Trigger reload (outside lock)
             trigger_hotkey_reload();
 
             Ok(serde_json::to_value(&hotkey).unwrap())
@@ -763,17 +884,16 @@ fn js_code_to_vk(code: &str) -> Option<u32> {
         c if c.starts_with("Key") => {
             let chars: Vec<char> = c.chars().collect();
             if chars.len() == 4 {
-                Some(chars[3] as u32) // KeyA -> 'A' -> 65
+                Some(chars[3] as u32) 
             } else { None }
         },
         c if c.starts_with("Digit") => {
             let chars: Vec<char> = c.chars().collect();
             if chars.len() == 6 {
-                Some(chars[5] as u32) // Digit0 -> '0' -> 48
+                Some(chars[5] as u32) 
             } else { None }
         },
         c if c.starts_with("F") && c.len() <= 3 => {
-             // F1..F12
              c[1..].parse::<u32>().ok().map(|n| 0x70 + n - 1)
         },
         "Space" => Some(0x20),
@@ -805,7 +925,7 @@ fn js_code_to_vk(code: &str) -> Option<u32> {
         c if c.starts_with("Numpad") => {
             let chars: Vec<char> = c.chars().collect();
             if chars.len() == 7 {
-                Some(chars[6] as u32 + 0x30) // Numpad0 -> '0' + 0x30 = 0x60
+                Some(chars[6] as u32 + 0x30) 
             } else { None }
         },
         _ => None,

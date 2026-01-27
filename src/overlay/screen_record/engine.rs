@@ -104,8 +104,16 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
         let monitor_index = ctx.flags.parse::<usize>().unwrap_or(0);
 
         let monitor = Monitor::from_index(monitor_index + 1)?;
-        let width = monitor.width()?;
-        let height = monitor.height()?;
+        let mut width = monitor.width()?;
+        let mut height = monitor.height()?;
+
+        // Ensure even dimensions for encoding
+        if width % 2 != 0 {
+            width -= 1;
+        }
+        if height % 2 != 0 {
+            height -= 1;
+        }
 
         let app_data_dir = dirs::data_local_dir()
             .unwrap_or_else(|| std::env::temp_dir())
@@ -137,7 +145,12 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
 
         let video_settings = VideoSettingsBuilder::new(width, height)
             .frame_rate(60)
-            .bitrate(15_000_000);
+            .bitrate(15_000_000); // 15Mbps
+
+        println!(
+            "Initializing VideoEncoder: {}x{} @ 60fps, Monitor Index: {}",
+            width, height, monitor_index
+        );
 
         let encoder = VideoEncoder::new(
             video_settings,
@@ -179,6 +192,12 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
         if let Err(e) = self.encoder.as_mut().unwrap().send_frame(frame) {
             eprintln!("Encoder error: {}", e);
         }
+
+        if self.frame_count % 60 == 0 {
+            // Debug log every ~1 second
+            println!("Captured frame {}", self.frame_count);
+        }
+        self.frame_count += 1;
 
         if self.last_mouse_capture.elapsed().as_millis() >= 16 {
             unsafe {

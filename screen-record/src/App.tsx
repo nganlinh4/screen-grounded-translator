@@ -86,17 +86,13 @@ function App() {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [currentAudio, setCurrentAudio] = useState<string | null>(null);
   const [isCropping, setIsCropping] = useState(false);
+  const [audioFilePath, setAudioFilePath] = useState<string>("");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
-
-
-
-  // Add new state for the confirmation modal
-  // State removed: showConfirmNewRecording
 
   // Add this to your App component state
   const [backgroundConfig, setBackgroundConfig] = useState<BackgroundConfig>({
@@ -498,7 +494,10 @@ function App() {
       setLoadingProgress(0);
       setThumbnails([]);
 
-      const [videoUrl, audioUrl, rawMouseData] = await invoke<[string, string, any[]]>("stop_recording");
+      // Capture audioPath from Rust
+      const [videoUrl, audioUrl, rawMouseData, audioPath] = await invoke<[string, string, any[], string]>("stop_recording");
+
+      setAudioFilePath(audioPath);
 
       // Explicitly map fields to handle potential camelCase vs snake_case mismatches
       const mouseData: MousePosition[] = rawMouseData.map(p => ({
@@ -598,17 +597,23 @@ function App() {
     }
   }
 
-  // Add cleanup for object URL
+  // Add cleanup for video object URL
   useEffect(() => {
     return () => {
       if (currentVideo && currentVideo.startsWith('blob:')) {
         URL.revokeObjectURL(currentVideo);
       }
+    };
+  }, [currentVideo]);
+
+  // Add cleanup for audio object URL
+  useEffect(() => {
+    return () => {
       if (currentAudio && currentAudio.startsWith('blob:')) {
         URL.revokeObjectURL(currentAudio);
       }
     };
-  }, [currentVideo, currentAudio]);
+  }, [currentAudio]);
 
   // Toggle play/pause
   const togglePlayPause = () => {
@@ -708,17 +713,18 @@ function App() {
       setIsProcessing(true);
 
       // Create a complete export options object
-      const exportConfig: ExportOptions = {
+      const exportConfig: ExportOptions & { audioFilePath: string } = {
         quality: exportOptions.quality,
         dimensions: exportOptions.dimensions,
         speed: exportOptions.speed,
-        video: videoRef.current,
+        video: videoRef.current, // Passed as source reference only
         canvas: canvasRef.current,
         tempCanvas: tempCanvasRef.current,
         segment,
         backgroundConfig,
         mousePositions,
         audio: audioRef.current || undefined,
+        audioFilePath: audioFilePath, // Pass the path here
         onProgress: (progress: number) => {
           setExportProgress(progress);
         }

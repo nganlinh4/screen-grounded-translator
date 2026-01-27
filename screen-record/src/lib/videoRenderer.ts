@@ -53,7 +53,6 @@ export class VideoRenderer {
   private readonly RELEASE_SPEED = 0.01;
 
   constructor() {
-    // Preload the pointer SVG image.
     this.pointerImage = new Image();
     this.pointerImage.src = '/pointer.svg';
     this.pointerImage.onload = () => { };
@@ -66,7 +65,7 @@ export class VideoRenderer {
   }
 
   public startAnimation(renderContext: RenderContext) {
-    console.log('[VideoRenderer] Starting animation');
+    // console.log('[VideoRenderer] Starting animation');
     this.stopAnimation();
     this.lastDrawTime = 0;
     this.smoothedPositions = null;
@@ -97,7 +96,7 @@ export class VideoRenderer {
     if (this.animationFrame !== null) {
       cancelAnimationFrame(this.animationFrame);
       this.animationFrame = null;
-      this.lastDrawTime = 0; // Reset timing when stopping
+      this.lastDrawTime = 0;
       this.activeRenderContext = null;
       this.lastHoldTime = -1;
       this.currentSquishScale = 1.0;
@@ -113,6 +112,9 @@ export class VideoRenderer {
     const { video, canvas, tempCanvas, segment, backgroundConfig, mousePositions } = context;
     if (!video || !canvas || !segment) return;
 
+    // Safety check: video must have data
+    if (video.readyState < 2) return;
+
     const isExportMode = options.exportMode || false;
     const quality = options.highQuality || isExportMode ? 'high' : 'medium';
 
@@ -125,29 +127,30 @@ export class VideoRenderer {
     this.isDrawing = true;
     ctx.imageSmoothingQuality = quality as ImageSmoothingQuality;
 
-    // Calculate elapsed time for animations
     const now = performance.now();
     this.latestElapsed = this.lastDrawTime === 0 ? 1000 / 60 : now - this.lastDrawTime;
     this.lastDrawTime = now;
 
-    // Get video dimensions
+    // Get dimensions from video element
     const vidW = video.videoWidth;
     const vidH = video.videoHeight;
 
-    // Determine the effective source resolution (cropped)
-    const crop = segment.crop || { x: 0, y: 0, width: 1, height: 1 };
+    // Basic safety check for 0-dimension videos
+    if (!vidW || !vidH) {
+      this.isDrawing = false;
+      return;
+    }
 
-    // Source rectangle in video pixels
+    const crop = segment.crop || { x: 0, y: 0, width: 1, height: 1 };
     const srcX = vidW * crop.x;
     const srcY = vidH * crop.y;
     const srcW = vidW * crop.width;
     const srcH = vidH * crop.height;
 
-    // Set canvas to match the cropped source dimensions exactly
     const canvasW = Math.round(srcW);
     const canvasH = Math.round(srcH);
 
-    // Only update if dimensions changed to prevent flickering
+    // Resize canvas if needed
     if (canvas.width !== canvasW || canvas.height !== canvasH) {
       canvas.width = canvasW;
       canvas.height = canvasH;
@@ -155,17 +158,12 @@ export class VideoRenderer {
       tempCanvas.height = canvasH;
     }
 
-    // CSS aspect ratio matches buffer for proper display scaling
-    canvas.style.aspectRatio = `${canvasW} / ${canvasH}`;
+    if (!isExportMode) {
+      canvas.style.aspectRatio = `${canvasW} / ${canvasH}`;
+    }
 
     try {
-      // Note: cropBottom is legacy - ideally we migrate to segment.crop. 
-      // For now, let's say cropBottom applies relative to the cropped frame? Or ignore it?
-      // Since new crop is powerful, maybe ignore cropBottom if segment.crop is used?
-      // But for backward compatibility with "No Taskbar" preset which might set cropBottom...
-      // Let's modify: cropBottom percent applies to the *resultant* height?
       const legacyCrop = (backgroundConfig.cropBottom || 0) / 100;
-
       const scale = backgroundConfig.scale / 100;
       const scaledWidth = canvas.width * scale;
       const scaledHeight = (canvas.height * (1 - legacyCrop)) * scale;
@@ -175,7 +173,6 @@ export class VideoRenderer {
 
       ctx.save();
 
-      // Apply zoom transformation to entire canvas before drawing anything
       if (zoomState && zoomState.zoomFactor !== 1) {
         const zoomedWidth = canvas.width * zoomState.zoomFactor;
         const zoomedHeight = canvas.height * zoomState.zoomFactor;
@@ -186,7 +183,7 @@ export class VideoRenderer {
         ctx.scale(zoomState.zoomFactor, zoomState.zoomFactor);
       }
 
-      // Draw background first
+      // Draw Background
       ctx.fillStyle = this.getBackgroundStyle(
         ctx,
         backgroundConfig.backgroundType,
@@ -194,39 +191,30 @@ export class VideoRenderer {
       );
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Setup temporary canvas for rounded corners and shadows
-      tempCanvas.width = canvas.width;
-      tempCanvas.height = canvas.height;
-      const tempCtx = tempCanvas.getContext('2d', {
-        alpha: true,
-        willReadFrequently: false
-      });
+      // Temp Canvas setup for Rounded Corners
+      if (tempCanvas.width !== canvas.width || tempCanvas.height !== canvas.height) {
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+      }
+      const tempCtx = tempCanvas.getContext('2d', { alpha: true, willReadFrequently: false });
       if (!tempCtx) return;
 
-      // Clear temp canvas
       tempCtx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Draw video frame with rounded corners to temp canvas
       tempCtx.save();
-
-      // Improve anti-aliasing
       tempCtx.imageSmoothingEnabled = true;
       tempCtx.imageSmoothingQuality = 'high';
 
-      // Create path for the rounded rectangle
       const radius = backgroundConfig.borderRadius;
       const offset = 0.5;
 
-      // Draw shadow first if enabled
+      // Draw Shadow
       if (backgroundConfig.shadow) {
         tempCtx.save();
-
-        // Set shadow properties
         tempCtx.shadowColor = 'rgba(0, 0, 0, 0.5)';
         tempCtx.shadowBlur = backgroundConfig.shadow;
         tempCtx.shadowOffsetY = backgroundConfig.shadow * 0.5;
 
-        // Create the rounded rectangle path
+        // Path
         tempCtx.beginPath();
         tempCtx.moveTo(x + radius + offset, y + offset);
         tempCtx.lineTo(x + scaledWidth - radius - offset, y + offset);
@@ -239,14 +227,12 @@ export class VideoRenderer {
         tempCtx.quadraticCurveTo(x + offset, y + offset, x + radius + offset, y + offset);
         tempCtx.closePath();
 
-        // Fill with white to create shadow
         tempCtx.fillStyle = '#fff';
         tempCtx.fill();
-
         tempCtx.restore();
       }
 
-      // Now draw the actual video content
+      // Draw Video
       tempCtx.beginPath();
       tempCtx.moveTo(x + radius + offset, y + offset);
       tempCtx.lineTo(x + scaledWidth - radius - offset, y + offset);
@@ -259,71 +245,54 @@ export class VideoRenderer {
       tempCtx.quadraticCurveTo(x + offset, y + offset, x + radius + offset, y + offset);
       tempCtx.closePath();
 
-      // Clip and draw the video (using 9-arg version to crop bottom)
       tempCtx.clip();
 
-      // Draw the cropped source video onto the destination
-      // Source: srcX, srcY, srcW, srcH-legacyCrop? 
-      // Actually legacyCrop reduces destination height. We should reduce source height too if we want true crop.
-      // Let's assume legacyCrop just trims the bottom of the *already cropped* source.
+      // Ensure video is drawable
+      try {
+        tempCtx.drawImage(
+          video,
+          srcX, srcY, srcW, srcH * (1 - legacyCrop),
+          x, y, scaledWidth, scaledHeight
+        );
+      } catch (e) {
+        // Ignore drawImage errors (e.g. if video not fully loaded)
+      }
 
-      tempCtx.drawImage(
-        video,
-        srcX, srcY, srcW, srcH * (1 - legacyCrop), // sx, sy, sWidth, sHeight
-        x, y, scaledWidth, scaledHeight            // dx, dy, dWidth, dHeight
-      );
-
-      // Add a subtle border to smooth out edges
       tempCtx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
       tempCtx.lineWidth = 1;
       tempCtx.stroke();
-
       tempCtx.restore();
 
-      // Composite temp canvas onto main canvas
       ctx.drawImage(tempCanvas, 0, 0);
 
-      // Mouse cursor
+      // Cursor
       const interpolatedPosition = this.interpolateCursorPosition(
         video.currentTime,
         mousePositions
       );
       if (interpolatedPosition) {
-        // Save current transform
         ctx.save();
-        // Reset the transform before drawing cursor
         ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-        // Map mouse position to the cropped video space
-        // interpolatedPosition.x/y are pixels in original video
         const mX = interpolatedPosition.x;
         const mY = interpolatedPosition.y;
 
-        // Check if inside Source Crop
         if (mX >= srcX && mX <= (srcX + srcW) && mY >= srcY && mY <= (srcY + srcH * (1 - legacyCrop))) {
-          // Map to Canvas space
-          // Relative to Source Crop top-left
-          const relX = (mX - srcX) / srcW; // 0-1 in cropped frame
-          const relY = (mY - srcY) / (srcH * (1 - legacyCrop)); // 0-1 in cropped frame
+          const relX = (mX - srcX) / srcW;
+          const relY = (mY - srcY) / (srcH * (1 - legacyCrop));
 
           let cursorX = x + (relX * scaledWidth);
           let cursorY = y + (relY * scaledHeight);
 
-          // If there's zoom, adjust cursor position
           if (zoomState && zoomState.zoomFactor !== 1) {
-            // Apply the same zoom transformation to cursor position
             cursorX = cursorX * zoomState.zoomFactor + (canvas.width - canvas.width * zoomState.zoomFactor) * zoomState.positionX;
             cursorY = cursorY * zoomState.zoomFactor + (canvas.height - canvas.height * zoomState.zoomFactor) * zoomState.positionY;
           }
 
-          // Scale cursor size based on canvas to source ratio and zoom
           const sizeRatio = Math.min(canvas.width / srcW, canvas.height / srcH);
           const cursorSizeScale = (backgroundConfig.cursorScale || 2) * sizeRatio * (zoomState?.zoomFactor || 1);
 
-          // Update smooth squish animation state
           const isActuallyClicked = interpolatedPosition.isClicked;
-
-          // Click fusing: if we clicked recently, stay "clicked" to bridge jitter/flicker
           const timeSinceLastHold = video.currentTime - this.lastHoldTime;
           const shouldBeSquished = isActuallyClicked || (this.lastHoldTime >= 0 && timeSinceLastHold < this.CLICK_FUSE_THRESHOLD && timeSinceLastHold > 0);
 
@@ -331,7 +300,6 @@ export class VideoRenderer {
             this.lastHoldTime = video.currentTime;
           }
 
-          // Smoothly interpolate the squish scale
           const targetScale = shouldBeSquished ? 0.75 : 1.0;
           if (this.currentSquishScale > targetScale) {
             this.currentSquishScale = Math.max(targetScale, this.currentSquishScale - this.SQUISH_SPEED * (this.latestElapsed / (1000 / 120)));
@@ -348,15 +316,11 @@ export class VideoRenderer {
             interpolatedPosition.cursor_type || 'default'
           );
         }
-
-        // Restore transform
         ctx.restore();
       }
-      // Performance tracking removed
 
       this.backgroundConfig = context.backgroundConfig;
 
-      // Add text overlays
       if (segment.textSegments) {
         for (const textSegment of segment.textSegments) {
           if (video.currentTime >= textSegment.startTime && video.currentTime <= textSegment.endTime) {
@@ -378,110 +342,84 @@ export class VideoRenderer {
   ): string | CanvasGradient | CanvasPattern {
     switch (type) {
       case 'gradient1': {
-        // Blue to violet gradient
-        const gradient = ctx.createLinearGradient(0, 0, ctx.canvas.width, 0); // horizontal gradient
-        gradient.addColorStop(0, '#2563eb'); // blue-600
-        gradient.addColorStop(1, '#7c3aed'); // violet-600
+        const gradient = ctx.createLinearGradient(0, 0, ctx.canvas.width, 0);
+        gradient.addColorStop(0, '#2563eb');
+        gradient.addColorStop(1, '#7c3aed');
         return gradient;
       }
       case 'gradient2': {
-        // Rose to orange gradient
         const gradient = ctx.createLinearGradient(0, 0, ctx.canvas.width, 0);
-        gradient.addColorStop(0, '#fb7185'); // rose-400
-        gradient.addColorStop(1, '#fdba74'); // orange-300
+        gradient.addColorStop(0, '#fb7185');
+        gradient.addColorStop(1, '#fdba74');
         return gradient;
       }
       case 'gradient3': {
-        // Emerald to teal gradient
         const gradient = ctx.createLinearGradient(0, 0, ctx.canvas.width, 0);
-        gradient.addColorStop(0, '#10b981'); // emerald-500
-        gradient.addColorStop(1, '#2dd4bf'); // teal-400
+        gradient.addColorStop(0, '#10b981');
+        gradient.addColorStop(1, '#2dd4bf');
         return gradient;
       }
       case 'custom': {
         if (customBackground) {
-          // Only create new pattern if background changed
           if (this.lastCustomBackground !== customBackground || !this.customBackgroundPattern) {
             const img = new Image();
             img.src = customBackground;
 
             if (img.complete) {
-              // Create a temporary canvas for scaling the background
               const tempCanvas = document.createElement('canvas');
               const tempCtx = tempCanvas.getContext('2d');
 
               if (tempCtx) {
-                // Scale the image to a reasonable size (e.g., viewport width)
                 const targetWidth = Math.min(1920, window.innerWidth);
                 const scale = targetWidth / img.width;
                 const targetHeight = img.height * scale;
 
                 tempCanvas.width = targetWidth;
                 tempCanvas.height = targetHeight;
-
-                // Use better quality settings
                 tempCtx.imageSmoothingEnabled = true;
                 tempCtx.imageSmoothingQuality = 'high';
-
-                // Draw scaled image
                 tempCtx.drawImage(img, 0, 0, targetWidth, targetHeight);
-
-                // Create pattern from scaled image
                 this.customBackgroundPattern = ctx.createPattern(tempCanvas, 'repeat');
                 this.lastCustomBackground = customBackground;
-
-                // Clean up
                 tempCanvas.remove();
               }
             }
           }
 
           if (this.customBackgroundPattern) {
-            // Reset pattern transform
             this.customBackgroundPattern.setTransform(new DOMMatrix());
-
-            // Calculate scale to maintain aspect ratio
             const scale = Math.max(
               ctx.canvas.width / window.innerWidth,
               ctx.canvas.height / window.innerHeight
-            ) * 1.1; // Slightly larger to avoid gaps
-
-            // Apply transform to pattern
-            const matrix = new DOMMatrix()
-              .scale(scale);
+            ) * 1.1;
+            const matrix = new DOMMatrix().scale(scale);
             this.customBackgroundPattern.setTransform(matrix);
-
             return this.customBackgroundPattern;
           }
         }
-        return '#000000'; // Fallback
+        return '#000000';
       }
       case 'solid': {
-        // Create a subtle dark gradient
         const gradient = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
-        gradient.addColorStop(0, '#0a0a0a'); // Very slightly lighter black at top
-        gradient.addColorStop(0.5, '#000000'); // Pure black in middle
-        gradient.addColorStop(1, '#0a0a0a'); // Very slightly lighter black at bottom
+        gradient.addColorStop(0, '#0a0a0a');
+        gradient.addColorStop(0.5, '#000000');
+        gradient.addColorStop(1, '#0a0a0a');
 
-        // Add a subtle radial overlay for more depth
         const centerX = ctx.canvas.width / 2;
         const centerY = ctx.canvas.height / 2;
         const radialGradient = ctx.createRadialGradient(
           centerX, centerY, 0,
           centerX, centerY, ctx.canvas.width * 0.8
         );
-        radialGradient.addColorStop(0, 'rgba(30, 30, 30, 0.15)'); // Subtle light center
-        radialGradient.addColorStop(1, 'rgba(0, 0, 0, 0)'); // Fade to transparent
+        radialGradient.addColorStop(0, 'rgba(30, 30, 30, 0.15)');
+        radialGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
-        // Draw base gradient
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-        // Add radial overlay
         ctx.fillStyle = radialGradient;
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-        return 'rgba(0,0,0,0)'; // Return transparent as we've already filled
+        return 'rgba(0,0,0,0)';
       }
       default:
         return '#000000';
@@ -505,30 +443,21 @@ export class VideoRenderer {
     viewW: number,
     viewH: number
   ): ZoomKeyframe {
-    // Priority: Continuous Motion Path (Smart Zoom)
     if (segment.smoothMotionPath && segment.smoothMotionPath.length > 0) {
       const path = segment.smoothMotionPath;
-
-      // Find bounding frames
-      // Binary search would be faster but linear is ok for this data size
       const idx = path.findIndex((p: any) => p.time >= currentTime);
-
       let cam = { x: viewW / 2, y: viewH / 2, zoom: 1.0 };
 
       if (idx === -1) {
-        // Past end
         const last = path[path.length - 1];
         cam = { x: last.x, y: last.y, zoom: last.zoom };
       } else if (idx === 0) {
-        // Before start
         const first = path[0];
         cam = { x: first.x, y: first.y, zoom: first.zoom };
       } else {
-        // Interpolate
         const p1 = path[idx - 1];
         const p2 = path[idx];
         const t = (currentTime - p1.time) / (p2.time - p1.time);
-
         cam = {
           x: p1.x + (p2.x - p1.x) * t,
           y: p1.y + (p2.y - p1.y) * t,
@@ -536,13 +465,9 @@ export class VideoRenderer {
         };
       }
 
-      // Apply Zoom Influence Curve (if exists)
       if (segment.zoomInfluencePoints && segment.zoomInfluencePoints.length > 0) {
         const points = segment.zoomInfluencePoints;
         let influence = 1.0;
-
-        // Find bounding points
-        // Assuming sorted by time
         const iIdx = points.findIndex((p: { time: number }) => p.time >= currentTime);
 
         if (iIdx === -1) {
@@ -553,14 +478,9 @@ export class VideoRenderer {
           const ip1 = points[iIdx - 1];
           const ip2 = points[iIdx];
           const it = (currentTime - ip1.time) / (ip2.time - ip1.time);
-
-          // Cosine Interpolation for smoothness
           const cosT = (1 - Math.cos(it * Math.PI)) / 2;
           influence = ip1.value * (1 - cosT) + ip2.value * cosT;
         }
-
-        // influence 1.0 = Full Physics
-        // influence 0.0 = Overview
 
         cam.zoom = 1.0 + (cam.zoom - 1.0) * influence;
         cam.x = (viewW / 2) + (cam.x - (viewW / 2)) * influence;
@@ -576,7 +496,6 @@ export class VideoRenderer {
         easingType: 'linear'
       };
 
-      // MANUAL KEYFRAME BLENDING (Real-time Feedback)
       if (segment.zoomKeyframes && segment.zoomKeyframes.length > 0) {
         const WINDOW = 1.5;
         const nearby = segment.zoomKeyframes
@@ -587,7 +506,6 @@ export class VideoRenderer {
         if (nearby) {
           const ratio = nearby.dist / WINDOW;
           const weight = (1 + Math.cos(ratio * Math.PI)) / 2;
-
           resultState.zoomFactor = resultState.zoomFactor * (1 - weight) + nearby.kf.zoomFactor * weight;
           resultState.positionX = resultState.positionX * (1 - weight) + nearby.kf.positionX * weight;
           resultState.positionY = resultState.positionY * (1 - weight) + nearby.kf.positionY * weight;
@@ -597,20 +515,16 @@ export class VideoRenderer {
       return resultState;
     }
 
-    // Fallback: Standard Keyframes
     const sortedKeyframes = [...segment.zoomKeyframes].sort((a: ZoomKeyframe, b: ZoomKeyframe) => a.time - b.time);
     if (sortedKeyframes.length === 0) return this.DEFAULT_STATE;
 
     const nextKeyframe = sortedKeyframes.find(k => k.time > currentTime);
     const prevKeyframe = [...sortedKeyframes].reverse().find(k => k.time <= currentTime);
-
     const TRANSITION_DURATION = 1.0;
 
-    // If we have a previous keyframe and next keyframe that are close
     if (prevKeyframe && nextKeyframe && (nextKeyframe.time - prevKeyframe.time) <= TRANSITION_DURATION) {
       const progress = (currentTime - prevKeyframe.time) / (nextKeyframe.time - prevKeyframe.time);
       const easedProgress = this.easeOutCubic(Math.min(1, Math.max(0, progress)));
-
       return {
         time: currentTime,
         duration: nextKeyframe.time - prevKeyframe.time,
@@ -621,15 +535,12 @@ export class VideoRenderer {
       };
     }
 
-    // If approaching next keyframe
     if (nextKeyframe) {
       const timeToNext = nextKeyframe.time - currentTime;
       if (timeToNext <= TRANSITION_DURATION) {
         const progress = (TRANSITION_DURATION - timeToNext) / TRANSITION_DURATION;
         const easedProgress = this.easeOutCubic(Math.min(1, Math.max(0, progress)));
-
         const startState = prevKeyframe || this.DEFAULT_STATE;
-
         return {
           time: currentTime,
           duration: TRANSITION_DURATION,
@@ -641,11 +552,7 @@ export class VideoRenderer {
       }
     }
 
-    // If we have a previous keyframe, maintain its state
-    if (prevKeyframe) {
-      return prevKeyframe;
-    }
-
+    if (prevKeyframe) return prevKeyframe;
     return this.DEFAULT_STATE;
   }
 
@@ -653,16 +560,9 @@ export class VideoRenderer {
     return 1 - Math.pow(1 - x, 3);
   }
 
-  private catmullRomInterpolate(
-    p0: number,
-    p1: number,
-    p2: number,
-    p3: number,
-    t: number
-  ): number {
+  private catmullRomInterpolate(p0: number, p1: number, p2: number, p3: number, t: number): number {
     const t2 = t * t;
     const t3 = t2 * t;
-
     return 0.5 * (
       (2 * p1) +
       (-p0 + p2) * t +
@@ -671,15 +571,10 @@ export class VideoRenderer {
     );
   }
 
-  private smoothMousePositions(
-    positions: MousePosition[],
-    targetFps: number = 120
-  ): MousePosition[] {
+  private smoothMousePositions(positions: MousePosition[], targetFps: number = 120): MousePosition[] {
     if (positions.length < 4) return positions;
-
     const smoothed: MousePosition[] = [];
 
-    // First pass: Catmull-Rom interpolation
     for (let i = 0; i < positions.length - 3; i++) {
       const p0 = positions[i];
       const p1 = positions[i + 1];
@@ -692,42 +587,29 @@ export class VideoRenderer {
       for (let frame = 0; frame < numFrames; frame++) {
         const t = frame / numFrames;
         const timestamp = p1.timestamp + (segmentDuration * t);
-
         const x = this.catmullRomInterpolate(p0.x, p1.x, p2.x, p3.x, t);
         const y = this.catmullRomInterpolate(p0.y, p1.y, p2.y, p3.y, t);
         const isClicked = Boolean(p1.isClicked || p2.isClicked);
-        // Use the cursor type from the nearest position
         const cursor_type = t < 0.5 ? p1.cursor_type : p2.cursor_type;
-
         smoothed.push({ x, y, timestamp, isClicked, cursor_type });
       }
     }
 
-    // Get smoothness value from background config, default to 5 if not set
-    // Scale it up to make the effect more noticeable (1-10 becomes 2-20)
     const windowSize = ((this.backgroundConfig?.cursorSmoothness || 5) * 2) + 1;
-
-    // Multiple smoothing passes based on smoothness value
     const passes = Math.ceil(windowSize / 2);
     let currentSmoothed = smoothed;
 
-    // Apply multiple passes of smoothing based on the smoothness value
     for (let pass = 0; pass < passes; pass++) {
       const passSmoothed: MousePosition[] = [];
-
       for (let i = 0; i < currentSmoothed.length; i++) {
         let sumX = 0;
         let sumY = 0;
         let totalWeight = 0;
-
-        // Keep cursor type from original position
         const cursor_type = currentSmoothed[i].cursor_type;
 
-        // Only smooth position, not cursor type
         for (let j = Math.max(0, i - windowSize); j <= Math.min(currentSmoothed.length - 1, i + windowSize); j++) {
           const distance = Math.abs(i - j);
           const weight = Math.exp(-distance * (0.5 / windowSize));
-
           sumX += currentSmoothed[j].x * weight;
           sumY += currentSmoothed[j].y * weight;
           totalWeight += weight;
@@ -738,16 +620,13 @@ export class VideoRenderer {
           y: sumY / totalWeight,
           timestamp: currentSmoothed[i].timestamp,
           isClicked: currentSmoothed[i].isClicked,
-          cursor_type // Preserve the cursor type
+          cursor_type
         });
       }
-
       currentSmoothed = passSmoothed;
     }
 
-    // Apply threshold to remove tiny movements
-    // Make threshold smaller for higher smoothness values
-    const threshold = 0.5 / (windowSize / 2); // Adjust threshold based on smoothness
+    const threshold = 0.5 / (windowSize / 2);
     let lastSignificantPos = currentSmoothed[0];
     const finalSmoothed = [lastSignificantPos];
 
@@ -778,22 +657,17 @@ export class VideoRenderer {
   ): { x: number; y: number; isClicked: boolean; cursor_type: string } | null {
     if (mousePositions.length === 0) return null;
 
-    // Add cursor type frequency analysis
     if (!this.hasLoggedPositions) {
       this.hasLoggedPositions = true;
     }
 
-    // Cache smoothed positions
     if (!this.smoothedPositions || this.smoothedPositions.length === 0) {
       this.smoothedPositions = this.smoothMousePositions(mousePositions);
     }
 
     const positions = this.smoothedPositions;
-
-    // Find the exact position for the current time
     const exactMatch = positions.find((pos: MousePosition) => Math.abs(pos.timestamp - currentTime) < 0.001);
     if (exactMatch) {
-
       return {
         x: exactMatch.x,
         y: exactMatch.y,
@@ -802,7 +676,6 @@ export class VideoRenderer {
       };
     }
 
-    // Find the two closest positions
     const nextIndex = positions.findIndex((pos: MousePosition) => pos.timestamp > currentTime);
     if (nextIndex === -1) {
       const last = positions[positions.length - 1];
@@ -824,11 +697,9 @@ export class VideoRenderer {
       };
     }
 
-    // Linear interpolation between the two closest points
     const prev = positions[nextIndex - 1];
     const next = positions[nextIndex];
     const t = (currentTime - prev.timestamp) / (next.timestamp - prev.timestamp);
-
 
     return {
       x: prev.x + (next.x - prev.x) * t,
@@ -860,49 +731,31 @@ export class VideoRenderer {
     cursorType: string
   ) {
     const lowerType = cursorType.toLowerCase();
-
-
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(scale, scale);
-
-    // Handle click/held state - cursor stays squished while mouse is held
-    // Use the class-level currentSquishScale for smooth animation
     ctx.scale(this.currentSquishScale, this.currentSquishScale);
-
 
     switch (lowerType) {
       case 'text': {
-
         ctx.translate(-6, -8);
-
-        // I-beam cursor with more detailed shape
         const ibeam = new Path2D(`
           M 2 0 L 10 0 L 10 2 L 7 2 L 7 14 L 10 14 L 10 16 L 2 16 L 2 14 L 5 14 L 5 2 L 2 2 Z
         `);
-
-        // White outline
         ctx.strokeStyle = 'white';
         ctx.lineWidth = 1.5;
         ctx.stroke(ibeam);
-
-        // Black fill
         ctx.fillStyle = 'black';
         ctx.fill(ibeam);
         break;
       }
 
       case 'pointer': {
-
-        // If the pointer image is loaded, draw it. Use fallback dimensions if necessary.
         let imgWidth = 24, imgHeight = 24;
         if (this.pointerImage.complete && this.pointerImage.naturalWidth > 0) {
           imgWidth = this.pointerImage.naturalWidth;
           imgHeight = this.pointerImage.naturalHeight;
         }
-
-        // Shift the image offset to center the pointer tip
-        // Adjust offsetX and offsetY as needed. Here we shift right and down by 4 pixels each.
         const offsetX = 8;
         const offsetY = 16;
         ctx.translate(-imgWidth / 2 + offsetX, -imgHeight / 2 + offsetY);
@@ -911,23 +764,19 @@ export class VideoRenderer {
       }
 
       default: {
-
         ctx.translate(-8, -5);
         const mainArrow = new Path2D('M 8.2 4.9 L 19.8 16.5 L 13 16.5 L 12.6 16.6 L 8.2 20.9 Z');
         const clickIndicator = new Path2D('M 17.3 21.6 L 13.7 23.1 L 9 12 L 12.7 10.5 Z');
-
         ctx.strokeStyle = 'white';
         ctx.lineWidth = 1.5;
         ctx.stroke(mainArrow);
         ctx.stroke(clickIndicator);
-
         ctx.fillStyle = 'black';
         ctx.fill(mainArrow);
         ctx.fill(clickIndicator);
         break;
       }
     }
-
     ctx.restore();
   }
 
@@ -938,8 +787,6 @@ export class VideoRenderer {
     height: number
   ) {
     ctx.save();
-
-    // Configure text style
     ctx.font = `${textSegment.style.fontSize}px sans-serif`;
     ctx.fillStyle = textSegment.style.color;
     ctx.textAlign = 'center';
@@ -947,7 +794,6 @@ export class VideoRenderer {
     const x = (textSegment.style.x / 100) * width;
     const y = (textSegment.style.y / 100) * height;
 
-    // Draw hit area for dragging (invisible)
     const metrics = ctx.measureText(textSegment.text);
     const textHeight = textSegment.style.fontSize;
     const hitArea = {
@@ -957,13 +803,11 @@ export class VideoRenderer {
       height: textHeight + 20
     };
 
-    // Optional: show hit area when text is being dragged
     if (this.draggedTextId === textSegment.id) {
       ctx.fillStyle = 'rgba(0, 121, 211, 0.1)';
       ctx.fillRect(hitArea.x, hitArea.y, hitArea.width, hitArea.height);
     }
 
-    // Draw text with shadow
     ctx.shadowColor = 'rgba(0,0,0,0.7)';
     ctx.shadowBlur = 6;
     ctx.shadowOffsetX = 2;
@@ -972,8 +816,6 @@ export class VideoRenderer {
     ctx.fillText(textSegment.text, x, y);
 
     ctx.restore();
-
-    // Return hit area for collision detection
     return hitArea;
   }
 
@@ -982,11 +824,9 @@ export class VideoRenderer {
     const x = (e.clientX - rect.left) * (canvas.width / rect.width);
     const y = (e.clientY - rect.top) * (canvas.height / rect.height);
 
-    // Check each text segment for collision
     for (const text of segment.textSegments) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-
       const hitArea = this.drawTextOverlay(ctx, text, canvas.width, canvas.height);
       if (x >= hitArea.x && x <= hitArea.x + hitArea.width &&
         y >= hitArea.y && y <= hitArea.y + hitArea.height) {
@@ -1025,5 +865,4 @@ export class VideoRenderer {
   }
 }
 
-// Create and export a singleton instance
-export const videoRenderer = new VideoRenderer(); 
+export const videoRenderer = new VideoRenderer();
