@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Play, Pause, Video, Trash2, Search, Download, Loader2, FolderOpen, Upload, Wand2, Type, Keyboard, X, Minus, Square, Copy } from "lucide-react";
@@ -2095,8 +2096,10 @@ function App() {
                     onClick={() => {
                       if (!segment || !mousePositions.length) return;
 
-                      // Generate auto zoom motion path
-                      const motionPath = autoZoomGenerator.generateMotionPath(segment, mousePositions);
+                      // Pass actual video dimensions
+                      const vid = videoRef.current;
+                      if (!vid) return;
+                      const motionPath = autoZoomGenerator.generateMotionPath(segment, mousePositions, vid.videoWidth, vid.videoHeight);
 
                       const newSegment: VideoSegment = {
                         ...segment,

@@ -4,8 +4,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use super::gpu_export::{create_uniforms, GpuCompositor};
 use crate::overlay::screen_record::engine::VIDEO_PATH;
-use super::gpu_export::{GpuCompositor, create_uniforms};
 
 // --- Structs for JSON Deserialization ---
 
@@ -128,8 +128,8 @@ fn get_gradient_colors(bg_type: &str) -> ([f32; 4], [f32; 4]) {
 fn interpolate_zoom(
     time: f64,
     motion_path: &Option<Vec<MotionPoint>>,
-    src_w: u32,
-    src_h: u32,
+    default_x: f64,
+    default_y: f64,
 ) -> (f64, f64, f64) {
     if let Some(path) = motion_path {
         if !path.is_empty() {
@@ -137,23 +137,23 @@ fn interpolate_zoom(
                 .iter()
                 .position(|p| p.time >= time)
                 .unwrap_or(path.len().saturating_sub(1));
-            
+
             if idx == 0 {
                 let p = &path[0];
                 return (p.x, p.y, p.zoom);
             }
-            
+
             let p2 = &path[idx.min(path.len() - 1)];
             let p1 = &path[(idx - 1).max(0)];
             let t = ((time - p1.time) / (p2.time - p1.time).max(0.001)).clamp(0.0, 1.0);
-            
+
             let x = p1.x + (p2.x - p1.x) * t;
             let y = p1.y + (p2.y - p1.y) * t;
             let zoom = p1.zoom + (p2.zoom - p1.zoom) * t;
             return (x, y, zoom);
         }
     }
-    (src_w as f64 / 2.0, src_h as f64 / 2.0, 1.0)
+    (default_x, default_y, 1.0)
 }
 
 // --- MAIN EXPORT FUNCTION ---
@@ -162,6 +162,20 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
     let mut config: ExportConfig = serde_json::from_value(args).map_err(|e| e.to_string())?;
 
     println!("[Export] Starting GPU-accelerated export...");
+    println!(
+        "[Export] Config dimensions from frontend: {}x{}",
+        config.width, config.height
+    );
+    println!("[Export] Segment crop: {:?}", config.segment.crop);
+
+    if let Some(path) = &config.segment.smooth_motion_path {
+        println!("[Export] Motion Path points: {}", path.len());
+        if !path.is_empty() {
+            println!("[Export] First motion point: {:?}", path[0]);
+        }
+    } else {
+        println!("[Export] No motion path provided (using default center)");
+    }
 
     // 0. Handle Source Video/Audio
     let mut temp_video_path: Option<PathBuf> = None;
@@ -210,10 +224,14 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
     // 2. Probe source dimensions
     let probe = Command::new(&ffprobe_path)
         .args([
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=s=x:p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=s=x:p=0",
             &source_video_path,
         ])
         .output()
@@ -226,28 +244,71 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
 
     println!("[Export] Source: {}x{}", src_w, src_h);
 
-    // 3. Calculate dimensions - MAINTAIN SOURCE ASPECT RATIO
-    // If config dimensions are 0, use source dimensions
-    let out_w = if config.width == 0 { src_w } else { config.width };
-    let out_h = if config.height == 0 { src_h } else { config.height };
+    // 3. Calculate dimensions - USE CROP DIMENSIONS FOR ASPECT RATIO
+    // Apply crop to get the actual visible portion dimensions
+    let crop = &config.segment.crop;
+    let crop_w = if let Some(c) = crop {
+        (src_w as f64 * c.width) as u32
+    } else {
+        src_w
+    };
+    let crop_h = if let Some(c) = crop {
+        (src_h as f64 * c.height) as u32
+    } else {
+        src_h
+    };
+
+    // Calculate absolute offset of the crop in source coordinates
+    let crop_x_offset = if let Some(c) = crop {
+        src_w as f64 * c.x
+    } else {
+        0.0
+    };
+    let crop_y_offset = if let Some(c) = crop {
+        src_h as f64 * c.y
+    } else {
+        0.0
+    };
+
+    // Default camera center (Global coordinates) = Center of the Crop
+    // This fixes the shift issue: if motion path is missing, we center on the crop, not the full source.
+    let default_cam_x = crop_x_offset + crop_w as f64 / 2.0;
+    let default_cam_y = crop_y_offset + crop_h as f64 / 2.0;
+
+    println!(
+        "[Export] Crop: {}x{} at ({},{}), Default Cam: ({},{})",
+        crop_w, crop_h, crop_x_offset, crop_y_offset, default_cam_x, default_cam_y
+    );
+
+    // If config dimensions are 0, use cropped dimensions (matching preview behavior)
+    let out_w = if config.width == 0 {
+        crop_w
+    } else {
+        config.width
+    };
+    let out_h = if config.height == 0 {
+        crop_h
+    } else {
+        config.height
+    };
     let out_w = out_w - (out_w % 2);
     let out_h = out_h - (out_h % 2);
 
-    // Calculate video size maintaining source aspect ratio
+    // Calculate video size maintaining CROPPED aspect ratio (not source)
     let scale_factor = config.background_config.scale / 100.0;
-    let src_aspect = src_w as f64 / src_h as f64;
+    let crop_aspect = crop_w as f64 / crop_h as f64;
     let out_aspect = out_w as f64 / out_h as f64;
 
-    // Fit video within output while maintaining aspect ratio
-    let (video_w, video_h) = if src_aspect > out_aspect {
-        // Source is wider - fit to width
+    // Fit video within output while maintaining cropped aspect ratio
+    let (video_w, video_h) = if crop_aspect > out_aspect {
+        // Cropped source is wider - fit to width
         let w = (out_w as f64 * scale_factor) as u32;
-        let h = (w as f64 / src_aspect) as u32;
+        let h = (w as f64 / crop_aspect) as u32;
         (w & !1, h & !1)
     } else {
-        // Source is taller - fit to height
+        // Cropped source is taller - fit to height
         let h = (out_h as f64 * scale_factor) as u32;
-        let w = (h as f64 * src_aspect) as u32;
+        let w = (h as f64 * crop_aspect) as u32;
         (w & !1, h & !1)
     };
 
@@ -259,20 +320,39 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
         out_w, out_h, video_w, video_h, pad_x, pad_y
     );
 
-    // 4. Initialize GPU compositor
+    // 4. Initialize GPU compositor - use CROPPED dimensions as video input size
     println!("[Export] Initializing GPU...");
-    let compositor = GpuCompositor::new(out_w, out_h, src_w, src_h)
+    let compositor = GpuCompositor::new(out_w, out_h, crop_w, crop_h)
         .map_err(|e| format!("GPU init failed: {}", e))?;
 
-    // 5. Start FFmpeg decoder
+    // 5. Start FFmpeg decoder - apply crop filter to extract the cropped region
+    // Build crop filter if we have a crop rect
+    let crop_filter = if let Some(c) = crop {
+        let crop_x = (src_w as f64 * c.x) as u32;
+        let crop_y = (src_h as f64 * c.y) as u32;
+        format!("crop={}:{}:{}:{}", crop_w, crop_h, crop_x, crop_y)
+    } else {
+        "null".to_string()
+    };
+
+    println!("[Export] Using crop filter: {}", crop_filter);
+
     let mut decoder = Command::new(&ffmpeg_path)
         .args([
-            "-ss", &config.trim_start.to_string(),
-            "-t", &config.duration.to_string(),
-            "-i", &source_video_path,
-            "-f", "rawvideo",
-            "-pix_fmt", "rgba",
-            "-s", &format!("{}x{}", src_w, src_h),
+            "-ss",
+            &config.trim_start.to_string(),
+            "-t",
+            &config.duration.to_string(),
+            "-i",
+            &source_video_path,
+            "-vf",
+            &crop_filter,
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+            &format!("{}x{}", crop_w, crop_h),
             "-",
         ])
         .stdout(Stdio::piped())
@@ -280,18 +360,26 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
         .spawn()
         .map_err(|e| format!("Decoder failed: {}", e))?;
 
-    let mut decoder_stdout = decoder.stdout.take().ok_or("Failed to open decoder stdout")?;
+    let mut decoder_stdout = decoder
+        .stdout
+        .take()
+        .ok_or("Failed to open decoder stdout")?;
 
     // 6. Start FFmpeg encoder
     let has_audio = source_audio_path.is_some();
-    
+
     let mut encoder_args = vec![
         "-y".to_string(),
-        "-f".to_string(), "rawvideo".to_string(),
-        "-pix_fmt".to_string(), "rgba".to_string(),
-        "-s".to_string(), format!("{}x{}", out_w, out_h),
-        "-r".to_string(), config.framerate.to_string(),
-        "-i".to_string(), "-".to_string(),
+        "-f".to_string(),
+        "rawvideo".to_string(),
+        "-pix_fmt".to_string(),
+        "rgba".to_string(),
+        "-s".to_string(),
+        format!("{}x{}", out_w, out_h),
+        "-r".to_string(),
+        config.framerate.to_string(),
+        "-i".to_string(),
+        "-".to_string(),
     ];
 
     if let Some(audio) = &source_audio_path {
@@ -301,30 +389,41 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
             "anull".to_string()
         };
         encoder_args.extend([
-            "-ss".to_string(), config.trim_start.to_string(),
-            "-t".to_string(), config.duration.to_string(),
-            "-i".to_string(), audio.clone(),
-            "-af".to_string(), audio_filter,
+            "-ss".to_string(),
+            config.trim_start.to_string(),
+            "-t".to_string(),
+            config.duration.to_string(),
+            "-i".to_string(),
+            audio.clone(),
+            "-af".to_string(),
+            audio_filter,
         ]);
     }
 
     encoder_args.extend([
-        "-c:v".to_string(), "libx264".to_string(),
-        "-preset".to_string(), "fast".to_string(),
-        "-crf".to_string(), "18".to_string(),
-        "-pix_fmt".to_string(), "yuv420p".to_string(),
+        "-c:v".to_string(),
+        "libx264".to_string(),
+        "-preset".to_string(),
+        "fast".to_string(),
+        "-crf".to_string(),
+        "18".to_string(),
+        "-pix_fmt".to_string(),
+        "yuv420p".to_string(),
     ]);
 
     if has_audio {
         encoder_args.extend([
-            "-c:a".to_string(), "aac".to_string(),
-            "-b:a".to_string(), "192k".to_string(),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "192k".to_string(),
             "-shortest".to_string(),
         ]);
     }
 
     encoder_args.extend([
-        "-movflags".to_string(), "+faststart".to_string(),
+        "-movflags".to_string(),
+        "+faststart".to_string(),
         output_path.to_str().unwrap().to_string(),
     ]);
 
@@ -340,33 +439,41 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
 
     // 7. Process frames
     let (gradient1, gradient2) = get_gradient_colors(&config.background_config.background_type);
-    
-    let frame_size = (src_w * src_h * 4) as usize;
+
+    // Use CROPPED dimensions for frame buffer size (decoder outputs cropped frames)
+    let frame_size = (crop_w * crop_h * 4) as usize;
     let mut buffer = vec![0u8; frame_size];
-    
+
     let dt = 1.0 / config.framerate as f64;
     let step = dt * config.speed;
     let mut current_time = config.trim_start;
     let end_time = config.trim_start + config.duration;
     let mut frame_count = 0u32;
-    
+
     let start = std::time::Instant::now();
     println!("[Export] Processing frames with GPU...");
 
     while current_time < end_time {
-        // Read frame from decoder
+        // Read frame from decoder (cropped frame)
         if std::io::Read::read_exact(&mut decoder_stdout, &mut buffer).is_err() {
             println!("[Export] Decoder finished at frame {}", frame_count);
             break;
         }
 
         // Get zoom/pan for this frame
-        let (cam_x, cam_y, zoom) = interpolate_zoom(
+        // Pass corrected default coordinates (Center of Crop)
+        let (raw_cam_x, raw_cam_y, zoom) = interpolate_zoom(
             current_time - config.trim_start,
             &config.segment.smooth_motion_path,
-            src_w,
-            src_h,
+            default_cam_x,
+            default_cam_y,
         );
+
+        // Adjust camera coordinate to be relative to the CROPPED frame
+        // If the original camera was at (1000, 500) and we cropped the region starting at (500, 0),
+        // the new camera center is at (1000-500, 500-0) = (500, 500) inside the crop.
+        let cam_x = raw_cam_x - crop_x_offset;
+        let cam_y = raw_cam_y - crop_y_offset;
 
         // Upload frame to GPU
         compositor.upload_frame(&buffer);
@@ -374,17 +481,45 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
         // Calculate video position based on zoom
         let zoomed_video_w = video_w as f64 * zoom;
         let zoomed_video_h = video_h as f64 * zoom;
-        
-        // Offset based on camera position
-        let offset_x = (pad_x as f64 + (video_w as f64 - zoomed_video_w) / 2.0
-            - (cam_x - src_w as f64 / 2.0) * (zoomed_video_w / src_w as f64)) / out_w as f64;
-        let offset_y = (pad_y as f64 + (video_h as f64 - zoomed_video_h) / 2.0
-            - (cam_y - src_h as f64 / 2.0) * (zoomed_video_h / src_h as f64)) / out_h as f64;
+
+        // Calculate max possible shift (slack) based on output dimensions and zoom
+        // This prevents the view from panning past the edges of the video container
+        let effective_zoomed_out_w = out_w as f64 * zoom;
+        let effective_zoomed_out_h = out_h as f64 * zoom;
+
+        let slack_x = (effective_zoomed_out_w - out_w as f64).max(0.0);
+        let slack_y = (effective_zoomed_out_h - out_h as f64).max(0.0);
+
+        // Calculate desired shift based on camera position relative to crop center
+        // Ratio maps crop pixels to zoomed output pixels
+        // We use effective_zoomed_out_w for the ratio to match frontend's "Zoom the Container" model
+        let raw_shift_x = (cam_x - crop_w as f64 / 2.0) * (effective_zoomed_out_w / crop_w as f64);
+        let raw_shift_y = (cam_y - crop_h as f64 / 2.0) * (effective_zoomed_out_h / crop_h as f64);
+
+        let clamped_shift_x = raw_shift_x.clamp(-slack_x / 2.0, slack_x / 2.0);
+        let clamped_shift_y = raw_shift_y.clamp(-slack_y / 2.0, slack_y / 2.0);
+
+        // Calculate final offsets
+        // Start with centered position: (out_w - zoomed_video_w) / 2
+        // Subtract shift (Camera move Right -> Image move Left)
+        let offset_x = ((out_w as f64 - zoomed_video_w) / 2.0 - clamped_shift_x) / out_w as f64;
+        let offset_y = ((out_h as f64 - zoomed_video_h) / 2.0 - clamped_shift_y) / out_h as f64;
+
+        if frame_count == 0 {
+            println!("[Export] Frame 0 Debug:");
+            println!("  raw_cam: ({}, {}), zoom: {}", raw_cam_x, raw_cam_y, zoom);
+            println!("  adjusted cam: ({}, {})", cam_x, cam_y);
+            println!("  offset: ({}, {})", offset_x, offset_y);
+            println!("  zoomed size: {}x{}", zoomed_video_w, zoomed_video_h);
+        }
 
         // Create uniforms
         let uniforms = create_uniforms(
             (offset_x as f32, offset_y as f32),
-            (zoomed_video_w as f32 / out_w as f32, zoomed_video_h as f32 / out_h as f32),
+            (
+                zoomed_video_w as f32 / out_w as f32,
+                zoomed_video_h as f32 / out_h as f32,
+            ),
             (out_w as f32, out_h as f32),
             (zoomed_video_w as f32, zoomed_video_h as f32),
             config.background_config.border_radius as f32,
@@ -400,7 +535,9 @@ pub fn start_native_export(args: serde_json::Value) -> Result<serde_json::Value,
         let rendered = compositor.render_frame(&uniforms);
 
         // Write to encoder
-        encoder_stdin.write_all(&rendered).map_err(|e| e.to_string())?;
+        encoder_stdin
+            .write_all(&rendered)
+            .map_err(|e| e.to_string())?;
 
         frame_count += 1;
         current_time += step;

@@ -36,12 +36,14 @@ interface PhysicsState {
 }
 
 export class AutoZoomGenerator {
-  private readonly WIDTH = 1920;
-  private readonly HEIGHT = 1080;
+  // Hardcoded dimensions removed.
+  // They are now passed dynamically in generateMotionPath.
 
   generateMotionPath(
     segment: VideoSegment,
-    mousePositions: MousePosition[]
+    mousePositions: MousePosition[],
+    videoWidth: number,
+    videoHeight: number
   ): { time: number; x: number; y: number; zoom: number }[] {
 
     const path: { time: number; x: number; y: number; zoom: number }[] = [];
@@ -57,8 +59,8 @@ export class AutoZoomGenerator {
     const dt = 1 / 60; // 60hz Physics Simulation
 
     let state: PhysicsState = {
-      x: this.WIDTH / 2, // Start centered
-      y: this.HEIGHT / 2,
+      x: videoWidth / 2, // Start centered based on actual video width
+      y: videoHeight / 2,
       zoom: 1.0,
       vx: 0,
       vy: 0,
@@ -112,8 +114,8 @@ export class AutoZoomGenerator {
       }
 
       // Rule 4: Edge Penalty (Near edge -> Zoom out to show context)
-      const edgeDistX = Math.min(futureMouse.x, this.WIDTH - futureMouse.x);
-      const edgeDistY = Math.min(futureMouse.y, this.HEIGHT - futureMouse.y);
+      const edgeDistX = Math.min(futureMouse.x, videoWidth - futureMouse.x);
+      const edgeDistY = Math.min(futureMouse.y, videoHeight - futureMouse.y);
       const edgeMargin = 200; // pixels
 
       if (edgeDistX < edgeMargin || edgeDistY < edgeMargin) {
@@ -131,11 +133,11 @@ export class AutoZoomGenerator {
       // Override: Manual Keyframes
       // If user sets a manual keyframe, it acts as a magnet
       if (segment.zoomKeyframes && segment.zoomKeyframes.length > 0) {
-        const kfInfluence = this.getKeyframeInfluence(segment.zoomKeyframes, t);
+        const kfInfluence = this.getKeyframeInfluence(segment.zoomKeyframes, t, videoWidth, videoHeight);
         if (kfInfluence.weight > 0) {
           // targetX/Y are pixels, kf is normalized 0-1
-          const kfX = kfInfluence.x * this.WIDTH;
-          const kfY = kfInfluence.y * this.HEIGHT;
+          const kfX = kfInfluence.x * videoWidth;
+          const kfY = kfInfluence.y * videoHeight;
           const kfZ = kfInfluence.zoom;
 
           // Blend Target
@@ -145,12 +147,6 @@ export class AutoZoomGenerator {
           targetZoom = targetZoom * (1 - kfInfluence.weight) + kfZ * kfInfluence.weight;
         }
       }
-
-      // Rule: Center of Screen Pull
-      // If zoomed out, pull towards center. If zoomed in, stick to mouse.
-      // const centerFactor = 1.0 - ((targetZoom - PHYSICS.MIN_ZOOM) / (PHYSICS.MAX_ZOOM - PHYSICS.MIN_ZOOM));
-      // centerFactor: 1.0 (Zoomed Out) -> 0.0 (Zoomed In)
-      // Actually, we usually want the camera to center on the mouse, but clamped to screen bounds
 
       // D. Apply Physics (Spring/Damper)
       // Force = -k*(x - target) - d*v
@@ -168,8 +164,8 @@ export class AutoZoomGenerator {
 
       // E. Hard Constraints (Keep Viewport inside Screen)
       // Viewport Dimensions
-      const viewW = this.WIDTH / state.zoom;
-      const viewH = this.HEIGHT / state.zoom;
+      const viewW = videoWidth / state.zoom;
+      const viewH = videoHeight / state.zoom;
 
       // Half dimensions
       const hw = viewW / 2;
@@ -177,9 +173,9 @@ export class AutoZoomGenerator {
 
       // Clamp Camera Center
       if (state.x - hw < 0) { state.x = hw; state.vx = 0; }
-      if (state.x + hw > this.WIDTH) { state.x = this.WIDTH - hw; state.vx = 0; }
+      if (state.x + hw > videoWidth) { state.x = videoWidth - hw; state.vx = 0; }
       if (state.y - hh < 0) { state.y = hh; state.vy = 0; }
-      if (state.y + hh > this.HEIGHT) { state.y = this.HEIGHT - hh; state.vy = 0; }
+      if (state.y + hh > videoHeight) { state.y = videoHeight - hh; state.vy = 0; }
 
       // Clamp Zoom safety
       state.zoom = Math.max(1.0, Math.min(5.0, state.zoom)); // Absolute safety limits
@@ -226,20 +222,14 @@ export class AutoZoomGenerator {
   }
 
   private checkClick(data: MousePosition[], t: number, window: number): boolean {
-    // Check if there are any clicks in [t - window/2, t + window/2]
     const start = t - window / 2;
     const end = t + window / 2;
-
-    // Optimization: Binary search start index could be better but linear scan in small range is fine
-    // We already sorted data
-    // Let's filter range first (efficient enough for N < 10000)
     return data.some(p => p.timestamp >= start && p.timestamp <= end && p.isClicked);
   }
 
-  private getKeyframeInfluence(keyframes: ZoomKeyframe[], t: number): { x: number, y: number, zoom: number, weight: number } {
-    const WINDOW = 1.5; // seconds influence radius (3s total window)
+  private getKeyframeInfluence(keyframes: ZoomKeyframe[], t: number, _videoWidth: number, _videoHeight: number): { x: number, y: number, zoom: number, weight: number } {
+    const WINDOW = 1.5;
 
-    // Find closest keyframe within window
     const nearby = keyframes
       .map(kf => ({ kf, dist: Math.abs(kf.time - t) }))
       .filter(item => item.dist < WINDOW)
@@ -248,17 +238,8 @@ export class AutoZoomGenerator {
     if (nearby.length === 0) return { x: 0.5, y: 0.5, zoom: 1, weight: 0 };
 
     const best = nearby[0];
-
-    // Weight 0..1 based on distance (Cosine falloff)
-    // ratio 0 (at keyframe) -> weight 1
-    // ratio 1 (at edge) -> weight 0
     const ratio = best.dist / WINDOW;
     const weight = (1 + Math.cos(ratio * Math.PI)) / 2;
-
-    // Boost sharpness - we want strong lock when close
-    // pow(weight, 0.5) makes it stay near 1.0 longer? No, that broadens it.
-    // pow(weight, 2) makes it sharper (peak only).
-    // We want broad lock. simple cosine is fine.
 
     return {
       x: best.kf.positionX,

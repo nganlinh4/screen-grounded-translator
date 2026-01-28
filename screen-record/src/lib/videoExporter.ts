@@ -1,3 +1,4 @@
+
 import type {
   ExportOptions,
 } from '@/types/video';
@@ -29,16 +30,36 @@ export class VideoExporter {
     let width = preset.width;
     let height = preset.height;
 
-    // Use video dimensions if available, otherwise defaults
+    // Get raw video dimensions
     const vidW = video?.videoWidth || 1920;
     const vidH = video?.videoHeight || 1080;
 
-    if (width === 0 || height === 0) {
-      width = vidW;
-      height = vidH;
-      if (width % 2 !== 0) width--;
-      if (height % 2 !== 0) height--;
+    // Calculate CROPPED dimensions (matching preview canvas behavior)
+    const crop = segment?.crop || { x: 0, y: 0, width: 1, height: 1 };
+    const croppedW = Math.round(vidW * crop.width);
+    const croppedH = Math.round(vidH * crop.height);
+
+    console.log('[Exporter] Video dimensions:', vidW, 'x', vidH);
+    console.log('[Exporter] Crop rect:', crop);
+    console.log('[Exporter] Cropped dimensions:', croppedW, 'x', croppedH);
+    console.log('[Exporter] Dimension preset:', options.dimensions, '→', preset);
+
+    if (preset.height === 0) {
+      // Original: Use exact cropped dimensions
+      width = croppedW;
+      height = croppedH;
+    } else {
+      // 1080p / 720p: Fix the height, adjust width to maintain aspect ratio
+      // This allows vertical videos to remain vertical, just scaled to 1080p height
+      height = preset.height;
+      width = Math.round(height * (croppedW / croppedH));
     }
+
+    // Ensure dimensions are even (required for ffmpeg yuv420p)
+    if (width % 2 !== 0) width--;
+    if (height % 2 !== 0) height--;
+
+    console.log('[Exporter] Final export dimensions:', width, 'x', height);
 
     const fps = 60;
 
