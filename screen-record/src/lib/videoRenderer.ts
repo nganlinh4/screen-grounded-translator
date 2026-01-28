@@ -1,6 +1,12 @@
 import { BackgroundConfig, MousePosition, VideoSegment, ZoomKeyframe, TextSegment, BakedCameraFrame } from '@/types/video';
 import { SpringSolver } from './spring';
 
+// --- CONFIGURATION ---
+// Adjust this to sync cursor. 
+// POSITIVE value = moves cursor AHEAD (fixes cursor lagging behind video).
+// NEGATIVE value = moves cursor BACK (fixes cursor arriving too early).
+const CURSOR_OFFSET_SEC = 0.1;
+
 export interface RenderContext {
   video: HTMLVideoElement;
   canvas: HTMLCanvasElement;
@@ -39,7 +45,10 @@ export class VideoRenderer {
   private lastCalculatedState: ZoomKeyframe | null = null;
   public getLastCalculatedState() { return this.lastCalculatedState; }
 
+  // Caching for smoothed mouse path
   private smoothedPositions: MousePosition[] | null = null;
+  private lastMousePositionsRef: MousePosition[] | null = null; // Track reference to detect changes
+
   private hasLoggedPositions = false;
   private cachedBakedPath: BakedCameraFrame[] | null = null;
   private lastBakeSignature: string = '';
@@ -130,6 +139,7 @@ export class VideoRenderer {
     this.stopAnimation();
     this.lastDrawTime = 0;
     this.smoothedPositions = null;
+    this.lastMousePositionsRef = null;
     this.activeRenderContext = renderContext;
 
     const animate = () => {
@@ -327,8 +337,12 @@ export class VideoRenderer {
       ctx.drawImage(tempCanvas, 0, 0);
 
       // Cursor
+      // Apply offset to compensate for recording latency/smoothing lag
+      // CURSOR_OFFSET_SEC > 0 moves cursor to the future (counter-acting lag)
+      const cursorTime = video.currentTime + CURSOR_OFFSET_SEC;
+
       const interpolatedPosition = this.interpolateCursorPosition(
-        video.currentTime,
+        cursorTime,
         mousePositions
       );
 
@@ -802,6 +816,12 @@ export class VideoRenderer {
       this.hasLoggedPositions = true;
     }
 
+    // INVALIDATE CACHE if input data changes
+    if (this.lastMousePositionsRef !== mousePositions) {
+      this.smoothedPositions = null;
+      this.lastMousePositionsRef = mousePositions;
+    }
+
     if (!this.smoothedPositions || this.smoothedPositions.length === 0) {
       this.smoothedPositions = this.smoothMousePositions(mousePositions);
     }
@@ -877,7 +897,14 @@ export class VideoRenderer {
     ctx.scale(scale, scale);
     ctx.scale(this.currentSquishScale, this.currentSquishScale);
 
-    switch (lowerType) {
+    let effectiveType = lowerType;
+    if (effectiveType === 'pointer') {
+      if (!this.pointerImage.complete || this.pointerImage.naturalWidth === 0) {
+        effectiveType = 'default';
+      }
+    }
+
+    switch (effectiveType) {
       case 'text': {
         ctx.translate(-6, -8);
         const ibeam = new Path2D(`
@@ -893,8 +920,6 @@ export class VideoRenderer {
 
       case 'pointer': {
         let imgWidth = 24, imgHeight = 24;
-
-        // Use the image if it's loaded, otherwise fall through to default arrow
         if (this.pointerImage.complete && this.pointerImage.naturalWidth > 0) {
           imgWidth = this.pointerImage.naturalWidth;
           imgHeight = this.pointerImage.naturalHeight;
@@ -902,9 +927,8 @@ export class VideoRenderer {
           const offsetY = 16;
           ctx.translate(-imgWidth / 2 + offsetX, -imgHeight / 2 + offsetY);
           ctx.drawImage(this.pointerImage, 0, 0, imgWidth, imgHeight);
-          break;
         }
-        // FALL THROUGH to default if image missing
+        break;
       }
 
       default: {
