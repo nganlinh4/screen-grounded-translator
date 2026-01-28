@@ -19,8 +19,10 @@ anyhow = "1.0"
 base64 = "0.22"
 self_update = { version = "0.42", features = ["archive-zip", "compression-zip-deflate"] }
 zip = "7.0"
+byteorder = "1.5"
+rayon = "1.8"
 
-# Image Processing (Common formats for drag-and-drop)
+# Image Processing
 image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg", "gif", "webp", "tiff"] }
 
 # Time
@@ -36,7 +38,7 @@ winreg = "0.55"
 auto-launch = "0.5"
 urlencoding = "2.1"
 
-# Language Data (Kept as requested)
+# Language Data
 isolang = { version = "2.4", features = ["serde", "english_names"] }
 whatlang = "0.18"
 
@@ -49,7 +51,6 @@ hound = "3.5"
 wasapi = "0.22"
 minimp3 = "0.6"
 egui_extras = { version = "0.33", features = ["all_loaders"] }
-# Audio file decoding (MP3, FLAC, OGG, WAV, AAC, ALAC)
 symphonia = { version = "0.5", features = ["mp3", "flac", "ogg", "wav", "aac", "alac", "pcm"] }
 
 # Markdown Rendering
@@ -66,6 +67,10 @@ rdev = "0.5.3"
 tiny_http = "0.12"
 memmap2 = "0.5.10"
 parking_lot = "0.12"
+
+# Vector Graphics Rendering
+resvg = "0.45"
+tiny-skia = "0.11"
 
 [dependencies.windows]
 version = "0.62"
@@ -96,6 +101,6 @@ features = [
 opt-level = "z"
 lto = true
 codegen-units = 1
-strip = "symbols"  # Keep minimal debug info for AV trust (don't fully strip)
-debug = 1          # Include basic debug info - helps Windows Defender trust the exe
+strip = "symbols"
+debug = 1
 panic = "unwind"

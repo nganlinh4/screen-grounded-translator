@@ -99,4 +99,4 @@ export interface Project {
   backgroundConfig: BackgroundConfig;
   mousePositions: MousePosition[];
   thumbnail?: string;
-} 
+}

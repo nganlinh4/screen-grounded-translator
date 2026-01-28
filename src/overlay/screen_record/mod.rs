@@ -16,8 +16,7 @@ use wry::{Rect, WebContext, WebViewBuilder};
 use serde::Deserialize;
 use crate::APP;
 use crate::config::Hotkey;
-use std::process::{Command, Stdio, Child};
-use std::io::Write;
+use std::process::Child;
 use std::sync::Mutex;
 use std::path::PathBuf;
 
@@ -30,6 +29,9 @@ const MOD_WIN: u32 = 0x0008;
 pub mod engine;
 pub mod audio_engine;
 pub mod keyviz;
+// New module
+pub mod native_export;
+
 use engine::{
     get_monitors, CaptureHandler, AUDIO_ENCODING_FINISHED, ENCODING_FINISHED, MOUSE_POSITIONS,
     SHOULD_STOP, VIDEO_PATH, AUDIO_PATH
@@ -57,7 +59,6 @@ const WM_APP_RUN_SCRIPT: u32 = WM_USER + 112;
 const WM_UNREGISTER_HOTKEYS: u32 = WM_USER + 103;
 const WM_REGISTER_HOTKEYS: u32 = WM_USER + 104;
 
-// Thread-local storage for WebView
 thread_local! {
     static SR_WEBVIEW: std::cell::RefCell<Option<std::sync::Arc<wry::WebView>>> = std::cell::RefCell::new(None);
     static SR_WEB_CONTEXT: std::cell::RefCell<Option<WebContext>> = std::cell::RefCell::new(None);
@@ -65,7 +66,6 @@ thread_local! {
 
 lazy_static::lazy_static! {
     static ref SERVER_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
-    // Store the active FFmpeg process
     static ref FFMPEG_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 }
 
@@ -115,9 +115,8 @@ unsafe extern "system" fn sr_wnd_proc(
             let y = ((lparam.0 >> 16) & 0xFFFF) as i32;
             
             let border = 8;
-            let title_height = 44; // Matches header h-11 (44px)
+            let title_height = 44; 
 
-            // Resize borders
             if y < rect.top + border {
                 if x < rect.left + border { return LRESULT(HTTOPLEFT as isize); }
                 if x > rect.right - border { return LRESULT(HTTOPRIGHT as isize); }
@@ -131,7 +130,6 @@ unsafe extern "system" fn sr_wnd_proc(
             if x < rect.left + border { return LRESULT(HTLEFT as isize); }
             if x > rect.right - border { return LRESULT(HTRIGHT as isize); }
 
-            // Title bar region (Drag region)
             if y < rect.top + title_height {
                 return LRESULT(HTCLIENT as isize);
             }
@@ -185,7 +183,6 @@ unsafe extern "system" fn sr_wnd_proc(
     }
 }
 
-// Wrapper for HWND
 struct HwndWrapper(HWND);
 
 impl HasWindowHandle for HwndWrapper {
@@ -504,131 +501,7 @@ fn get_ffmpeg_path() -> PathBuf {
 fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json::Value, String> {
     match cmd.as_str() {
         "start_export_server" => {
-            let width = args["width"].as_u64().unwrap_or(1920) as u32;
-            let height = args["height"].as_u64().unwrap_or(1080) as u32;
-            let fps = args["framerate"].as_u64().unwrap_or(60) as u32;
-            let audio_path = args["audioPath"].as_str().ok_or("No audio path provided")?;
-            let audio_path_buf = PathBuf::from(audio_path);
-
-            if !audio_path_buf.exists() {
-                 return Err(format!("Audio file not found: {}", audio_path));
-            }
-
-            // Audio settings for mixing
-            let trim_start = args["trimStart"].as_f64().unwrap_or(0.0);
-            let duration = args["duration"].as_f64().unwrap_or(10.0);
-            let speed = args["speed"].as_f64().unwrap_or(1.0);
-            
-            // Output path
-            let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-            let output_path = dirs::download_dir()
-                .unwrap_or_else(|| std::env::temp_dir())
-                .join(format!("SGT_Export_{}.mp4", timestamp));
-
-            let ffmpeg_path = get_ffmpeg_path();
-            if !ffmpeg_path.exists() {
-                return Err("FFmpeg not found. Please install via Download Manager.".to_string());
-            }
-
-            // Filter complex: sync audio trim and speed
-            let audio_filter = format!("[1:a]atrim=start={}:duration={},asetpts=PTS-STARTPTS,atempo={}[aout]", trim_start, duration, speed);
-
-            let mut command = Command::new(ffmpeg_path);
-            command
-                .args(&[
-                    "-y",
-                    "-f", "image2pipe",
-                    "-vcodec", "mjpeg",
-                    "-r", &fps.to_string(),
-                    "-i", "-", // Input from stdin
-                    "-i", audio_path,
-                    "-filter_complex", &audio_filter,
-                    "-map", "0:v",
-                    "-map", "[aout]",
-                    "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "20",
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "aac",
-                    "-b:a", "192k",
-                    "-shortest",
-                    output_path.to_str().unwrap()
-                ])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
-                
-            #[cfg(target_os = "windows")]
-            {
-                use std::os::windows::process::CommandExt;
-                command.creation_flags(0x08000000); // CREATE_NO_WINDOW
-            }
-
-            let mut child = command.spawn().map_err(|e| e.to_string())?;
-            let stdin = child.stdin.take().ok_or("Failed to open FFmpeg stdin")?;
-
-            *FFMPEG_PROCESS.lock().unwrap() = Some(child);
-
-            // Start HTTP server to receive frames
-            let server_addr = "127.0.0.1:0";
-            let server = Server::http(server_addr).map_err(|e| e.to_string())?;
-            let port = server.server_addr().to_string()
-                .split(':')
-                .last()
-                .and_then(|p| p.parse::<u16>().ok())
-                .unwrap_or(0);
-
-            std::thread::spawn(move || {
-                let mut ffmpeg_in = stdin;
-                for mut request in server.incoming_requests() {
-                    // Handle CORS Preflight
-                    if request.method() == &tiny_http::Method::Options {
-                        let mut res = Response::empty(204);
-                        res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
-                        res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"POST, OPTIONS"[..]).unwrap());
-                        res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"Content-Type"[..]).unwrap());
-                        let _ = request.respond(res);
-                        continue;
-                    }
-
-                    // Check if it's the "FINISH" signal
-                    if request.url() == "/finish" {
-                        let mut res = Response::empty(200);
-                        res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
-                        let _ = request.respond(res);
-                        break;
-                    }
-                    
-                    // Read body (JPEG data)
-                    let mut buffer = Vec::new();
-                    if let Err(_) = request.as_reader().read_to_end(&mut buffer) {
-                        continue;
-                    }
-
-                    // Write to FFmpeg stdin
-                    if let Err(e) = ffmpeg_in.write_all(&buffer) {
-                        eprintln!("Error writing to FFmpeg: {}", e);
-                        break;
-                    }
-
-                    let mut res = Response::empty(200);
-                    res.add_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
-                    let _ = request.respond(res);
-                }
-                
-                // Close stdin to signal EOF to FFmpeg
-                drop(ffmpeg_in);
-                
-                // Wait for FFmpeg to finish
-                if let Some(mut child) = FFMPEG_PROCESS.lock().unwrap().take() {
-                    let _ = child.wait();
-                }
-            });
-
-            Ok(serde_json::json!({
-                "port": port,
-                "outputPath": output_path.to_string_lossy()
-            }))
+            native_export::start_native_export(args)
         }
         "get_monitors" => {
             let monitors = get_monitors();
@@ -720,12 +593,8 @@ fn handle_ipc_command(cmd: String, args: serde_json::Value) -> Result<serde_json
             let mouse_positions = MOUSE_POSITIONS.lock().drain(..).collect::<Vec<_>>();
             
             let video_url = format!("http://localhost:{}/video", port);
-            
-            // Use the raw file path for audio to pass back to frontend for local use or display
-            // But frontend needs URL or blob. We serve it via HTTP.
             let audio_url = format!("http://localhost:{}/audio", port);
             
-            // Return actual local path for FFmpeg use later
             let audio_file_path = audio_path; 
 
             Ok(serde_json::json!([video_url, audio_url, mouse_positions, audio_file_path]))
