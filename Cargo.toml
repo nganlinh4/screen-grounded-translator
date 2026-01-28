@@ -9,7 +9,7 @@ image = { version = "0.25", default-features = false, features = ["png", "bmp"] 
 
 [dependencies]
 # Network & Serialization
-ureq = { version = "3.1", features = ["json"] }
+ureq = { version = "3.1", features = ["json", "native-tls"] }
 tungstenite = { version = "0.28", features = ["native-tls"] }
 native-tls = "0.2"
 url = "2.5"

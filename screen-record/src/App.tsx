@@ -1,7 +1,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Play, Pause, Video, Trash2, Search, Download, Loader2, FolderOpen, Upload, Wand2, Type, Keyboard, X, Minus, Square, Copy } from "lucide-react";
+import { Play, Pause, Video, Trash2, Search, Download, Loader2, FolderOpen, Upload, Wand2, Type, Keyboard, X, Minus, Square, Copy, AlertCircle } from "lucide-react";
 import "./App.css";
 import { Button } from "@/components/ui/button";
 import { videoRenderer } from '@/lib/videoRenderer';
@@ -71,6 +71,15 @@ const getKeyframeRange = (
   return { rangeStart, rangeEnd: keyframe.time };
 };
 
+// FFmpeg install status type
+type FfmpegInstallStatus =
+  | { type: 'Idle' }
+  | { type: 'Downloading'; progress: number }
+  | { type: 'Extracting' }
+  | { type: 'Installed' }
+  | { type: 'Error'; message: string }
+  | { type: 'Cancelled' };
+
 function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +97,12 @@ function App() {
   const [currentAudio, setCurrentAudio] = useState<string | null>(null);
   const [isCropping, setIsCropping] = useState(false);
   const [audioFilePath, setAudioFilePath] = useState<string>("");
+
+  // FFmpeg/ffprobe dependency check state
+  const [ffmpegMissing, setFfmpegMissing] = useState(false);
+  const [ffprobeMissing, setFfprobeMissing] = useState(false);
+  const [isCheckingDeps, setIsCheckingDeps] = useState(true);
+  const [ffmpegInstallStatus, setFfmpegInstallStatus] = useState<FfmpegInstallStatus>({ type: 'Idle' });
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -165,6 +180,66 @@ function App() {
       videoControllerRef.current?.destroy();
     };
   }, []);
+
+  // Check ffmpeg/ffprobe availability on mount
+  useEffect(() => {
+    const checkDependencies = async () => {
+      try {
+        const status = await invoke<{ ffmpegMissing: boolean; ffprobeMissing: boolean }>('check_ffmpeg_status');
+        setFfmpegMissing(status.ffmpegMissing);
+        setFfprobeMissing(status.ffprobeMissing);
+
+        // If any dependency is missing, start installation automatically
+        if (status.ffmpegMissing || status.ffprobeMissing) {
+          await invoke('start_ffmpeg_install');
+          // Start polling for install progress
+          const pollInterval = setInterval(async () => {
+            try {
+              const progress = await invoke<any>('get_ffmpeg_install_progress');
+              // Parse the status from Rust enum format
+              if (progress === 'Idle') {
+                setFfmpegInstallStatus({ type: 'Idle' });
+              } else if (progress === 'Extracting') {
+                setFfmpegInstallStatus({ type: 'Extracting' });
+              } else if (progress === 'Installed') {
+                setFfmpegInstallStatus({ type: 'Installed' });
+                setFfmpegMissing(false);
+                setFfprobeMissing(false);
+                clearInterval(pollInterval);
+              } else if (progress === 'Cancelled') {
+                setFfmpegInstallStatus({ type: 'Cancelled' });
+                clearInterval(pollInterval);
+              } else if (typeof progress === 'object') {
+                if ('Downloading' in progress) {
+                  setFfmpegInstallStatus({ type: 'Downloading', progress: progress.Downloading });
+                } else if ('Error' in progress) {
+                  setFfmpegInstallStatus({ type: 'Error', message: progress.Error });
+                  clearInterval(pollInterval);
+                }
+              }
+            } catch (e) {
+              console.error('Failed to poll install progress:', e);
+            }
+          }, 200);
+        }
+      } catch (e) {
+        console.error('Failed to check ffmpeg status:', e);
+      } finally {
+        setIsCheckingDeps(false);
+      }
+    };
+
+    checkDependencies();
+  }, []);
+
+  const handleCancelInstall = async () => {
+    try {
+      await invoke('cancel_ffmpeg_install');
+      setFfmpegInstallStatus({ type: 'Cancelled' });
+    } catch (e) {
+      console.error('Failed to cancel install:', e);
+    }
+  };
 
   // Sync volume with controller
   useEffect(() => {
@@ -2444,6 +2519,91 @@ function App() {
                 >
                   Cancel
                 </Button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+      {
+        (isCheckingDeps || ffmpegMissing || ffprobeMissing || ffmpegInstallStatus.type !== 'Idle') && ffmpegInstallStatus.type !== 'Installed' && (
+          <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-[100] backdrop-blur-md">
+            <div className="bg-[#1a1a1b] p-8 rounded-2xl border border-[#343536] max-w-md w-full mx-4 shadow-2xl relative overflow-hidden">
+              <div className="absolute -top-24 -left-24 w-48 h-48 bg-[#0079d3]/10 rounded-full blur-3xl opacity-50" />
+              <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-[#9C17FF]/10 rounded-full blur-3xl opacity-50" />
+
+              <div className="relative z-10 text-center">
+                <div className="mb-6 inline-flex p-4 rounded-full bg-[#0079d3]/10 text-[#0079d3]">
+                  {ffmpegInstallStatus.type === 'Error' ? (
+                    <AlertCircle className="w-10 h-10 text-red-500" />
+                  ) : ffmpegInstallStatus.type === 'Downloading' || ffmpegInstallStatus.type === 'Extracting' ? (
+                    <Loader2 className="w-10 h-10 animate-spin" />
+                  ) : (
+                    <Video className="w-10 h-10" />
+                  )}
+                </div>
+
+                <h3 className="text-2xl font-bold text-white mb-2">
+                  {ffmpegInstallStatus.type === 'Downloading' ? 'Downloading Dependencies' :
+                    ffmpegInstallStatus.type === 'Extracting' ? 'Setting Up...' :
+                      ffmpegInstallStatus.type === 'Error' ? 'Installation Failed' :
+                        ffmpegInstallStatus.type === 'Cancelled' ? 'Installation Cancelled' :
+                          'Preparing Screen Recorder'}
+                </h3>
+
+                <p className="text-[#818384] mb-8 text-sm leading-relaxed">
+                  {ffmpegInstallStatus.type === 'Downloading' ? 'FFmpeg and ffprobe are required for screen recording. We are downloading them for you.' :
+                    ffmpegInstallStatus.type === 'Extracting' ? 'Almost ready! Extracting binaries to your system.' :
+                      ffmpegInstallStatus.type === 'Error' ? ffmpegInstallStatus.message :
+                        ffmpegInstallStatus.type === 'Cancelled' ? 'The installation was stopped. You won\'t be able to use the recorder without these dependencies.' :
+                          'Please wait while we check your system for required dependencies.'}
+                </p>
+
+                {(ffmpegInstallStatus.type === 'Downloading' || ffmpegInstallStatus.type === 'Extracting') && (
+                  <div className="space-y-4 mb-8">
+                    <div className="h-2 w-full bg-[#272729] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#0079d3] to-[#9C17FF] transition-all duration-300 ease-out"
+                        style={{ width: `${ffmpegInstallStatus.type === 'Downloading' ? ffmpegInstallStatus.progress : ffmpegInstallStatus.type === 'Extracting' ? 95 : 0}%` }}
+                      />
+                    </div>
+                    {ffmpegInstallStatus.type === 'Downloading' && (
+                      <div className="flex justify-between text-xs font-medium">
+                        <span className="text-[#0079d3]">{Math.round(ffmpegInstallStatus.progress)}% downloaded</span>
+                        <span className="text-[#818384]">FFmpeg Essentials</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-3">
+                  {ffmpegInstallStatus.type === 'Error' || ffmpegInstallStatus.type === 'Cancelled' ? (
+                    <Button
+                      onClick={() => window.location.reload()}
+                      className="w-full bg-[#0079d3] hover:bg-[#0079d3]/90 text-white font-semibold py-6 rounded-xl"
+                    >
+                      Try Again
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      onClick={handleCancelInstall}
+                      disabled={ffmpegInstallStatus.type === 'Idle' || ffmpegInstallStatus.type === 'Extracting'}
+                      className="w-full text-[#818384] hover:text-white hover:bg-white/5 py-6 rounded-xl border border-[#343536]"
+                    >
+                      Cancel Installation
+                    </Button>
+                  )}
+
+                  {(ffmpegInstallStatus.type === 'Error' || ffmpegInstallStatus.type === 'Cancelled') && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => (window as any).ipc.postMessage('close_window')}
+                      className="w-full text-red-400 hover:text-red-300 hover:bg-red-500/10 py-6 rounded-xl"
+                    >
+                      Close App
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
